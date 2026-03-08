@@ -6,21 +6,34 @@ const AuthContext = createContext(null)
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [session, setSession] = useState(null)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
 
+  const checkAdmin = (userId) => {
+    if (!userId) { setIsAdmin(false); return }
+    supabase
+      .from('admin_roles')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .maybeSingle()
+      .then(({ data }) => setIsAdmin(!!data))
+      .catch(() => setIsAdmin(false))
+  }
+
   useEffect(() => {
-    // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
       setUser(session?.user ?? null)
       setLoading(false)
+      checkAdmin(session?.user?.id)
     })
 
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
       setUser(session?.user ?? null)
       setLoading(false)
+      checkAdmin(session?.user?.id)
     })
 
     return () => subscription.unsubscribe()
@@ -36,7 +49,7 @@ export function AuthProvider({ children }) {
     return { error }
   }
 
-  const value = { user, session, loading, signIn, signOut }
+  const value = { user, session, isAdmin, loading, signIn, signOut }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
