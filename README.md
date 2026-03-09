@@ -1,6 +1,6 @@
 # Vintage @ Hamilton — Community Portal
 
-A full-stack web portal for the Vintage @ Hamilton over-55 community in Hamilton, NJ. The platform provides a central hub for community residents with modular sub-applications for the directory, social calendar, lotto syndicate tracker, and community blog — all behind a single sign-on system with per-user, per-app access control.
+A full-stack web portal for the Vintage @ Hamilton over-55 community in Hamilton, NJ. The platform provides a central hub for community residents with modular sub-applications for the directory, lotto syndicate tracker, social calendar, and community blog — all behind a single sign-on system with per-user, per-app access control.
 
 ---
 
@@ -17,7 +17,15 @@ Access is managed at two levels:
 Residents who are in the directory but don't yet have an auth account are visible in the admin portal but cannot be granted access until their account is created.
 
 ### Resident Directory
-The directory is the first fully built sub-application. It stores resident contact information (name, address, phones, emails, tags) separately from auth credentials, so residents can be pre-loaded into the directory before they have accounts. Each resident can edit their own entry; directory admins and super admins can edit, add, or remove any entry.
+The directory stores resident contact information (name, address, phones, emails, tags) separately from auth credentials, so residents can be pre-loaded before they have accounts. Each resident can edit their own entry; directory admins and super admins can edit, add, or remove any entry. Features include search, tag filtering, print (full or filtered view), and select mode for bulk email/phone actions.
+
+### Lotto Syndicate Tracker
+A full Powerball syndicate management tool for the community's lottery group. Tracks 12 member households, draw results, winnings distribution, and subscription payments across multiple periods. Features include:
+- Draw entry wizard with automatic match checking against all member tickets
+- Per-member winnings calculated and distributed equally among active members at draw time
+- Payment tracking with balance calculations per member per period
+- Period Summary generator producing a formatted email/text update with draw results, next period subscription requests, and per-member amounts owed or in credit (net of any existing credit balance)
+- Charts showing member winnings, win counts, and cumulative investment vs winnings over time
 
 ### Admin Portal
 The admin portal provides:
@@ -33,6 +41,7 @@ The admin portal provides:
 |---|---|
 | Frontend | React 18 + Vite |
 | Styling | Tailwind CSS v3 |
+| Charts | Recharts |
 | Auth + DB | Supabase (Postgres + Auth) |
 | Routing | React Router v6 |
 | Hosting | Vercel / Netlify (planned) |
@@ -45,35 +54,37 @@ The admin portal provides:
 ```
 src/
   context/
-    AuthContext.jsx        # Supabase auth state, isAdmin, hasAppAccess(), isAppAdmin()
+    AuthContext.jsx          # Supabase auth state, isAdmin, hasAppAccess(), isAppAdmin()
   components/
     layout/
-      AppShell.jsx         # Main app layout — header, sidebar nav, footer
-      AdminShell.jsx       # Admin portal layout
+      AppShell.jsx           # Main app layout — header, sidebar nav, footer
+      AdminShell.jsx         # Admin portal layout
+    apps/
+      LottoTracker.jsx       # Lotto Tracker sub-application component
     ui/
-      ProtectedRoute.jsx   # Auth guard (supports requireAdmin flag)
-      Toast.jsx            # Toast notification system
-      ErrorBoundary.jsx    # Top-level error boundary
+      ProtectedRoute.jsx     # Auth guard (supports requireAdmin flag)
+      Toast.jsx              # Toast notification system
+      ErrorBoundary.jsx      # Top-level error boundary
   pages/
     auth/
-      LoginPage.jsx        # Email/password login + forgot password flow
-      ResetPasswordPage.jsx # Password reset landing (Supabase redirect target)
+      LoginPage.jsx          # Email/password login + forgot password flow
+      ResetPasswordPage.jsx  # Password reset landing (Supabase redirect target)
     apps/
-      DirectoryPage.jsx    # Resident Directory (Phase 3 — complete)
-      CalendarPage.jsx     # Social Calendar (Phase 4 — placeholder)
-      LottoPage.jsx        # Lotto Tracker (Phase 5 — placeholder)
-      BlogPage.jsx         # Community Blog (Phase 6 — placeholder)
+      DirectoryPage.jsx      # Resident Directory (Phase 3 — complete)
+      LottoPage.jsx          # Lotto Tracker (Phase 5 — complete)
+      CalendarPage.jsx       # Social Calendar (Phase 4 — placeholder)
+      BlogPage.jsx           # Community Blog (Phase 6 — placeholder)
     admin/
-      AdminDashboard.jsx   # Stats and counts
-      ResidentsPage.jsx    # Resident management, admin toggle
-      AccessPage.jsx       # Per-app access control with role cycling
-    ResidentDirectory.jsx  # Full directory component (search, CRUD, print, select mode)
-    HomePage.jsx           # Welcome dashboard + quick links
+      AdminDashboard.jsx     # Stats and counts
+      ResidentsPage.jsx      # Resident management, admin toggle
+      AccessPage.jsx         # Per-app access control with role cycling
+    ResidentDirectory.jsx    # Full directory component (search, CRUD, print, select mode)
+    HomePage.jsx             # Welcome dashboard + quick links
   lib/
-    supabase.js            # Supabase client
-  App.jsx                  # Router + route definitions
-  main.jsx                 # React entry point
-  index.css                # Tailwind directives + CSS variables
+    supabase.js              # Supabase client
+  App.jsx                    # Router + route definitions
+  main.jsx                   # React entry point
+  index.css                  # Tailwind directives + CSS variables
 ```
 
 ---
@@ -98,8 +109,49 @@ Extends Supabase `auth.users`. Contains both auth-facing fields and directory fi
 | Column | Type | Notes |
 |--------|------|-------|
 | user_id | uuid | FK to auth.users (requires auth account) |
-| app_id | text | 'directory', 'calendar', 'lotto', 'blog' |
+| app_id | text | 'directory', 'lotto', 'calendar', 'blog' |
 | role | text | 'user' or 'admin' |
+
+### `lotto_periods`
+| Column | Type | Notes |
+|--------|------|-------|
+| id | serial | Primary key |
+| label | text | e.g. "Period 8" |
+| start_date | date | First draw date of the period |
+| weeks | int | 3 (early periods) or 4 |
+
+### `lotto_members`
+| Column | Type | Notes |
+|--------|------|-------|
+| id | text | Primary key (A–L) |
+| resident_id_1 | bigint | FK → profiles (required) |
+| resident_id_2 | bigint nullable | FK → profiles (second household member) |
+| join_date | date | When this member joined the syndicate |
+| exit_date | date nullable | Set when a member leaves |
+| nums | int[] | 5 chosen numbers |
+| pb | int | Chosen Powerball number |
+
+### `lotto_draws`
+| Column | Type | Notes |
+|--------|------|-------|
+| id | serial | Primary key |
+| period_id | int | FK → lotto_periods |
+| draw_num | int | Sequential draw number |
+| draw_date | date | Draw date |
+| winning | int[] | 5 winning numbers |
+| powerball | int | Winning Powerball |
+| prize | numeric(8,2) | Total prize for this draw (split equally among active members) |
+| is_pending | boolean | True for placeholder draws not yet entered |
+
+### `lotto_payments`
+| Column | Type | Notes |
+|--------|------|-------|
+| id | serial | Primary key |
+| member_id | text | FK → lotto_members |
+| period_id | int | FK → lotto_periods |
+| amount | numeric(8,2) | Amount paid for this period |
+
+RLS is enabled on all lotto tables. Access requires an `app_access` row with `app_id = 'lotto'` or `app_id = 'admin'`.
 
 ---
 
@@ -146,7 +198,7 @@ Open http://localhost:5173
 | 2 | Admin portal — dashboard, resident management, app access control | ✅ Complete |
 | 3 | Resident Directory — CRUD, search, tag filters, print, select/bulk email | ✅ Complete |
 | 4 | Social Calendar | 🔲 Planned |
-| 5 | Lotto Tracker | 🔲 Planned |
+| 5 | Lotto Tracker — draw entry, winnings, payments, charts, period summary | ✅ Complete |
 | 6 | Community Blog | 🔲 Planned |
 | 7 | Notifications system | 🔲 Planned |
 | 8 | Deploy to production (Vercel/Netlify + custom domain) | 🔲 Planned |
@@ -162,7 +214,6 @@ Open http://localhost:5173
 
 ### Sub-Applications
 - **Social Calendar** — community events, RSVP, admin event management
-- **Lotto Tracker** — syndicate management, draw entry, winnings distribution
 - **Community Blog** — resident posts, admin moderation
 - **Notifications** — per-user read/dismiss notification system
 
@@ -170,7 +221,6 @@ Open http://localhost:5173
 - Production deployment to Vercel or Netlify
 - Custom domain: vintagehamilton.com
 - GitHub Actions CI/CD pipeline
-- Consolidate legacy profile fields with directory fields (cleanup)
 
 ---
 
