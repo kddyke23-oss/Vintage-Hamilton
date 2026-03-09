@@ -7,7 +7,6 @@ export default function ResidentsPage() {
   const toast = useToast()
   const [searchParams] = useSearchParams()
   const [residents, setResidents] = useState([])
-  const [adminIds, setAdminIds] = useState(new Set())
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(searchParams.get('action') || null)
   const [form, setForm] = useState({ full_name: '', email: '', unit_number: '', phone: '', password: '' })
@@ -19,14 +18,12 @@ export default function ResidentsPage() {
 
   const fetchResidents = async () => {
     try {
-      const [{ data: profiles, error: profilesError }, { data: admins, error: adminsError }] = await Promise.all([
-        supabase.from('profiles').select('*').order('full_name'),
-        supabase.from('admin_roles').select('user_id').eq('is_active', true),
-      ])
-      if (profilesError) throw profilesError
-      if (adminsError) throw adminsError
+      const { data: profiles, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('full_name')
+      if (error) throw error
       setResidents(profiles ?? [])
-      setAdminIds(new Set(admins?.map(a => a.user_id) ?? []))
     } catch (e) {
       toast.error('Failed to load residents: ' + e.message)
     } finally {
@@ -142,17 +139,12 @@ export default function ResidentsPage() {
 
   const handleToggleAdmin = async (userId, isCurrentlyAdmin, name) => {
     try {
-      if (isCurrentlyAdmin) {
-        const { error } = await supabase.from('admin_roles')
-          .update({ is_active: false }).eq('user_id', userId)
-        if (error) throw error
-        toast.success(`${name || 'Resident'} removed as admin`)
-      } else {
-        const { error } = await supabase.from('admin_roles')
-          .upsert({ user_id: userId, is_active: true }, { onConflict: 'user_id' })
-        if (error) throw error
-        toast.success(`${name || 'Resident'} is now an admin`)
-      }
+      const { error } = await supabase
+        .from('profiles')
+        .update({ is_admin: !isCurrentlyAdmin })
+        .eq('id', userId)
+      if (error) throw error
+      toast.success(`${name || 'Resident'} ${isCurrentlyAdmin ? 'removed as admin' : 'is now an admin'}`)
       fetchResidents()
     } catch (e) {
       toast.error('Failed to update admin role: ' + e.message)
@@ -232,15 +224,15 @@ export default function ResidentsPage() {
                   </td>
                   <td className="px-6 py-3">
                     <button
-                      onClick={() => handleToggleAdmin(r.id, adminIds.has(r.id), r.full_name)}
+                      onClick={() => handleToggleAdmin(r.id, r.is_admin, r.full_name)}
                       className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
-                        adminIds.has(r.id)
+                        r.is_admin
                           ? 'bg-gold-100 text-gold-700 hover:bg-red-100 hover:text-red-600'
                           : 'bg-brand-100 text-brand-500 hover:bg-gold-100 hover:text-gold-700'
                       }`}
-                      title={adminIds.has(r.id) ? 'Click to remove admin' : 'Click to make admin'}
+                      title={r.is_admin ? 'Click to remove admin' : 'Click to make admin'}
                     >
-                      {adminIds.has(r.id) ? '⭐ Admin' : '+ Admin'}
+                      {r.is_admin ? '⭐ Admin' : '+ Admin'}
                     </button>
                   </td>
                   <td className="px-6 py-3">

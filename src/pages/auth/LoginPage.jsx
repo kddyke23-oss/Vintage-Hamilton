@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
+import { supabase } from '@/lib/supabase'
 
 export default function LoginPage() {
   const { signIn } = useAuth()
@@ -8,10 +9,17 @@ export default function LoginPage() {
   const location = useLocation()
   const from = location.state?.from?.pathname || '/'
 
-  const [email, setEmail] = useState('')
+  const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState(null)
-  const [loading, setLoading] = useState(false)
+  const [error, setError]       = useState(null)
+  const [loading, setLoading]   = useState(false)
+
+  // Forgot password state
+  const [showReset, setShowReset]         = useState(false)
+  const [resetEmail, setResetEmail]       = useState('')
+  const [resetLoading, setResetLoading]   = useState(false)
+  const [resetSent, setResetSent]         = useState(false)
+  const [resetError, setResetError]       = useState(null)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -23,6 +31,21 @@ export default function LoginPage() {
       setError(error.message)
     } else {
       navigate(from, { replace: true })
+    }
+  }
+
+  const handleResetRequest = async (e) => {
+    e.preventDefault()
+    setResetError(null)
+    setResetLoading(true)
+    const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    })
+    setResetLoading(false)
+    if (error) {
+      setResetError(error.message)
+    } else {
+      setResetSent(true)
     }
   }
 
@@ -40,51 +63,120 @@ export default function LoginPage() {
 
         {/* Card */}
         <div className="bg-white rounded-2xl shadow-2xl p-8">
-          <h2 className="font-display text-xl text-brand-800 mb-6">Welcome Back</h2>
 
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm mb-4">
-              {error}
-            </div>
+          {!showReset ? (
+            <>
+              <h2 className="font-display text-xl text-brand-800 mb-6">Welcome Back</h2>
+
+              {error && (
+                <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm mb-4">
+                  {error}
+                </div>
+              )}
+
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-brand-700 mb-1">
+                    Email Address
+                  </label>
+                  <input
+                    type="email" required value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    className="w-full border border-brand-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                    placeholder="you@example.com"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-sm font-medium text-brand-700">
+                      Password
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => { setShowReset(true); setResetEmail(email); }}
+                      className="text-xs text-brand-400 hover:text-brand-600 underline"
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
+                  <input
+                    type="password" required value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    className="w-full border border-brand-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                    placeholder="••••••••"
+                  />
+                </div>
+
+                <button
+                  type="submit" disabled={loading}
+                  className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg transition-colors mt-2"
+                >
+                  {loading ? 'Signing in…' : 'Sign In'}
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => { setShowReset(false); setResetSent(false); setResetError(null); }}
+                className="text-sm text-brand-400 hover:text-brand-600 mb-4 flex items-center gap-1"
+              >
+                ← Back to sign in
+              </button>
+
+              <h2 className="font-display text-xl text-brand-800 mb-2">Reset Password</h2>
+
+              {!resetSent ? (
+                <>
+                  <p className="text-sm text-brand-500 mb-6">
+                    Enter your email address and we'll send you a link to reset your password.
+                  </p>
+
+                  {resetError && (
+                    <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm mb-4">
+                      {resetError}
+                    </div>
+                  )}
+
+                  <form onSubmit={handleResetRequest} className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-brand-700 mb-1">
+                        Email Address
+                      </label>
+                      <input
+                        type="email" required value={resetEmail}
+                        onChange={e => setResetEmail(e.target.value)}
+                        className="w-full border border-brand-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                        placeholder="you@example.com"
+                      />
+                    </div>
+                    <button
+                      type="submit" disabled={resetLoading}
+                      className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg transition-colors"
+                    >
+                      {resetLoading ? 'Sending…' : 'Send Reset Link'}
+                    </button>
+                  </form>
+                </>
+              ) : (
+                <div className="text-center py-4">
+                  <div className="text-4xl mb-4">📬</div>
+                  <p className="text-brand-700 font-medium mb-2">Check your inbox</p>
+                  <p className="text-sm text-brand-500 mb-6">
+                    We've sent a password reset link to <strong>{resetEmail}</strong>.
+                    The link will expire in 1 hour.
+                  </p>
+                  <button
+                    onClick={() => { setShowReset(false); setResetSent(false); }}
+                    className="text-sm text-brand-400 hover:text-brand-600 underline"
+                  >
+                    Back to sign in
+                  </button>
+                </div>
+              )}
+            </>
           )}
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-brand-700 mb-1">
-                Email Address
-              </label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                className="w-full border border-brand-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
-                placeholder="you@example.com"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-brand-700 mb-1">
-                Password
-              </label>
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                className="w-full border border-brand-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
-                placeholder="••••••••"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg transition-colors mt-2"
-            >
-              {loading ? 'Signing in…' : 'Sign In'}
-            </button>
-          </form>
         </div>
 
         <p className="text-center text-brand-400 text-xs mt-6">

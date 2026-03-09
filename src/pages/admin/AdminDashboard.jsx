@@ -14,7 +14,7 @@ export default function AdminDashboard() {
         const [{ count: residents, error: e1 }, { count: active, error: e2 }, { count: admins, error: e3 }] = await Promise.all([
           supabase.from('profiles').select('*', { count: 'exact', head: true }),
           supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('is_active', true),
-          supabase.from('admin_roles').select('*', { count: 'exact', head: true }).eq('is_active', true),
+          supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('is_admin', true),
         ])
         if (e1 || e2 || e3) throw e1 || e2 || e3
         setStats({ residents: residents ?? 0, active: active ?? 0, admins: admins ?? 0 })
@@ -29,8 +29,8 @@ export default function AdminDashboard() {
 
   const cards = [
     { label: 'Total Residents', value: stats.residents, icon: '👥', path: '/admin/residents' },
-    { label: 'Active Residents', value: stats.active, icon: '✅', path: '/admin/residents' },
-    { label: 'Administrators', value: stats.admins, icon: '🔑', path: '/admin/residents' },
+    { label: 'Active Residents', value: stats.active,   icon: '✅', path: '/admin/residents' },
+    { label: 'Administrators',   value: stats.admins,   icon: '🔑', path: '/admin/residents' },
   ]
 
   return (
@@ -84,7 +84,7 @@ export default function AdminDashboard() {
             className="flex items-center gap-4 bg-white rounded-2xl border-2 border-brand-100 hover:border-gold-400 hover:shadow-md transition-all p-5">
             <span className="text-2xl">📋</span>
             <div>
-              <div className="font-semibent text-brand-800">View All Residents</div>
+              <div className="font-semibold text-brand-800">View All Residents</div>
               <div className="text-sm text-brand-500">Browse and manage resident accounts</div>
             </div>
           </Link>

@@ -15,6 +15,7 @@ import BlogPage from '@/pages/apps/BlogPage'
 import AdminDashboard from '@/pages/admin/AdminDashboard'
 import ResidentsPage from '@/pages/admin/ResidentsPage'
 import AccessPage from '@/pages/admin/AccessPage'
+import ResetPasswordPage from '@/pages/auth/ResetPasswordPage'
 
 function ResidentShell({ children }) {
   return (
@@ -41,6 +42,7 @@ export default function App() {
             <Routes>
               {/* Public */}
               <Route path="/login" element={<LoginPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
 
               {/* Resident routes */}
               <Route path="/" element={<ResidentShell><HomePage /></ResidentShell>} />

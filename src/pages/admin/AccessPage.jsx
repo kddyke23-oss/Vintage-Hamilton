@@ -9,6 +9,15 @@ const APPS = [
   { id: 'blog',      label: 'Community Blog',      icon: '📝' },
 ]
 
+// Cycle: none → user → admin → none
+const NEXT_STATE = { none: 'user', user: 'admin', admin: 'none' }
+
+const STATE_DISPLAY = {
+  none:  { icon: '○',  label: 'No Access', className: 'bg-brand-100 text-brand-400 hover:bg-blue-50 hover:text-blue-500' },
+  user:  { icon: '✅', label: 'User',      className: 'bg-green-100 text-green-700 hover:bg-gold-100 hover:text-gold-700' },
+  admin: { icon: '⭐', label: 'Admin',     className: 'bg-yellow-100 text-yellow-700 hover:bg-red-50 hover:text-red-500' },
+}
+
 export default function AccessPage() {
   const toast = useToast()
   const [residents, setResidents] = useState([])
@@ -19,14 +28,28 @@ export default function AccessPage() {
   const fetchAll = async () => {
     try {
       const [{ data: profiles, error: pError }, { data: accessRows, error: aError }] = await Promise.all([
-        supabase.from('profiles').select('id, full_name, email, unit_number').eq('is_active', true).order('full_name'),
-        supabase.from('app_access').select('user_id, app_id'),
+        supabase
+          .from('profiles')
+          .select('id, resident_id, full_name, surname, names, email, emails, unit_number')
+          .eq('is_active', true)
+          .order('surname'),
+        supabase.from('app_access').select('user_id, app_id, role'),
       ])
       if (pError) throw pError
       if (aError) throw aError
+
+      // Build access map keyed on auth id (only for residents who have one)
       const map = {}
-      profiles?.forEach(p => { map[p.id] = new Set() })
-      accessRows?.forEach(r => { map[r.user_id]?.add(r.app_id) })
+      profiles?.forEach(p => {
+        if (p.id) {
+          map[p.id] = {}
+          APPS.forEach(a => { map[p.id][a.id] = 'none' })
+        }
+      })
+      accessRows?.forEach(r => {
+        if (map[r.user_id]) map[r.user_id][r.app_id] = r.role || 'user'
+      })
+
       setResidents(profiles ?? [])
       setAccess(map)
     } catch (e) {
@@ -38,24 +61,39 @@ export default function AccessPage() {
 
   useEffect(() => { fetchAll() }, [])
 
-  const toggleAccess = async (userId, appId, currentlyHas, name) => {
+  const cycleAccess = async (userId, appId, currentState, name) => {
+    // Guard: resident has no auth account yet
+    if (!userId) {
+      toast.info(`${name} doesn't have an account yet — access can be granted once they register`)
+      return
+    }
+
+    const nextState = NEXT_STATE[currentState]
+    const appLabel = APPS.find(a => a.id === appId)?.label
     setSaving(`${userId}-${appId}`)
     try {
-      if (currentlyHas) {
+      if (nextState === 'none') {
         const { error } = await supabase.from('app_access').delete()
           .eq('user_id', userId).eq('app_id', appId)
         if (error) throw error
-        toast.info(`${APPS.find(a => a.id === appId)?.label} access removed for ${name}`)
-      } else {
-        const { error } = await supabase.from('app_access').insert({ user_id: userId, app_id: appId })
+        toast.info(`${appLabel} access removed for ${name}`)
+      } else if (currentState === 'none') {
+        const { error } = await supabase.from('app_access')
+          .insert({ user_id: userId, app_id: appId, role: nextState })
         if (error) throw error
-        toast.success(`${APPS.find(a => a.id === appId)?.label} access granted to ${name}`)
+        toast.success(`${appLabel} ${nextState} access granted to ${name}`)
+      } else {
+        const { error } = await supabase.from('app_access')
+          .update({ role: nextState })
+          .eq('user_id', userId).eq('app_id', appId)
+        if (error) throw error
+        toast.success(`${name} is now ${nextState === 'admin' ? 'an admin' : 'a user'} for ${appLabel}`)
       }
-      setAccess(prev => {
-        const updated = { ...prev, [userId]: new Set(prev[userId]) }
-        currentlyHas ? updated[userId].delete(appId) : updated[userId].add(appId)
-        return updated
-      })
+
+      setAccess(prev => ({
+        ...prev,
+        [userId]: { ...prev[userId], [appId]: nextState }
+      }))
     } catch (e) {
       toast.error('Failed to update access: ' + e.message)
     }
@@ -63,12 +101,22 @@ export default function AccessPage() {
   }
 
   const grantAll = async (userId, name) => {
+    if (!userId) {
+      toast.info(`${name} doesn't have an account yet — access can be granted once they register`)
+      return
+    }
     try {
-      const inserts = APPS.filter(a => !access[userId]?.has(a.id)).map(a => ({ user_id: userId, app_id: a.id }))
-      if (inserts.length) {
-        const { error } = await supabase.from('app_access').insert(inserts)
+      const toInsert = APPS
+        .filter(a => access[userId]?.[a.id] === 'none')
+        .map(a => ({ user_id: userId, app_id: a.id, role: 'user' }))
+      if (toInsert.length) {
+        const { error } = await supabase.from('app_access').insert(toInsert)
         if (error) throw error
-        setAccess(prev => ({ ...prev, [userId]: new Set(APPS.map(a => a.id)) }))
+        setAccess(prev => {
+          const updated = { ...prev[userId] }
+          APPS.forEach(a => { if (updated[a.id] === 'none') updated[a.id] = 'user' })
+          return { ...prev, [userId]: updated }
+        })
         toast.success(`All apps granted to ${name}`)
       } else {
         toast.info(`${name} already has access to all apps`)
@@ -79,21 +127,47 @@ export default function AccessPage() {
   }
 
   const revokeAll = async (userId, name) => {
+    if (!userId) {
+      toast.info(`${name} doesn't have an account yet`)
+      return
+    }
     try {
       const { error } = await supabase.from('app_access').delete().eq('user_id', userId)
       if (error) throw error
-      setAccess(prev => ({ ...prev, [userId]: new Set() }))
+      setAccess(prev => {
+        const updated = {}
+        APPS.forEach(a => { updated[a.id] = 'none' })
+        return { ...prev, [userId]: updated }
+      })
       toast.info(`All app access removed for ${name}`)
     } catch (e) {
       toast.error('Failed to revoke access: ' + e.message)
     }
   }
 
+  // Helper: display name from whichever fields are populated
+  const displayName = (r) => r.full_name || [r.surname, r.names].filter(Boolean).join(' ') || '—'
+  const displayEmail = (r) => r.email || r.emails?.[0] || '—'
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="font-display text-3xl text-brand-800 mb-1">App Access</h1>
-        <p className="text-brand-500">Control which apps each resident can access.</p>
+        <p className="text-brand-500">Control which apps each resident can access and their role.</p>
+      </div>
+
+      {/* Legend */}
+      <div className="flex items-center gap-4 text-sm text-brand-500 flex-wrap">
+        <span className="font-medium">Click to cycle:</span>
+        {Object.entries(STATE_DISPLAY).map(([state, { icon, label }]) => (
+          <span key={state} className="flex items-center gap-1">
+            <span>{icon}</span> {label}
+          </span>
+        ))}
+        <span className="ml-4 text-brand-300">|</span>
+        <span className="flex items-center gap-1 text-brand-400 italic text-xs">
+          🔒 No account yet — access granted on registration
+        </span>
       </div>
 
       {loading ? (
@@ -116,42 +190,55 @@ export default function AccessPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-brand-50">
-              {residents.map(r => (
-                <tr key={r.id} className="hover:bg-brand-50 transition-colors">
-                  <td className="px-6 py-3">
-                    <div className="font-medium text-brand-800">{r.full_name || '—'}</div>
-                    <div className="text-brand-400 text-xs">{r.email}</div>
-                  </td>
-                  {APPS.map(app => {
-                    const has = access[r.id]?.has(app.id)
-                    const key = `${r.id}-${app.id}`
-                    return (
-                      <td key={app.id} className="text-center px-4 py-3">
-                        <button
-                          onClick={() => toggleAccess(r.id, app.id, has, r.full_name)}
-                          disabled={saving === key}
-                          className={`w-8 h-8 rounded-full text-lg transition-all ${
-                            saving === key ? 'opacity-50 cursor-wait' :
-                            has ? 'bg-green-100 hover:bg-red-100' : 'bg-brand-100 hover:bg-green-100'
-                          }`}
-                          title={has ? 'Click to revoke' : 'Click to grant'}
-                        >
-                          {saving === key ? '…' : has ? '✅' : '○'}
-                        </button>
-                      </td>
-                    )
-                  })}
-                  <td className="text-center px-4 py-3">
-                    <div className="flex gap-1 justify-center">
-                      <button onClick={() => grantAll(r.id, r.full_name)}
-                        className="text-xs text-green-600 hover:text-green-800 underline">All</button>
-                      <span className="text-brand-300">|</span>
-                      <button onClick={() => revokeAll(r.id, r.full_name)}
-                        className="text-xs text-red-500 hover:text-red-700 underline">None</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {residents.map(r => {
+                const hasAccount = !!r.id
+                const name = displayName(r)
+                return (
+                  <tr key={r.resident_id} className={`transition-colors ${hasAccount ? 'hover:bg-brand-50' : 'bg-gray-50 opacity-70'}`}>
+                    <td className="px-6 py-3">
+                      <div className="font-medium text-brand-800 flex items-center gap-2">
+                        {name}
+                        {!hasAccount && <span className="text-xs text-brand-300 font-normal">🔒 no account</span>}
+                      </div>
+                      <div className="text-brand-400 text-xs">{displayEmail(r)}</div>
+                    </td>
+                    {APPS.map(app => {
+                      const state = hasAccount ? (access[r.id]?.[app.id] ?? 'none') : 'none'
+                      const key = `${r.id}-${app.id}`
+                      const display = STATE_DISPLAY[state]
+                      return (
+                        <td key={app.id} className="text-center px-4 py-3">
+                          <button
+                            onClick={() => cycleAccess(r.id, app.id, state, name)}
+                            disabled={saving === key}
+                            className={`w-8 h-8 rounded-full text-base transition-all ${
+                              !hasAccount ? 'bg-gray-100 text-gray-300 cursor-not-allowed' :
+                              saving === key ? 'opacity-50 cursor-wait' :
+                              display.className
+                            }`}
+                            title={!hasAccount ? 'No account yet' : `${name}: ${display.label} — click to change`}
+                          >
+                            {saving === key ? '…' : hasAccount ? display.icon : '🔒'}
+                          </button>
+                        </td>
+                      )
+                    })}
+                    <td className="text-center px-4 py-3">
+                      {hasAccount ? (
+                        <div className="flex gap-1 justify-center">
+                          <button onClick={() => grantAll(r.id, name)}
+                            className="text-xs text-green-600 hover:text-green-800 underline">All</button>
+                          <span className="text-brand-300">|</span>
+                          <button onClick={() => revokeAll(r.id, name)}
+                            className="text-xs text-red-500 hover:text-red-700 underline">None</button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-brand-300">—</span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
