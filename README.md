@@ -14,7 +14,7 @@ Access is managed at two levels:
 - **Super admin** (`profiles.is_admin = true`) — full access to everything including the admin portal
 - **App-level access** — each resident must be explicitly granted access to each sub-application, with a role of `user` or `admin`
 
-Residents who are in the directory but don't yet have an auth account are visible in the admin portal but cannot be granted access until their account is created.
+Residents who are in the directory but don't yet have an auth account appear in the App Access screen with an amber **"🔗 Link"** button. Clicking it looks up their Supabase Auth UUID by email (via the `get_auth_id_by_email` RPC) and writes it back to their `profiles` row — after which access toggles unlock and access can be granted before the resident completes their first login.
 
 ### Resident Directory
 The directory stores resident contact information (name, address, phones, emails, tags) separately from auth credentials, so residents can be pre-loaded before they have accounts. Each resident can edit their own entry; directory admins and super admins can edit, add, or remove any entry. Features include search, tag filtering, print (full or filtered view), and select mode for bulk email/phone actions.
@@ -104,6 +104,16 @@ Extends Supabase `auth.users`. Contains both auth-facing fields and directory fi
 | surname, names, address | text | Directory fields |
 | phones, emails, tags | text[] | Directory fields (arrays) |
 | directory_visible | boolean | Show in resident directory |
+
+### `get_auth_id_by_email` (RPC function)
+Looks up an auth UUID from `auth.users` by email address. Used by the App Access screen to link invited residents to their profiles row before first login. Runs with `security definer` to access the otherwise-restricted `auth.users` table.
+
+```sql
+create or replace function get_auth_id_by_email(lookup_email text)
+returns uuid language sql security definer as $$
+  select id from auth.users where email = lookup_email limit 1;
+$$;
+```
 
 ### `app_access`
 | Column | Type | Notes |
@@ -208,8 +218,8 @@ Open http://localhost:5173
 ## Planned Enhancements
 
 ### Near Term
-- **Admin invite flow** — admin enters resident email, Supabase sends setup link, profile auto-links on first login
-- **Supabase trigger** — auto-links new auth account to existing directory profile by matching email
+- **Password reset flow** — investigate and fix reset email not working for invited users
+- **Supabase trigger** — auto-links new auth account to existing directory profile by matching email (would remove need for manual "Link" step in App Access)
 - **Text size toggle persistence** — save A/A+/A++ preference per user in Supabase
 
 ### Sub-Applications

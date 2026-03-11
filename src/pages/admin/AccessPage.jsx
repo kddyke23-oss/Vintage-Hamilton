@@ -24,6 +24,7 @@ export default function AccessPage() {
   const [access, setAccess] = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(null)
+  const [linking, setLinking] = useState(null)
 
   const fetchAll = async () => {
     try {
@@ -38,13 +39,13 @@ export default function AccessPage() {
       if (pError) throw pError
       if (aError) throw aError
 
-      // Build access map keyed on auth id (only for residents who have one)
+      // Build access map — keyed on auth id for linked residents,
+      // and on resident_id (as string) for unlinked ones
       const map = {}
       profiles?.forEach(p => {
-        if (p.id) {
-          map[p.id] = {}
-          APPS.forEach(a => { map[p.id][a.id] = 'none' })
-        }
+        const key = p.id || `unlinked-${p.resident_id}`
+        map[key] = {}
+        APPS.forEach(a => { map[key][a.id] = 'none' })
       })
       accessRows?.forEach(r => {
         if (map[r.user_id]) map[r.user_id][r.app_id] = r.role || 'user'
@@ -61,13 +62,43 @@ export default function AccessPage() {
 
   useEffect(() => { fetchAll() }, [])
 
-  const cycleAccess = async (userId, appId, currentState, name) => {
-    // Guard: resident has no auth account yet
-    if (!userId) {
-      toast.info(`${name} doesn't have an account yet — access can be granted once they register`)
-      return
+  // Attempt to find the auth UUID for an unlinked resident by email,
+  // update their profiles row, and return the new auth id.
+  const tryLinkAccount = async (resident) => {
+    const email = displayEmail(resident)
+    if (!email || email === '—') {
+      toast.error('No email address on record for this resident')
+      return null
     }
+    setLinking(resident.resident_id)
+    try {
+      // Use the admin lookup edge function (or RPC) to find auth user by email
+      const { data, error } = await supabase.rpc('get_auth_id_by_email', { lookup_email: email })
+      if (error) throw error
+      if (!data) {
+        toast.info(`No Supabase Auth account found for ${email} — they may not have accepted their invite yet`)
+        return null
+      }
+      // Link the auth id back to the profiles row
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ id: data })
+        .eq('resident_id', resident.resident_id)
+      if (updateError) throw updateError
 
+      toast.success(`Account linked for ${displayName(resident)}`)
+      await fetchAll()
+      return data
+    } catch (e) {
+      toast.error('Link failed: ' + e.message)
+      return null
+    } finally {
+      setLinking(null)
+    }
+  }
+
+  const cycleAccess = async (userId, appId, currentState, name) => {
+    if (!userId) return
     const nextState = NEXT_STATE[currentState]
     const appLabel = APPS.find(a => a.id === appId)?.label
     setSaving(`${userId}-${appId}`)
@@ -101,10 +132,7 @@ export default function AccessPage() {
   }
 
   const grantAll = async (userId, name) => {
-    if (!userId) {
-      toast.info(`${name} doesn't have an account yet — access can be granted once they register`)
-      return
-    }
+    if (!userId) return
     try {
       const toInsert = APPS
         .filter(a => access[userId]?.[a.id] === 'none')
@@ -127,10 +155,7 @@ export default function AccessPage() {
   }
 
   const revokeAll = async (userId, name) => {
-    if (!userId) {
-      toast.info(`${name} doesn't have an account yet`)
-      return
-    }
+    if (!userId) return
     try {
       const { error } = await supabase.from('app_access').delete().eq('user_id', userId)
       if (error) throw error
@@ -145,7 +170,6 @@ export default function AccessPage() {
     }
   }
 
-  // Helper: display name from whichever fields are populated
   const displayName = (r) => r.full_name || [r.surname, r.names].filter(Boolean).join(' ') || '—'
   const displayEmail = (r) => r.email || r.emails?.[0] || '—'
 
@@ -166,7 +190,7 @@ export default function AccessPage() {
         ))}
         <span className="ml-4 text-brand-300">|</span>
         <span className="flex items-center gap-1 text-brand-400 italic text-xs">
-          🔒 No account yet — access granted on registration
+          🔗 Invited but not yet logged in — click "Link" to connect their account
         </span>
       </div>
 
@@ -192,33 +216,51 @@ export default function AccessPage() {
             <tbody className="divide-y divide-brand-50">
               {residents.map(r => {
                 const hasAccount = !!r.id
+                const mapKey = r.id || `unlinked-${r.resident_id}`
                 const name = displayName(r)
+                const isLinking = linking === r.resident_id
                 return (
-                  <tr key={r.resident_id} className={`transition-colors ${hasAccount ? 'hover:bg-brand-50' : 'bg-gray-50 opacity-70'}`}>
+                  <tr key={r.resident_id} className={`transition-colors ${hasAccount ? 'hover:bg-brand-50' : 'bg-amber-50/40'}`}>
                     <td className="px-6 py-3">
                       <div className="font-medium text-brand-800 flex items-center gap-2">
                         {name}
-                        {!hasAccount && <span className="text-xs text-brand-300 font-normal">🔒 no account</span>}
+                        {!hasAccount && (
+                          <button
+                            onClick={() => tryLinkAccount(r)}
+                            disabled={isLinking}
+                            className="text-xs bg-amber-100 text-amber-700 hover:bg-amber-200 px-2 py-0.5 rounded-full font-normal transition-colors disabled:opacity-50"
+                          >
+                            {isLinking ? 'Linking…' : '🔗 Link'}
+                          </button>
+                        )}
                       </div>
                       <div className="text-brand-400 text-xs">{displayEmail(r)}</div>
+                      {!hasAccount && (
+                        <div className="text-amber-500 text-xs mt-0.5">Invited — awaiting first login</div>
+                      )}
                     </td>
                     {APPS.map(app => {
-                      const state = hasAccount ? (access[r.id]?.[app.id] ?? 'none') : 'none'
-                      const key = `${r.id}-${app.id}`
+                      const state = access[mapKey]?.[app.id] ?? 'none'
+                      const key = `${mapKey}-${app.id}`
                       const display = STATE_DISPLAY[state]
+                      // Toggles are locked only if there's truly no auth id AND no way to get one
+                      const isLocked = !hasAccount
                       return (
                         <td key={app.id} className="text-center px-4 py-3">
                           <button
-                            onClick={() => cycleAccess(r.id, app.id, state, name)}
+                            onClick={() => isLocked
+                              ? toast.info(`Link ${name}'s account first using the "Link" button`)
+                              : cycleAccess(r.id, app.id, state, name)
+                            }
                             disabled={saving === key}
                             className={`w-8 h-8 rounded-full text-base transition-all ${
-                              !hasAccount ? 'bg-gray-100 text-gray-300 cursor-not-allowed' :
+                              isLocked ? 'bg-amber-50 text-amber-300 cursor-pointer' :
                               saving === key ? 'opacity-50 cursor-wait' :
                               display.className
                             }`}
-                            title={!hasAccount ? 'No account yet' : `${name}: ${display.label} — click to change`}
+                            title={isLocked ? `Link ${name}'s account first` : `${name}: ${display.label} — click to change`}
                           >
-                            {saving === key ? '…' : hasAccount ? display.icon : '🔒'}
+                            {saving === key ? '…' : isLocked ? '🔗' : display.icon}
                           </button>
                         </td>
                       )
@@ -233,7 +275,7 @@ export default function AccessPage() {
                             className="text-xs text-red-500 hover:text-red-700 underline">None</button>
                         </div>
                       ) : (
-                        <span className="text-xs text-brand-300">—</span>
+                        <span className="text-xs text-amber-400">Link first</span>
                       )}
                     </td>
                   </tr>
