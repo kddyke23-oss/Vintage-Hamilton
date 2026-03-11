@@ -163,9 +163,9 @@ export default function AccessPage() {
       ) : residents.length === 0 ? (
         <div className="bg-white rounded-2xl p-8 text-center text-brand-400">No active residents found.</div>
       ) : (
-        <div className="bg-white rounded-2xl border border-brand-100 overflow-x-auto">
+        <div className="bg-white rounded-2xl border border-brand-100 overflow-auto max-h-[70vh]">
           <table className="w-full text-sm">
-            <thead className="bg-brand-50 border-b border-brand-100">
+            <thead className="bg-brand-50 border-b border-brand-100 sticky top-0 z-10">
               <tr>
                 <th className="text-left px-6 py-3 text-brand-600 font-semibold">Resident</th>
                 {APPS.map(app => (

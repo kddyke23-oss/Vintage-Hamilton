@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 
@@ -11,8 +11,8 @@ const navItems = [
 ]
 
 const textSizes = {
-  normal: { label: 'A', class: 'text-base' },
-  large:  { label: 'A+', class: 'text-lg' },
+  normal: { label: 'A',   class: 'text-base' },
+  large:  { label: 'A+',  class: 'text-lg' },
   xlarge: { label: 'A++', class: 'text-xl' },
 }
 
@@ -23,10 +23,24 @@ export default function AppShell({ children }) {
   const [textSize, setTextSize] = useState('normal')
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
+  // Close sidebar on mobile when route changes
+  useEffect(() => {
+    if (window.innerWidth < 768) {
+      setSidebarOpen(false)
+    }
+  }, [location.pathname])
+
+  // On first load, default mobile to closed, desktop to open
+  useEffect(() => {
+    setSidebarOpen(window.innerWidth >= 768)
+  }, [])
+
   const handleSignOut = async () => {
     await signOut()
     navigate('/login')
   }
+
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
 
   return (
     <div className={`min-h-screen bg-brand-50 font-body ${textSizes[textSize].class}`}>
@@ -82,12 +96,28 @@ export default function AppShell({ children }) {
         </div>
       </header>
 
+      {/* Mobile backdrop — tapping it closes the sidebar */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-30 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
       {/* Body: sidebar + content */}
       <div className="flex pt-14">
 
-        {/* Sidebar */}
-        <aside className={`fixed top-14 left-0 bottom-0 z-40 bg-brand-900 text-white transition-all duration-200 ${sidebarOpen ? 'w-52' : 'w-0 overflow-hidden'}`}>
-          <nav className="p-3 space-y-1">
+        {/* Sidebar
+            - Mobile: fixed overlay, full width up to w-52, sits above content (z-40)
+            - Desktop: fixed sidebar that pushes content via ml-52 on main
+        */}
+        <aside className={`
+          fixed top-14 left-0 bottom-0 z-40 bg-brand-900 text-white
+          transition-all duration-200
+          ${sidebarOpen ? 'w-52' : 'w-0 overflow-hidden'}
+        `}>
+          <nav className="p-3 space-y-1 w-52">
             {navItems.map(item => (
               <Link
                 key={item.path}
@@ -104,8 +134,14 @@ export default function AppShell({ children }) {
           </nav>
         </aside>
 
-        {/* Main content */}
-        <main className={`flex-1 min-h-screen transition-all duration-200 ${sidebarOpen ? 'ml-52' : 'ml-0'}`}>
+        {/* Main content
+            - Mobile: no left margin (sidebar overlays)
+            - Desktop: ml-52 when sidebar open, ml-0 when closed
+        */}
+        <main className={`
+          flex-1 min-h-screen transition-all duration-200
+          ${sidebarOpen ? 'md:ml-52' : 'ml-0'}
+        `}>
           <div className="max-w-5xl mx-auto px-6 py-8">
             {children}
           </div>
