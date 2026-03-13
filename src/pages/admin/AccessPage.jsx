@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useToast } from '@/components/ui/Toast'
 
@@ -18,16 +18,62 @@ const STATE_DISPLAY = {
   admin: { icon: '⭐', label: 'Admin',     className: 'bg-yellow-100 text-yellow-700 hover:bg-red-50 hover:text-red-500' },
 }
 
-// Filter options: one per app + admin role + all
-const FILTER_OPTIONS = [
-  { id: 'all',       label: 'All Residents', icon: '👤' },
-  { id: 'directory', label: 'Directory',     icon: '👥' },
-  { id: 'calendar',  label: 'Calendar',      icon: '📅' },
-  { id: 'lotto',     label: 'Lotto',         icon: '🎟️' },
-  { id: 'blog',      label: 'Blog',          icon: '📝' },
-  { id: 'admin',     label: 'Any Admin',     icon: '⭐' },
-  { id: 'none',      label: 'No Access',     icon: '○'  },
+// Filter options per column
+const COLUMN_FILTER_OPTIONS = [
+  { value: 'all',   label: 'All' },
+  { value: 'user',  label: '✅ User' },
+  { value: 'admin', label: '⭐ Admin' },
+  { value: 'any',   label: '✅⭐ Any Access' },
+  { value: 'none',  label: '○ No Access' },
 ]
+
+// ─── Column Filter Dropdown ───────────────────────────────────────────────────
+function ColumnFilterDropdown({ appId, value, onChange }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const isActive = value !== 'all'
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative inline-block">
+      <button
+        onClick={() => setOpen(o => !o)}
+        title={isActive ? `Filtered: ${COLUMN_FILTER_OPTIONS.find(o => o.value === value)?.label}` : 'Filter this column'}
+        className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs transition-all ${
+          isActive
+            ? 'bg-brand-700 text-white'
+            : 'bg-brand-100 text-brand-400 hover:bg-brand-200 hover:text-brand-600'
+        }`}
+      >
+        ▾
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 bg-white border border-brand-200 rounded-lg shadow-lg z-50 min-w-[145px] py-1 text-left">
+          {COLUMN_FILTER_OPTIONS.map(opt => (
+            <button
+              key={opt.value}
+              onClick={() => { onChange(appId, opt.value); setOpen(false) }}
+              className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${
+                value === opt.value
+                  ? 'bg-brand-700 text-white font-medium'
+                  : 'text-brand-700 hover:bg-brand-50'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function AccessPage() {
   const toast = useToast()
@@ -35,7 +81,11 @@ export default function AccessPage() {
   const [access, setAccess] = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(null)
-  const [activeFilter, setActiveFilter] = useState('all')
+
+  // Per-column filters: { directory: 'all', calendar: 'all', lotto: 'all', blog: 'all' }
+  const [colFilters, setColFilters] = useState(
+    Object.fromEntries(APPS.map(a => [a.id, 'all']))
+  )
 
   const fetchAll = async () => {
     try {
@@ -50,7 +100,6 @@ export default function AccessPage() {
       if (pError) throw pError
       if (aError) throw aError
 
-      // Build access map keyed on auth id (linked residents only)
       const map = {}
       profiles?.forEach(p => {
         if (p.id) {
@@ -73,32 +122,28 @@ export default function AccessPage() {
 
   useEffect(() => { fetchAll() }, [])
 
-  // ── Filtering logic ──────────────────────────────────────────────────────────
+  // ── Filter logic ─────────────────────────────────────────────────────────────
+  const hasActiveFilters = Object.values(colFilters).some(v => v !== 'all')
+
   const filteredResidents = residents.filter(r => {
-    if (activeFilter === 'all') return true
-    if (!r.id) return activeFilter === 'none'
-    const userAccess = access[r.id] ?? {}
-    if (activeFilter === 'none') {
-      return Object.values(userAccess).every(v => v === 'none')
-    }
-    if (activeFilter === 'admin') {
-      return Object.values(userAccess).some(v => v === 'admin')
-    }
-    // specific app — show anyone with user or admin access to that app
-    return userAccess[activeFilter] && userAccess[activeFilter] !== 'none'
+    return APPS.every(app => {
+      const filterVal = colFilters[app.id]
+      if (filterVal === 'all') return true
+      const state = r.id ? (access[r.id]?.[app.id] ?? 'none') : 'none'
+      if (filterVal === 'any') return state !== 'none'
+      return state === filterVal
+    })
   })
 
-  const getFilterCount = (filterId) => {
-    if (filterId === 'all') return residents.length
-    return residents.filter(r => {
-      if (!r.id) return filterId === 'none'
-      const userAccess = access[r.id] ?? {}
-      if (filterId === 'none') return Object.values(userAccess).every(v => v === 'none')
-      if (filterId === 'admin') return Object.values(userAccess).some(v => v === 'admin')
-      return userAccess[filterId] && userAccess[filterId] !== 'none'
-    }).length
+  const setColFilter = (appId, value) => {
+    setColFilters(prev => ({ ...prev, [appId]: value }))
   }
 
+  const clearAllFilters = () => {
+    setColFilters(Object.fromEntries(APPS.map(a => [a.id, 'all'])))
+  }
+
+  // ── Access mutations ──────────────────────────────────────────────────────────
   const cycleAccess = async (userId, appId, currentState, name) => {
     if (!userId) return
     const nextState = NEXT_STATE[currentState]
@@ -122,7 +167,6 @@ export default function AccessPage() {
         if (error) throw error
         toast.success(`${name} is now ${nextState === 'admin' ? 'an admin' : 'a user'} for ${appLabel}`)
       }
-
       setAccess(prev => ({
         ...prev,
         [userId]: { ...prev[userId], [appId]: nextState }
@@ -172,7 +216,7 @@ export default function AccessPage() {
     }
   }
 
-  const displayName = (r) => r.full_name || [r.surname, r.names].filter(Boolean).join(' ') || '—'
+  const displayName  = (r) => r.full_name || [r.surname, r.names].filter(Boolean).join(' ') || '—'
   const displayEmail = (r) => r.email || r.emails?.[0] || '—'
 
   return (
@@ -180,44 +224,6 @@ export default function AccessPage() {
       <div>
         <h1 className="font-display text-3xl text-brand-800 mb-1">App Access</h1>
         <p className="text-brand-500">Control which apps each resident can access and their role.</p>
-      </div>
-
-      {/* ── Quick-filter buttons ── */}
-      <div className="flex flex-wrap gap-2 items-center">
-        <span className="text-sm font-medium text-brand-500 mr-1">Show:</span>
-        {FILTER_OPTIONS.map(opt => {
-          const count = loading ? null : getFilterCount(opt.id)
-          const isActive = activeFilter === opt.id
-          return (
-            <button
-              key={opt.id}
-              onClick={() => setActiveFilter(opt.id)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all border ${
-                isActive
-                  ? 'bg-brand-700 text-white border-brand-700 shadow-sm'
-                  : 'bg-white text-brand-600 border-brand-200 hover:border-brand-400 hover:bg-brand-50'
-              }`}
-            >
-              <span>{opt.icon}</span>
-              <span>{opt.label}</span>
-              {count !== null && (
-                <span className={`text-xs rounded-full px-1.5 py-0.5 font-semibold ${
-                  isActive ? 'bg-white/20 text-white' : 'bg-brand-100 text-brand-500'
-                }`}>
-                  {count}
-                </span>
-              )}
-            </button>
-          )
-        })}
-        {activeFilter !== 'all' && (
-          <button
-            onClick={() => setActiveFilter('all')}
-            className="text-xs text-brand-400 hover:text-brand-600 underline ml-1"
-          >
-            Clear filter
-          </button>
-        )}
       </div>
 
       {/* Legend */}
@@ -228,18 +234,42 @@ export default function AccessPage() {
             <span>{icon}</span> {label}
           </span>
         ))}
-        <span className="ml-4 text-brand-300">|</span>
+        <span className="ml-2 text-brand-300">|</span>
         <span className="flex items-center gap-1 text-brand-400 italic text-xs">
-          🔒 No account yet — access unlocks automatically after first login
+          🔒 No account yet — access unlocks after first login
+        </span>
+        <span className="text-brand-300">|</span>
+        <span className="flex items-center gap-1 text-brand-400 italic text-xs">
+          ▾ Click to filter a column
         </span>
       </div>
 
-      {/* Result count when filtered */}
-      {activeFilter !== 'all' && !loading && (
-        <p className="text-sm text-brand-500">
-          Showing <span className="font-semibold text-brand-700">{filteredResidents.length}</span> of {residents.length} residents
-          {' '}— filtered by <span className="font-semibold">{FILTER_OPTIONS.find(f => f.id === activeFilter)?.label}</span>
-        </p>
+      {/* Active filter banner */}
+      {hasActiveFilters && (
+        <div className="flex items-center gap-3 bg-brand-50 border border-brand-200 rounded-lg px-4 py-2.5 text-sm flex-wrap">
+          <span className="font-semibold text-brand-700">Filters active:</span>
+          {APPS.filter(a => colFilters[a.id] !== 'all').map(a => (
+            <span key={a.id} className="inline-flex items-center gap-1.5 bg-brand-700 text-white text-xs px-2.5 py-1 rounded-full font-medium">
+              {a.icon} {a.label}
+              <span className="opacity-60">→</span>
+              {COLUMN_FILTER_OPTIONS.find(o => o.value === colFilters[a.id])?.label}
+              <button
+                onClick={() => setColFilter(a.id, 'all')}
+                className="ml-0.5 opacity-70 hover:opacity-100 font-bold leading-none"
+                title={`Remove ${a.label} filter`}
+              >×</button>
+            </span>
+          ))}
+          <span className="text-brand-500">
+            Showing <span className="font-semibold text-brand-700">{filteredResidents.length}</span> of {residents.length} residents
+          </span>
+          <button
+            onClick={clearAllFilters}
+            className="ml-auto text-xs text-red-500 hover:text-red-700 underline font-medium"
+          >
+            Clear all filters
+          </button>
+        </div>
       )}
 
       {loading ? (
@@ -248,7 +278,8 @@ export default function AccessPage() {
         <div className="bg-white rounded-2xl p-8 text-center text-brand-400">No active residents found.</div>
       ) : filteredResidents.length === 0 ? (
         <div className="bg-white rounded-2xl p-8 text-center text-brand-400">
-          No residents match this filter.
+          No residents match the current filters.{' '}
+          <button onClick={clearAllFilters} className="text-brand-600 underline">Clear filters</button>
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-brand-100 overflow-auto max-h-[70vh]">
@@ -256,12 +287,25 @@ export default function AccessPage() {
             <thead className="bg-brand-50 border-b border-brand-100 sticky top-0 z-10">
               <tr>
                 <th className="text-left px-6 py-3 text-brand-600 font-semibold">Resident</th>
-                {APPS.map(app => (
-                  <th key={app.id} className="text-center px-4 py-3 text-brand-600 font-semibold">
-                    <div>{app.icon}</div>
-                    <div className="text-xs font-normal">{app.label}</div>
-                  </th>
-                ))}
+                {APPS.map(app => {
+                  const isFiltered = colFilters[app.id] !== 'all'
+                  return (
+                    <th
+                      key={app.id}
+                      className={`text-center px-4 py-3 text-brand-600 font-semibold transition-colors ${isFiltered ? 'bg-brand-100' : ''}`}
+                    >
+                      <div className="flex flex-col items-center gap-1">
+                        <div>{app.icon}</div>
+                        <div className="text-xs font-normal">{app.label}</div>
+                        <ColumnFilterDropdown
+                          appId={app.id}
+                          value={colFilters[app.id]}
+                          onChange={setColFilter}
+                        />
+                      </div>
+                    </th>
+                  )
+                })}
                 <th className="text-center px-4 py-3 text-brand-600 font-semibold">Bulk</th>
               </tr>
             </thead>
@@ -282,12 +326,13 @@ export default function AccessPage() {
                       const state = hasAccount ? (access[r.id]?.[app.id] ?? 'none') : 'none'
                       const key = `${r.id}-${app.id}`
                       const display = STATE_DISPLAY[state]
+                      const isFiltered = colFilters[app.id] !== 'all'
                       return (
-                        <td key={app.id} className="text-center px-4 py-3">
+                        <td key={app.id} className={`text-center px-4 py-3 transition-colors ${isFiltered ? 'bg-brand-50' : ''}`}>
                           <button
                             onClick={() => hasAccount
                               ? cycleAccess(r.id, app.id, state, name)
-                              : toast.info(`${name} hasn't logged in yet — access will unlock automatically after their first login`)
+                              : toast.info(`${name} hasn't logged in yet — access will unlock after their first login`)
                             }
                             disabled={saving === key}
                             className={`w-8 h-8 rounded-full text-base transition-all ${
