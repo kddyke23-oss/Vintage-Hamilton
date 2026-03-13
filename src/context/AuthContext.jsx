@@ -48,10 +48,13 @@ export function AuthProvider({ children }) {
       // Detect invite link sign-in — user has been invited but has no password yet
       // Redirect them to reset-password to set one up
       if (event === 'SIGNED_IN' && session?.user) {
-        const meta = session.user.user_metadata
-        const isInvitedUser = meta?.invited_at || !session.user.last_sign_in_at ||
-          (session.user.created_at === session.user.last_sign_in_at)
-        
+        const invitedAt = session.user.invited_at
+        const confirmedAt = session.user.confirmed_at
+        // Fresh invite: invited_at is set and confirmed_at matches created_at
+        // meaning they've never set a password, just clicked the invite link
+        const isInvitedUser = !!invitedAt && !!confirmedAt &&
+          (new Date(confirmedAt).getTime() === new Date(session.user.created_at).getTime())
+
         if (isInvitedUser && window.location.pathname !== '/reset-password') {
           window.location.href = '/reset-password'
         }
