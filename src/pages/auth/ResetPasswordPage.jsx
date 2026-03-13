@@ -50,7 +50,7 @@ export default function ResetPasswordPage() {
 
     setLoading(false)
     setDone(true)
-    setTimeout(() => navigate('/'), 3000)
+    setTimeout(() => window.location.href = '/', 3000)
   }
 
   return (
