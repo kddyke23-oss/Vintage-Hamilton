@@ -45,24 +45,10 @@ export function AuthProvider({ children }) {
       setUser(session?.user ?? null)
       loadUserData(session?.user?.id).finally(() => setLoading(false))
 
-      // Detect invite link sign-in — user has been invited but has no password yet
-      // Redirect them to reset-password to set one up
+      // Detect invite link sign-in — if invited_at is set, user came via invite
+      // and needs to set a password before entering the app
       if (event === 'SIGNED_IN' && session?.user) {
-        const u = session.user
-        console.log('[Auth] SIGNED_IN event:', {
-          invited_at: u.invited_at,
-          confirmed_at: u.confirmed_at,
-          created_at: u.created_at,
-          last_sign_in_at: u.last_sign_in_at,
-          pathname: window.location.pathname
-        })
-        const invitedAt = u.invited_at
-        const confirmedAt = u.confirmed_at
-        const isInvitedUser = !!invitedAt && !!confirmedAt &&
-          (new Date(confirmedAt).getTime() === new Date(u.created_at).getTime())
-
-        console.log('[Auth] isInvitedUser:', isInvitedUser)
-
+        const isInvitedUser = !!session.user.invited_at
         if (isInvitedUser && window.location.pathname !== '/reset-password') {
           window.location.href = '/reset-password'
         }
