@@ -1293,9 +1293,154 @@ function ChartsTab({ members, draws, periods }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// MOBILE DASHBOARD — phone-optimised summary view
+// ─────────────────────────────────────────────────────────────────────────────
+function LottoMobileDashboard({ members, draws, periods, payments, user }) {
+  const completed = draws.filter(d => !isPending(d));
+  const totalPrize = completed.reduce((s, d) => s + (d.prize || 0), 0);
+  const activeMembers = members.filter(m => !m.exit_date);
+
+  const sortedPeriods = [...periods].sort((a, b) => a.start_date.localeCompare(b.start_date));
+  const today = new Date().toISOString().slice(0, 10);
+  const currentPeriod = sortedPeriods.findLast(p => p.start_date <= today) || sortedPeriods[sortedPeriods.length - 1];
+  const periodDraws = currentPeriod ? draws.filter(d => d.period_id === currentPeriod.id) : [];
+  const periodCompleted = periodDraws.filter(d => !isPending(d));
+  const dpp = currentPeriod?.weeks === 4 ? 12 : 9;
+  const periodPrize = periodCompleted.reduce((s, d) => s + (d.prize || 0), 0);
+
+  // Find the logged-in user's member entry (match by resident profile uuid linkage)
+  const myMember = members.find(m =>
+    m.profile1?.resident_id != null || m.profile2?.resident_id != null
+  ) || null;
+
+  // Recent draws (last 3)
+  const recentDraws = [...completed]
+    .sort((a, b) => b.draw_date.localeCompare(a.draw_date))
+    .slice(0, 3);
+
+  // Next pending draw
+  const nextDraw = draws
+    .filter(d => isPending(d))
+    .sort((a, b) => a.draw_date.localeCompare(b.draw_date))[0];
+
+  const mStyle = {
+    page:    { fontFamily: "var(--font-body)", padding: "1rem", maxWidth: 480, margin: "0 auto" },
+    heading: { fontFamily: "var(--font-display)", fontSize: "1.6rem", color: "var(--color-primary-dark)", margin: "0 0 0.2rem" },
+    sub:     { fontSize: "0.82rem", color: "#6b7280", margin: "0 0 1.25rem" },
+    grid:    { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "1rem" },
+    card:    { background: "white", borderRadius: 10, padding: "0.85rem 1rem", boxShadow: "0 1px 6px rgba(0,0,0,0.07)", borderLeft: "3px solid var(--color-primary)" },
+    cardGold:{ background: "white", borderRadius: 10, padding: "0.85rem 1rem", boxShadow: "0 1px 6px rgba(0,0,0,0.07)", borderLeft: "3px solid var(--color-gold)" },
+    lbl:     { fontSize: "0.68rem", fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 },
+    val:     { fontSize: "1.4rem", fontWeight: 700, color: "var(--color-primary-dark)", fontFamily: "var(--font-display)" },
+    valGold: { fontSize: "1.4rem", fontWeight: 700, color: "var(--color-gold)", fontFamily: "var(--font-display)" },
+    hint:    { fontSize: "0.73rem", color: "#9ca3af", marginTop: 1 },
+    section: { background: "white", borderRadius: 10, padding: "1rem", boxShadow: "0 1px 6px rgba(0,0,0,0.07)", marginBottom: "0.75rem" },
+    secTitle:{ fontFamily: "var(--font-display)", fontSize: "1rem", color: "var(--color-primary)", marginBottom: "0.6rem" },
+    drawRow: { display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem", flexWrap: "wrap" },
+    drawDate:{ fontSize: "0.75rem", color: "#9ca3af", minWidth: 55 },
+    pill:    { background: "var(--color-gold-light)", color: "#7a5c00", padding: "0.1rem 0.45rem", borderRadius: 10, fontSize: "0.72rem", fontWeight: 600, marginLeft: "auto" },
+    warning: { background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 8, padding: "0.65rem 0.85rem", marginBottom: "0.75rem", display: "flex", gap: "0.5rem", alignItems: "flex-start" },
+    warnTxt: { fontSize: "0.78rem", color: "#92400e", lineHeight: 1.4 },
+    fullBtn: { display: "block", width: "100%", padding: "0.75rem", background: "var(--color-primary)", color: "white", border: "none", borderRadius: 8, fontSize: "0.9rem", fontWeight: 600, fontFamily: "var(--font-body)", cursor: "pointer", textAlign: "center", marginTop: "0.25rem" },
+  };
+
+  return (
+    <div style={mStyle.page}>
+      <style>{VH_STYLES}</style>
+
+      <h1 style={mStyle.heading}>🎱 Lotto Syndicate</h1>
+      <p style={mStyle.sub}>Vintage at Hamilton · Powerball Syndicate</p>
+
+      {/* Stats grid */}
+      <div style={mStyle.grid}>
+        <div style={mStyle.card}>
+          <div style={mStyle.lbl}>Total Winnings</div>
+          <div style={mStyle.valGold}>{fmtMoney(totalPrize)}</div>
+          <div style={mStyle.hint}>{completed.length} draws complete</div>
+        </div>
+        <div style={mStyle.card}>
+          <div style={mStyle.lbl}>Active Members</div>
+          <div style={mStyle.val}>{activeMembers.length}</div>
+          <div style={mStyle.hint}>{members.length} total</div>
+        </div>
+        <div style={mStyle.card}>
+          <div style={mStyle.lbl}>{currentPeriod?.label || "Period"}</div>
+          <div style={mStyle.val}>{periodCompleted.length}<span style={{ fontSize: "0.9rem", fontWeight: 400 }}>/{dpp}</span></div>
+          <div style={mStyle.hint}>draws complete</div>
+        </div>
+        <div style={mStyle.cardGold}>
+          <div style={mStyle.lbl}>Period Winnings</div>
+          <div style={mStyle.valGold}>{fmtMoney(periodPrize)}</div>
+          <div style={mStyle.hint}>this period</div>
+        </div>
+      </div>
+
+      {/* Next draw */}
+      {nextDraw && (
+        <div style={mStyle.section}>
+          <div style={mStyle.secTitle}>Next Draw</div>
+          <div style={{ fontSize: "0.85rem", color: "#374151" }}>
+            {fmt(nextDraw.draw_date)} · Draw #{nextDraw.draw_num}
+          </div>
+        </div>
+      )}
+
+      {/* Recent draws */}
+      <div style={mStyle.section}>
+        <div style={mStyle.secTitle}>Recent Draws</div>
+        {recentDraws.length === 0 && <p style={{ color: "#9ca3af", fontSize: "0.82rem" }}>No draws yet.</p>}
+        {recentDraws.map(dr => (
+          <div key={dr.id} style={mStyle.drawRow}>
+            <span style={mStyle.drawDate}>{fmtS(dr.draw_date)}</span>
+            <div style={{ display: "flex", gap: 3 }}>
+              {dr.winning.map((n, i) => <Ball key={i} number={n} isPb={false} isMatch={false} small />)}
+              <Ball number={dr.powerball} isPb={true} isMatch={false} small />
+            </div>
+            {dr.prize > 0 && <span style={mStyle.pill}>{fmtMoney(dr.prize)}</span>}
+          </div>
+        ))}
+      </div>
+
+      {/* Full app link with warning */}
+      <div style={mStyle.warning}>
+        <span style={{ fontSize: "1rem" }}>📱</span>
+        <span style={mStyle.warnTxt}>
+          The full Lotto app works best on a tablet or desktop. On a phone you may need to scroll sideways on some screens.
+        </span>
+      </div>
+      <button
+        style={mStyle.fullBtn}
+        onClick={() => {
+          // Set a flag so LottoTracker shows full view
+          window.__lottoForceDesktop = true;
+          window.dispatchEvent(new Event("lottoForceDesktop"));
+        }}
+      >
+        Open Full App →
+      </button>
+    </div>
+  );
+}
+
 export default function LottoTracker({ user, isAdmin, isLottoAdmin }) {
   const navigate = useNavigate();
   const canAdmin = isAdmin || isLottoAdmin;
+
+  // Mobile detection — phone = < 768px width
+  const [isMobileView, setIsMobileView] = useState(() => window.innerWidth < 768);
+  const [forceDesktop, setForceDesktop] = useState(false);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobileView(window.innerWidth < 768);
+    const handleForce  = () => setForceDesktop(true);
+    window.addEventListener("resize", handleResize);
+    window.addEventListener("lottoForceDesktop", handleForce);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("lottoForceDesktop", handleForce);
+    };
+  }, []);
 
   const [tab, setTab]             = useState("dash");
   const [members, setMembers]     = useState([]);
@@ -1437,11 +1582,24 @@ export default function LottoTracker({ user, isAdmin, isLottoAdmin }) {
     { id: "charts", label: "Charts", icon: "winnings" },
   ];
 
+  // Show mobile summary if on phone and user hasn't tapped "Open Full App"
+  const showMobile = isMobileView && !forceDesktop;
+
   if (loading) return (
     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "50vh" }}>
       <div style={{ width: 36, height: 36, border: "3px solid #e5e7eb", borderTopColor: "var(--color-primary)", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
     </div>
   );
+
+  // ── Mobile view ──────────────────────────────────────────────────────────
+  if (showMobile) {
+    return (
+      <LottoMobileDashboard
+        members={members} draws={draws} periods={periods}
+        payments={payments} user={user}
+      />
+    );
+  }
 
   return (
     <div style={{ fontFamily: "var(--font-body)" }}>

@@ -17,7 +17,7 @@ const textSizes = {
 }
 
 export default function AppShell({ children }) {
-  const { user, signOut } = useAuth()
+  const { user, signOut, isAdmin } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [textSize, setTextSize] = useState('normal')
@@ -117,20 +117,42 @@ export default function AppShell({ children }) {
           transition-all duration-200
           ${sidebarOpen ? 'w-52' : 'w-0 overflow-hidden'}
         `}>
-          <nav className="p-3 space-y-1 w-52">
-            {navItems.map(item => (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  location.pathname === item.path
-                    ? 'bg-gold-500 text-brand-900'
-                    : 'text-brand-300 hover:bg-brand-700 hover:text-white'
-                }`}
-              >
-                {item.label}
-              </Link>
-            ))}
+          <nav className="p-3 w-52 flex flex-col" style={{ height: 'calc(100vh - 3.5rem)' }}>
+            <div className="space-y-1 flex-1">
+              {navItems.map(item => (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                    location.pathname === item.path
+                      ? 'bg-gold-500 text-brand-900'
+                      : 'text-brand-300 hover:bg-brand-700 hover:text-white'
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+
+            {/* Admin link — super admins only */}
+            {isAdmin && (
+              <div className="pt-3 mt-3 border-t border-brand-700">
+                <Link
+                  to="/admin"
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                    location.pathname.startsWith('/admin')
+                      ? 'bg-gold-500 text-brand-900'
+                      : 'text-brand-400 hover:bg-brand-700 hover:text-white'
+                  }`}
+                >
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                  Admin
+                </Link>
+              </div>
+            )}
           </nav>
         </aside>
 
