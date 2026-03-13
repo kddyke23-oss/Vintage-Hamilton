@@ -52,15 +52,17 @@ function Toast({ message }) {
 
 // ─── Resident Card ────────────────────────────────────────────────────────────
 function ResidentCard({ entry, canEdit, onEdit, onDelete, selectMode, selected, onToggleSelect }) {
+  const isHidden = entry.directory_visible === false;
   return (
     <div
       onClick={() => selectMode && onToggleSelect()}
       style={{
         background: "white", borderRadius: "10px", padding: "1.25rem",
         boxShadow: selected ? "0 0 0 2px var(--color-gold), 0 4px 16px rgba(0,0,0,0.08)" : "0 2px 8px rgba(0,0,0,0.06)",
-        borderLeft: `4px solid ${selected ? "var(--color-gold)" : "var(--color-primary)"}`,
+        borderLeft: `4px solid ${isHidden ? "#dc2626" : selected ? "var(--color-gold)" : "var(--color-primary)"}`,
         transition: "all 0.2s", cursor: selectMode ? "pointer" : "default",
         position: "relative", transform: selectMode && selected ? "translateY(-1px)" : "none",
+        opacity: isHidden ? 0.6 : 1,
       }}
     >
       {selectMode && (
@@ -74,6 +76,14 @@ function ResidentCard({ entry, canEdit, onEdit, onDelete, selectMode, selected, 
         }}>
           {selected && "✓"}
         </div>
+      )}
+      {isHidden && !selectMode && (
+        <div style={{
+          position: "absolute", top: "0.75rem", right: "0.75rem",
+          background: "#fee2e2", color: "#dc2626", fontSize: "0.68rem",
+          fontWeight: "700", padding: "0.15rem 0.45rem", borderRadius: "10px",
+          letterSpacing: "0.04em", textTransform: "uppercase",
+        }}>Hidden</div>
       )}
       <div style={{ fontFamily: "var(--font-display)", fontSize: "1.1rem", fontWeight: "700", color: "var(--color-primary-dark)", marginBottom: "0.15rem" }}>
         {entry.surname}
@@ -229,7 +239,7 @@ const tdStyle = {
 };
 
 // ─── Entry Modal ──────────────────────────────────────────────────────────────
-function EntryModal({ entry, onSave, onClose, title, isSaving }) {
+function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAdmin }) {
   // Split existing address into house number + street for the form
   const parsed = parseAddress(entry.address);
   const knownStreet = STREETS.includes(parsed.street) ? parsed.street : "";
@@ -244,6 +254,9 @@ function EntryModal({ entry, onSave, onClose, title, isSaving }) {
     phones: entry.phones?.length ? entry.phones : [""],
     emails: entry.emails?.length ? entry.emails : [""],
     tags: entry.tags || [],
+    notify_calendar: entry.notify_calendar ?? false,
+    notify_blog: entry.notify_blog ?? false,
+    directory_visible: entry.directory_visible ?? true,
   });
   const [newTag, setNewTag] = useState("");
 
@@ -270,6 +283,9 @@ function EntryModal({ entry, onSave, onClose, title, isSaving }) {
       phones: form.phones.filter(p => p.trim()),
       emails: form.emails.filter(e => e.trim()),
       tags: form.tags,
+      notify_calendar: form.notify_calendar,
+      notify_blog: form.notify_blog,
+      directory_visible: form.directory_visible,
     });
   };
 
@@ -358,6 +374,53 @@ function EntryModal({ entry, onSave, onClose, title, isSaving }) {
               </div>
             )}
           </ModalField>
+
+          {/* ── Directory Visibility (admin only) ── */}
+          {isAdmin && (
+            <ModalField label="Directory Visibility">
+              <label style={{ display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer", padding: "0.5rem 0.75rem", borderRadius: "6px", background: form.directory_visible ? "#f0fdf4" : "#fef2f2", border: `1px solid ${form.directory_visible ? "#86efac" : "#fca5a5"}` }}>
+                <input
+                  type="checkbox"
+                  checked={form.directory_visible}
+                  onChange={e => updateField("directory_visible", e.target.checked)}
+                  style={{ width: "16px", height: "16px", accentColor: "var(--color-primary)", cursor: "pointer", flexShrink: 0 }}
+                />
+                <div>
+                  <div style={{ fontSize: "0.875rem", fontWeight: "600", color: "#374151" }}>
+                    {form.directory_visible ? "Visible in directory" : "Hidden from directory"}
+                  </div>
+                  <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>
+                    {form.directory_visible ? "Resident appears on the directory page" : "Resident is not shown to other residents"}
+                  </div>
+                </div>
+              </label>
+            </ModalField>
+          )}
+
+          {/* ── Notification Preferences (own record only) ── */}
+          {isOwnRecord && (
+            <ModalField label="Email Notifications">
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+                {[
+                  { key: "notify_calendar", label: "Social Calendar", desc: "New events and updates" },
+                  { key: "notify_blog",     label: "Community Blog",  desc: "New posts and comments" },
+                ].map(({ key, label, desc }) => (
+                  <label key={key} style={{ display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer", padding: "0.5rem 0.75rem", borderRadius: "6px", background: "#f9fafb", border: "1px solid #e5e7eb" }}>
+                    <input
+                      type="checkbox"
+                      checked={form[key]}
+                      onChange={e => updateField(key, e.target.checked)}
+                      style={{ width: "16px", height: "16px", accentColor: "var(--color-primary)", cursor: "pointer", flexShrink: 0 }}
+                    />
+                    <div>
+                      <div style={{ fontSize: "0.875rem", fontWeight: "600", color: "#374151" }}>{label}</div>
+                      <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>{desc}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </ModalField>
+          )}
         </div>
 
         {/* Fixed footer — always visible */}
@@ -469,17 +532,19 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
   const [selectedIds, setSelectedIds]       = useState(new Set());
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [streetFilter, setStreetFilter]     = useState(""); // "" = normal grid view
+  const [showHidden, setShowHidden]         = useState(false);
 
-  useEffect(() => { fetchResidents(); }, []);
+  useEffect(() => { fetchResidents(showHidden); }, [showHidden]);
 
-  async function fetchResidents() {
+  async function fetchResidents(includeHidden = false) {
     setLoading(true);
-    const { data, error } = await supabase
+    let query = supabase
       .from("profiles")
-      .select("resident_id, id, surname, names, address, phones, emails, tags, directory_visible")
+      .select("resident_id, id, surname, names, address, phones, emails, tags, directory_visible, notify_calendar, notify_blog")
       .not("surname", "is", null)
-      .eq("directory_visible", true)
       .order("surname");
+    if (!includeHidden) query = query.eq("directory_visible", true);
+    const { data, error } = await query;
     if (error) { showToast("Error loading directory"); console.error(error); }
     else setResidents(data || []);
     setLoading(false);
@@ -518,7 +583,7 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
 
   async function handleSave(entry) {
     setIsSaving(true);
-    const { resident_id, id, ...fields } = entry;
+    const { resident_id, id, _isOwnRecord, ...fields } = entry;
     let error;
     if (resident_id) {
       ({ error } = await supabase.from("profiles").update(fields).eq("resident_id", resident_id));
@@ -526,7 +591,7 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
       ({ error } = await supabase.from("profiles").insert([{ ...fields }]));
     }
     if (error) { showToast("Error saving entry"); console.error(error); }
-    else { showToast(resident_id ? "Entry updated" : "Resident added"); await fetchResidents(); }
+    else { showToast(resident_id ? "Entry updated" : "Resident added"); await fetchResidents(showHidden); }
     setEditingEntry(null);
     setShowAddModal(false);
     setIsSaving(false);
@@ -536,7 +601,7 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
     if (!confirm("Remove this resident from the directory?")) return;
     const { error } = await supabase.from("profiles").update({ directory_visible: false }).eq("resident_id", residentId);
     if (error) { showToast("Error removing entry"); }
-    else { showToast("Resident removed"); await fetchResidents(); }
+    else { showToast("Resident removed"); await fetchResidents(showHidden); }
   }
 
   const toggleSelect     = (rid) => setSelectedIds(prev => { const s = new Set(prev); s.has(rid) ? s.delete(rid) : s.add(rid); return s; });
@@ -589,6 +654,14 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
         <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
           {canAdminister && (
             <button onClick={() => setShowAddModal(true)} style={btnPrimaryStyle}><IconPlus /> Add Resident</button>
+          )}
+          {canAdminister && (
+            <button
+              onClick={() => setShowHidden(s => !s)}
+              style={showHidden ? { ...btnPrimaryStyle, background: "#dc2626" } : btnSecStyle}
+            >
+              {showHidden ? "👁 Hiding Hidden" : "👁 Show Hidden"}
+            </button>
           )}
           <button onClick={() => setShowPrintModal(true)} style={btnSecStyle}><IconPrint /> Print</button>
           <button onClick={toggleSelectMode} style={selectMode ? btnPrimaryStyle : btnSecStyle}>
@@ -711,7 +784,7 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
                   key={entry.resident_id}
                   entry={entry}
                   canEdit={canEdit(entry)}
-                  onEdit={() => setEditingEntry({ ...entry })}
+                  onEdit={() => setEditingEntry({ ...entry, _isOwnRecord: canAdminister || entry.emails?.some(em => em.toLowerCase() === user?.email?.toLowerCase()) })}
                   onDelete={canAdminister ? () => handleDelete(entry.resident_id) : null}
                   selectMode={selectMode}
                   selected={selectedIds.has(entry.resident_id)}
@@ -730,14 +803,14 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
 
       {/* ── Edit Modal ── */}
       {editingEntry && (
-        <EntryModal entry={editingEntry} onSave={handleSave} onClose={() => setEditingEntry(null)} title="Edit Resident" isSaving={isSaving} />
+        <EntryModal entry={editingEntry} onSave={handleSave} onClose={() => setEditingEntry(null)} title="Edit Resident" isSaving={isSaving} isOwnRecord={!!editingEntry._isOwnRecord} isAdmin={canAdminister} />
       )}
 
       {/* ── Add Modal ── */}
       {showAddModal && (
         <EntryModal
-          entry={{ surname: "", names: "", address: "", phones: [""], emails: [""], tags: [] }}
-          onSave={handleSave} onClose={() => setShowAddModal(false)} title="Add Resident" isSaving={isSaving}
+          entry={{ surname: "", names: "", address: "", phones: [""], emails: [""], tags: [], directory_visible: true }}
+          onSave={handleSave} onClose={() => setShowAddModal(false)} title="Add Resident" isSaving={isSaving} isAdmin={canAdminister}
         />
       )}
 
