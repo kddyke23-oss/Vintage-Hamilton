@@ -40,10 +40,22 @@ export function AuthProvider({ children }) {
       loadUserData(session?.user?.id).finally(() => setLoading(false))
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session)
       setUser(session?.user ?? null)
       loadUserData(session?.user?.id).finally(() => setLoading(false))
+
+      // Detect invite link sign-in — user has been invited but has no password yet
+      // Redirect them to reset-password to set one up
+      if (event === 'SIGNED_IN' && session?.user) {
+        const meta = session.user.user_metadata
+        const isInvitedUser = meta?.invited_at || !session.user.last_sign_in_at ||
+          (session.user.created_at === session.user.last_sign_in_at)
+        
+        if (isInvitedUser && window.location.pathname !== '/reset-password') {
+          window.location.href = '/reset-password'
+        }
+      }
     })
 
     return () => subscription.unsubscribe()
