@@ -43,10 +43,15 @@ export function AuthProvider({ children }) {
       loadUserData(session?.user?.id).finally(() => setLoading(false))
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session)
       setUser(session?.user ?? null)
       loadUserData(session?.user?.id).finally(() => setLoading(false))
+
+      // When Supabase fires PASSWORD_RECOVERY, redirect to reset page
+      if (event === 'PASSWORD_RECOVERY') {
+        window.location.href = '/reset-password'
+      }
     })
 
     return () => subscription.unsubscribe()
