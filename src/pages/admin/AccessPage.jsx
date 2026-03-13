@@ -18,12 +18,24 @@ const STATE_DISPLAY = {
   admin: { icon: '⭐', label: 'Admin',     className: 'bg-yellow-100 text-yellow-700 hover:bg-red-50 hover:text-red-500' },
 }
 
+// Filter options: one per app + admin role + all
+const FILTER_OPTIONS = [
+  { id: 'all',       label: 'All Residents', icon: '👤' },
+  { id: 'directory', label: 'Directory',     icon: '👥' },
+  { id: 'calendar',  label: 'Calendar',      icon: '📅' },
+  { id: 'lotto',     label: 'Lotto',         icon: '🎟️' },
+  { id: 'blog',      label: 'Blog',          icon: '📝' },
+  { id: 'admin',     label: 'Any Admin',     icon: '⭐' },
+  { id: 'none',      label: 'No Access',     icon: '○'  },
+]
+
 export default function AccessPage() {
   const toast = useToast()
   const [residents, setResidents] = useState([])
   const [access, setAccess] = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(null)
+  const [activeFilter, setActiveFilter] = useState('all')
 
   const fetchAll = async () => {
     try {
@@ -60,6 +72,32 @@ export default function AccessPage() {
   }
 
   useEffect(() => { fetchAll() }, [])
+
+  // ── Filtering logic ──────────────────────────────────────────────────────────
+  const filteredResidents = residents.filter(r => {
+    if (activeFilter === 'all') return true
+    if (!r.id) return activeFilter === 'none'
+    const userAccess = access[r.id] ?? {}
+    if (activeFilter === 'none') {
+      return Object.values(userAccess).every(v => v === 'none')
+    }
+    if (activeFilter === 'admin') {
+      return Object.values(userAccess).some(v => v === 'admin')
+    }
+    // specific app — show anyone with user or admin access to that app
+    return userAccess[activeFilter] && userAccess[activeFilter] !== 'none'
+  })
+
+  const getFilterCount = (filterId) => {
+    if (filterId === 'all') return residents.length
+    return residents.filter(r => {
+      if (!r.id) return filterId === 'none'
+      const userAccess = access[r.id] ?? {}
+      if (filterId === 'none') return Object.values(userAccess).every(v => v === 'none')
+      if (filterId === 'admin') return Object.values(userAccess).some(v => v === 'admin')
+      return userAccess[filterId] && userAccess[filterId] !== 'none'
+    }).length
+  }
 
   const cycleAccess = async (userId, appId, currentState, name) => {
     if (!userId) return
@@ -144,9 +182,47 @@ export default function AccessPage() {
         <p className="text-brand-500">Control which apps each resident can access and their role.</p>
       </div>
 
+      {/* ── Quick-filter buttons ── */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <span className="text-sm font-medium text-brand-500 mr-1">Show:</span>
+        {FILTER_OPTIONS.map(opt => {
+          const count = loading ? null : getFilterCount(opt.id)
+          const isActive = activeFilter === opt.id
+          return (
+            <button
+              key={opt.id}
+              onClick={() => setActiveFilter(opt.id)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all border ${
+                isActive
+                  ? 'bg-brand-700 text-white border-brand-700 shadow-sm'
+                  : 'bg-white text-brand-600 border-brand-200 hover:border-brand-400 hover:bg-brand-50'
+              }`}
+            >
+              <span>{opt.icon}</span>
+              <span>{opt.label}</span>
+              {count !== null && (
+                <span className={`text-xs rounded-full px-1.5 py-0.5 font-semibold ${
+                  isActive ? 'bg-white/20 text-white' : 'bg-brand-100 text-brand-500'
+                }`}>
+                  {count}
+                </span>
+              )}
+            </button>
+          )
+        })}
+        {activeFilter !== 'all' && (
+          <button
+            onClick={() => setActiveFilter('all')}
+            className="text-xs text-brand-400 hover:text-brand-600 underline ml-1"
+          >
+            Clear filter
+          </button>
+        )}
+      </div>
+
       {/* Legend */}
       <div className="flex items-center gap-4 text-sm text-brand-500 flex-wrap">
-        <span className="font-medium">Click to cycle:</span>
+        <span className="font-medium">Click icons to cycle:</span>
         {Object.entries(STATE_DISPLAY).map(([state, { icon, label }]) => (
           <span key={state} className="flex items-center gap-1">
             <span>{icon}</span> {label}
@@ -158,10 +234,22 @@ export default function AccessPage() {
         </span>
       </div>
 
+      {/* Result count when filtered */}
+      {activeFilter !== 'all' && !loading && (
+        <p className="text-sm text-brand-500">
+          Showing <span className="font-semibold text-brand-700">{filteredResidents.length}</span> of {residents.length} residents
+          {' '}— filtered by <span className="font-semibold">{FILTER_OPTIONS.find(f => f.id === activeFilter)?.label}</span>
+        </p>
+      )}
+
       {loading ? (
         <div className="bg-white rounded-2xl p-8 text-center text-brand-400 animate-pulse">Loading…</div>
       ) : residents.length === 0 ? (
         <div className="bg-white rounded-2xl p-8 text-center text-brand-400">No active residents found.</div>
+      ) : filteredResidents.length === 0 ? (
+        <div className="bg-white rounded-2xl p-8 text-center text-brand-400">
+          No residents match this filter.
+        </div>
       ) : (
         <div className="bg-white rounded-2xl border border-brand-100 overflow-auto max-h-[70vh]">
           <table className="w-full text-sm">
@@ -178,7 +266,7 @@ export default function AccessPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-brand-50">
-              {residents.map(r => {
+              {filteredResidents.map(r => {
                 const hasAccount = !!r.id
                 const name = displayName(r)
                 return (

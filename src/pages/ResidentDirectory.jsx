@@ -1,6 +1,24 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 
+// ─── Streets ──────────────────────────────────────────────────────────────────
+const STREETS = [
+  "Kay Chiarello Way",
+  "Sportsman Boulevard",
+  "Englewood Boulevard",
+  "Isabella Court",
+];
+
+// Parse "12 Kay Chiarello Way" → { houseNumber: 12, street: "Kay Chiarello Way" }
+function parseAddress(address) {
+  if (!address) return { houseNumber: null, street: "" };
+  const match = address.trim().match(/^(\d+)\s+(.+)$/);
+  if (match) {
+    return { houseNumber: parseInt(match[1], 10), street: match[2] };
+  }
+  return { houseNumber: null, street: address };
+}
+
 // ─── icons ────────────────────────────────────────────────────────────────────
 const IconPin     = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg>;
 const IconPhone   = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.68A2 2 0 012 1h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.91 8.9a16 16 0 006.19 6.19l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" /></svg>;
@@ -13,6 +31,7 @@ const IconSelect  = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="
 const IconX       = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>;
 const IconPlus    = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>;
 const IconMinus   = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /></svg>;
+const IconMap     = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" /><line x1="8" y1="2" x2="8" y2="18" /><line x1="16" y1="6" x2="16" y2="22" /></svg>;
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 function Toast({ message }) {
@@ -105,12 +124,123 @@ function DetailRow({ icon, value }) {
   );
 }
 
+// ─── Street List View ─────────────────────────────────────────────────────────
+function StreetListView({ residents, street, onClose }) {
+  const streetResidents = useMemo(() => {
+    return residents
+      .filter(r => {
+        const { street: rStreet } = parseAddress(r.address);
+        return rStreet.toLowerCase() === street.toLowerCase();
+      })
+      .map(r => ({ ...r, ...parseAddress(r.address) }))
+      .sort((a, b) => (a.houseNumber ?? 9999) - (b.houseNumber ?? 9999));
+  }, [residents, street]);
+
+  return (
+    <div style={{ background: "white", borderRadius: "12px", boxShadow: "0 2px 12px rgba(0,0,0,0.08)", overflow: "hidden" }}>
+      {/* Street header */}
+      <div style={{
+        background: "var(--color-primary)", color: "white",
+        padding: "1rem 1.5rem", display: "flex", alignItems: "center", justifyContent: "space-between",
+      }}>
+        <div>
+          <div style={{ fontFamily: "var(--font-display)", fontSize: "1.2rem", fontWeight: "700" }}>
+            {street}
+          </div>
+          <div style={{ fontSize: "0.8rem", opacity: 0.8, marginTop: "0.15rem" }}>
+            {streetResidents.length} household{streetResidents.length !== 1 ? "s" : ""}
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", borderRadius: "6px", padding: "0.4rem 0.8rem", cursor: "pointer", fontSize: "0.8rem", display: "flex", alignItems: "center", gap: "0.4rem" }}
+        >
+          <IconX /> Back to Directory
+        </button>
+      </div>
+
+      {streetResidents.length === 0 ? (
+        <div style={{ padding: "3rem", textAlign: "center", color: "#9ca3af" }}>
+          No residents found on {street}.
+        </div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.875rem" }}>
+          <thead>
+            <tr style={{ background: "#f5f7fa", borderBottom: "2px solid #e5e7eb" }}>
+              <th style={thStyle}>#</th>
+              <th style={thStyle}>Surname</th>
+              <th style={thStyle}>Names</th>
+              <th style={thStyle}>Phone(s)</th>
+              <th style={thStyle}>Email(s)</th>
+              <th style={thStyle}>Tags</th>
+            </tr>
+          </thead>
+          <tbody>
+            {streetResidents.map((r, i) => (
+              <tr key={r.resident_id} style={{ background: i % 2 === 0 ? "white" : "#f9fafb", borderBottom: "1px solid #f0f0f0" }}>
+                <td style={{ ...tdStyle, fontWeight: "700", color: "var(--color-primary)", width: "3rem", textAlign: "center" }}>
+                  {r.houseNumber ?? "—"}
+                </td>
+                <td style={{ ...tdStyle, fontWeight: "700", fontFamily: "var(--font-display)", color: "var(--color-primary-dark)" }}>
+                  {r.surname}
+                </td>
+                <td style={{ ...tdStyle, color: "#4b5563" }}>
+                  {r.names}
+                </td>
+                <td style={{ ...tdStyle, color: "#374151" }}>
+                  {(r.phones || []).join(" / ") || <span style={{ color: "#d1d5db" }}>—</span>}
+                </td>
+                <td style={{ ...tdStyle }}>
+                  {r.emails?.length > 0 ? r.emails.map((em, j) => (
+                    <span key={j}>
+                      <a href={`mailto:${em}`} style={{ color: "var(--color-primary)", textDecoration: "none" }}>{em}</a>
+                      {j < r.emails.length - 1 ? ", " : ""}
+                    </span>
+                  )) : <span style={{ color: "#d1d5db" }}>—</span>}
+                </td>
+                <td style={{ ...tdStyle }}>
+                  {r.tags?.length > 0 ? (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem" }}>
+                      {r.tags.map((tag, j) => (
+                        <span key={j} style={{
+                          background: "rgba(var(--color-primary-rgb),0.08)", color: "var(--color-primary)",
+                          padding: "0.1rem 0.4rem", borderRadius: "10px", fontSize: "0.7rem", fontWeight: "600",
+                        }}>{tag}</span>
+                      ))}
+                    </div>
+                  ) : <span style={{ color: "#d1d5db" }}>—</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+const thStyle = {
+  padding: "0.6rem 1rem", textAlign: "left", fontWeight: "600",
+  color: "#374151", fontSize: "0.8rem", textTransform: "uppercase",
+  letterSpacing: "0.03em",
+};
+const tdStyle = {
+  padding: "0.65rem 1rem", verticalAlign: "top",
+};
+
 // ─── Entry Modal ──────────────────────────────────────────────────────────────
 function EntryModal({ entry, onSave, onClose, title, isSaving }) {
+  // Split existing address into house number + street for the form
+  const parsed = parseAddress(entry.address);
+  const knownStreet = STREETS.includes(parsed.street) ? parsed.street : "";
+  const customStreet = STREETS.includes(parsed.street) ? "" : parsed.street;
+
   const [form, setForm] = useState({
     surname: entry.surname || "",
     names: entry.names || "",
-    address: entry.address || "",
+    houseNumber: parsed.houseNumber ? String(parsed.houseNumber) : "",
+    street: knownStreet || STREETS[0],
+    customStreet: customStreet,
     phones: entry.phones?.length ? entry.phones : [""],
     emails: entry.emails?.length ? entry.emails : [""],
     tags: entry.tags || [],
@@ -126,12 +256,20 @@ function EntryModal({ entry, onSave, onClose, title, isSaving }) {
 
   const handleSubmit = () => {
     if (!form.surname.trim()) { alert("Surname is required."); return; }
+    // Reassemble address string
+    const streetName = form.street === "__other__" ? form.customStreet.trim() : form.street;
+    const address = form.houseNumber.trim() && streetName
+      ? `${form.houseNumber.trim()} ${streetName}`
+      : streetName || form.houseNumber.trim() || "";
+
     onSave({
       ...entry,
-      ...form,
       surname: form.surname.toUpperCase().trim(),
+      names: form.names,
+      address,
       phones: form.phones.filter(p => p.trim()),
       emails: form.emails.filter(e => e.trim()),
+      tags: form.tags,
     });
   };
 
@@ -153,9 +291,37 @@ function EntryModal({ entry, onSave, onClose, title, isSaving }) {
           <ModalField label="First Names *">
             <input value={form.names} onChange={e => updateField("names", e.target.value)} style={inputStyle} placeholder="e.g. John Mary" />
           </ModalField>
-          <ModalField label="Address">
-            <input value={form.address} onChange={e => updateField("address", e.target.value)} style={inputStyle} placeholder="e.g. 12 Kay Chiarello Way" />
+
+          {/* ── Split address fields ── */}
+          <ModalField label="Street">
+            <select
+              value={form.street}
+              onChange={e => updateField("street", e.target.value)}
+              style={{ ...inputStyle, width: "100%", marginBottom: "0.5rem" }}
+            >
+              {STREETS.map(s => <option key={s} value={s}>{s}</option>)}
+              <option value="__other__">Other / Unknown</option>
+            </select>
+            {form.street === "__other__" && (
+              <input
+                value={form.customStreet}
+                onChange={e => updateField("customStreet", e.target.value)}
+                style={{ ...inputStyle, width: "100%" }}
+                placeholder="Enter street name"
+              />
+            )}
           </ModalField>
+          <ModalField label="House Number">
+            <input
+              value={form.houseNumber}
+              onChange={e => updateField("houseNumber", e.target.value)}
+              style={{ ...inputStyle, width: "120px" }}
+              placeholder="e.g. 12"
+              type="number"
+              min="1"
+            />
+          </ModalField>
+
           <ModalField label="Phone Numbers">
             {form.phones.map((phone, i) => (
               <div key={i} style={{ display: "flex", gap: "0.4rem", marginBottom: "0.3rem" }}>
@@ -302,6 +468,7 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
   const [selectMode, setSelectMode]         = useState(false);
   const [selectedIds, setSelectedIds]       = useState(new Set());
   const [showPrintModal, setShowPrintModal] = useState(false);
+  const [streetFilter, setStreetFilter]     = useState(""); // "" = normal grid view
 
   useEffect(() => { fetchResidents(); }, []);
 
@@ -430,73 +597,135 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
         </div>
       </div>
 
-      {/* ── Search Bar ── */}
-      <div className="no-print" style={{ background: "white", borderRadius: "10px", padding: "1rem 1.25rem", marginBottom: "1.25rem", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
-        <div style={{ position: "relative", flex: 1, minWidth: "200px" }}>
-          <span style={{ position: "absolute", left: "0.7rem", top: "50%", transform: "translateY(-50%)", color: "#9ca3af" }}><IconSearch /></span>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search residents…" style={{ ...inputStyle, paddingLeft: "2.2rem", width: "100%" }} />
-        </div>
-        <select value={searchField} onChange={e => setSearchField(e.target.value)} style={{ ...inputStyle, width: "auto" }}>
-          <option value="all">All Fields</option>
-          <option value="name">Name</option>
-          <option value="address">Address</option>
-          <option value="tag">Tag / Role</option>
-        </select>
-        {allTags.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", alignItems: "center" }}>
-            <span style={{ fontSize: "0.75rem", color: "#9ca3af" }}>Tags:</span>
-            {allTags.map(tag => (
-              <span key={tag} onClick={() => setTagFilter(tagFilter === tag ? "" : tag)} style={{
-                padding: "0.2rem 0.55rem", borderRadius: "12px", fontSize: "0.75rem", cursor: "pointer",
-                border: `1px solid ${tagFilter === tag ? "var(--color-primary)" : "#e5e7eb"}`,
-                background: tagFilter === tag ? "var(--color-primary)" : "white",
-                color: tagFilter === tag ? "white" : "#374151", transition: "all 0.15s",
-              }}>{tag}</span>
-            ))}
-            {tagFilter && <span onClick={() => setTagFilter("")} style={{ fontSize: "0.75rem", color: "#ef4444", cursor: "pointer" }}>Clear</span>}
-          </div>
-        )}
-        <span style={{ fontSize: "0.8rem", color: "#9ca3af", marginLeft: "auto", whiteSpace: "nowrap" }}>
-          Showing {filteredResidents.length} of {residents.length}
+      {/* ── Street Filter Bar ── */}
+      <div className="no-print" style={{
+        background: "white", borderRadius: "10px", padding: "0.875rem 1.25rem",
+        marginBottom: "1rem", boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+        display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap",
+      }}>
+        <span style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem", fontWeight: "600", color: "#374151", whiteSpace: "nowrap" }}>
+          <IconMap /> Browse by street:
         </span>
+        <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+          {STREETS.map(s => {
+            const count = residents.filter(r => parseAddress(r.address).street === s).length;
+            const isActive = streetFilter === s;
+            return (
+              <button
+                key={s}
+                onClick={() => setStreetFilter(isActive ? "" : s)}
+                style={{
+                  padding: "0.35rem 0.85rem",
+                  borderRadius: "20px",
+                  fontSize: "0.8rem",
+                  fontWeight: "600",
+                  cursor: "pointer",
+                  border: `1.5px solid ${isActive ? "var(--color-primary)" : "#e5e7eb"}`,
+                  background: isActive ? "var(--color-primary)" : "white",
+                  color: isActive ? "white" : "#374151",
+                  transition: "all 0.15s",
+                  display: "flex", alignItems: "center", gap: "0.35rem",
+                }}
+              >
+                {s}
+                <span style={{
+                  fontSize: "0.7rem", fontWeight: "700",
+                  background: isActive ? "rgba(255,255,255,0.2)" : "#f3f4f6",
+                  color: isActive ? "white" : "#6b7280",
+                  padding: "0.05rem 0.4rem", borderRadius: "10px",
+                }}>{count}</span>
+              </button>
+            );
+          })}
+        </div>
+        {streetFilter && (
+          <button
+            onClick={() => setStreetFilter("")}
+            style={{ fontSize: "0.78rem", color: "#ef4444", background: "none", border: "none", cursor: "pointer", marginLeft: "auto" }}
+          >
+            ✕ Clear
+          </button>
+        )}
       </div>
 
-      {/* ── Select Bar ── */}
-      {selectMode && (
-        <div className="no-print" style={{ background: "var(--color-primary)", color: "white", borderRadius: "8px", padding: "0.65rem 1rem", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-          <span style={{ fontWeight: "600", fontSize: "0.9rem", marginRight: "auto" }}>{selectedIds.size} selected</span>
-          <button onClick={selectAll}          style={selectBarBtnStyle}>Select All</button>
-          <button onClick={selectNone}          style={selectBarBtnStyle}>Clear</button>
-          <button onClick={handleEmailSelected} disabled={!selectedIds.size} style={selectBarBtnStyle}>✉ Email</button>
-          <button onClick={handleCopyEmails}    disabled={!selectedIds.size} style={selectBarBtnStyle}>📋 Copy Emails</button>
-          <button onClick={handleCopyPhones}    disabled={!selectedIds.size} style={selectBarBtnStyle}>📞 Copy Phones</button>
-          <button onClick={toggleSelectMode}    style={{ ...selectBarBtnStyle, opacity: 0.7 }}>Done</button>
-        </div>
-      )}
-
-      {/* ── Grid ── */}
-      {loading ? (
-        <div style={{ textAlign: "center", padding: "3rem", color: "#9ca3af" }}>Loading directory…</div>
+      {/* ── Street List View (replaces grid when a street is selected) ── */}
+      {streetFilter ? (
+        <StreetListView
+          residents={residents}
+          street={streetFilter}
+          onClose={() => setStreetFilter("")}
+        />
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1rem" }}>
-          {filteredResidents.map(entry => (
-            <ResidentCard
-              key={entry.resident_id}
-              entry={entry}
-              canEdit={canEdit(entry)}
-              onEdit={() => setEditingEntry({ ...entry })}
-              onDelete={canAdminister ? () => handleDelete(entry.resident_id) : null}
-              selectMode={selectMode}
-              selected={selectedIds.has(entry.resident_id)}
-              onToggleSelect={() => toggleSelect(entry.resident_id)}
-            />
-          ))}
-          {filteredResidents.length === 0 && (
-            <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "3rem", color: "#9ca3af" }}>
-              No residents found matching your search.
+        <>
+          {/* ── Search Bar ── */}
+          <div className="no-print" style={{ background: "white", borderRadius: "10px", padding: "1rem 1.25rem", marginBottom: "1.25rem", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ position: "relative", flex: 1, minWidth: "200px" }}>
+              <span style={{ position: "absolute", left: "0.7rem", top: "50%", transform: "translateY(-50%)", color: "#9ca3af" }}><IconSearch /></span>
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search residents…" style={{ ...inputStyle, paddingLeft: "2.2rem", width: "100%" }} />
+            </div>
+            <select value={searchField} onChange={e => setSearchField(e.target.value)} style={{ ...inputStyle, width: "auto" }}>
+              <option value="all">All Fields</option>
+              <option value="name">Name</option>
+              <option value="address">Address</option>
+              <option value="tag">Tag / Role</option>
+            </select>
+            {allTags.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", alignItems: "center" }}>
+                <span style={{ fontSize: "0.75rem", color: "#9ca3af" }}>Tags:</span>
+                {allTags.map(tag => (
+                  <span key={tag} onClick={() => setTagFilter(tagFilter === tag ? "" : tag)} style={{
+                    padding: "0.2rem 0.55rem", borderRadius: "12px", fontSize: "0.75rem", cursor: "pointer",
+                    border: `1px solid ${tagFilter === tag ? "var(--color-primary)" : "#e5e7eb"}`,
+                    background: tagFilter === tag ? "var(--color-primary)" : "white",
+                    color: tagFilter === tag ? "white" : "#374151", transition: "all 0.15s",
+                  }}>{tag}</span>
+                ))}
+                {tagFilter && <span onClick={() => setTagFilter("")} style={{ fontSize: "0.75rem", color: "#ef4444", cursor: "pointer" }}>Clear</span>}
+              </div>
+            )}
+            <span style={{ fontSize: "0.8rem", color: "#9ca3af", marginLeft: "auto", whiteSpace: "nowrap" }}>
+              Showing {filteredResidents.length} of {residents.length}
+            </span>
+          </div>
+
+          {/* ── Select Bar ── */}
+          {selectMode && (
+            <div className="no-print" style={{ background: "var(--color-primary)", color: "white", borderRadius: "8px", padding: "0.65rem 1rem", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+              <span style={{ fontWeight: "600", fontSize: "0.9rem", marginRight: "auto" }}>{selectedIds.size} selected</span>
+              <button onClick={selectAll}          style={selectBarBtnStyle}>Select All</button>
+              <button onClick={selectNone}          style={selectBarBtnStyle}>Clear</button>
+              <button onClick={handleEmailSelected} disabled={!selectedIds.size} style={selectBarBtnStyle}>✉ Email</button>
+              <button onClick={handleCopyEmails}    disabled={!selectedIds.size} style={selectBarBtnStyle}>📋 Copy Emails</button>
+              <button onClick={handleCopyPhones}    disabled={!selectedIds.size} style={selectBarBtnStyle}>📞 Copy Phones</button>
+              <button onClick={toggleSelectMode}    style={{ ...selectBarBtnStyle, opacity: 0.7 }}>Done</button>
             </div>
           )}
-        </div>
+
+          {/* ── Grid ── */}
+          {loading ? (
+            <div style={{ textAlign: "center", padding: "3rem", color: "#9ca3af" }}>Loading directory…</div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1rem" }}>
+              {filteredResidents.map(entry => (
+                <ResidentCard
+                  key={entry.resident_id}
+                  entry={entry}
+                  canEdit={canEdit(entry)}
+                  onEdit={() => setEditingEntry({ ...entry })}
+                  onDelete={canAdminister ? () => handleDelete(entry.resident_id) : null}
+                  selectMode={selectMode}
+                  selected={selectedIds.has(entry.resident_id)}
+                  onToggleSelect={() => toggleSelect(entry.resident_id)}
+                />
+              ))}
+              {filteredResidents.length === 0 && (
+                <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "3rem", color: "#9ca3af" }}>
+                  No residents found matching your search.
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
 
       {/* ── Edit Modal ── */}
