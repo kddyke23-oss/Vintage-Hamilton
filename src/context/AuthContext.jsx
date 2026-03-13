@@ -45,11 +45,18 @@ export function AuthProvider({ children }) {
       setUser(session?.user ?? null)
       loadUserData(session?.user?.id).finally(() => setLoading(false))
 
-      // Detect invite link sign-in — if invited_at is set, user came via invite
-      // and needs to set a password before entering the app
+      // Detect invite link sign-in — if invited_at is set AND this is their
+      // first sign in (last_sign_in_at equals created_at within a few seconds),
+      // redirect to password setup. invited_at persists forever so we must
+      // also confirm it's genuinely their first login.
       if (event === 'SIGNED_IN' && session?.user) {
-        const isInvitedUser = !!session.user.invited_at
-        if (isInvitedUser && window.location.pathname !== '/reset-password') {
+        const u = session.user
+        const isInvited = !!u.invited_at
+        const createdAt = new Date(u.created_at).getTime()
+        const lastSignIn = new Date(u.last_sign_in_at).getTime()
+        const isFirstLogin = Math.abs(lastSignIn - createdAt) < 10000 // within 10 seconds
+        
+        if (isInvited && isFirstLogin && window.location.pathname !== '/reset-password') {
           window.location.href = '/reset-password'
         }
       }
