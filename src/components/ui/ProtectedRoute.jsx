@@ -2,7 +2,7 @@ import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 
 export default function ProtectedRoute({ children, requireAdmin = false }) {
-  const { user, isAdmin, loading } = useAuth()
+  const { user, isAdmin, passwordSet, loading } = useAuth()
   const location = useLocation()
 
   if (loading) {
@@ -15,6 +15,11 @@ export default function ProtectedRoute({ children, requireAdmin = false }) {
 
   if (!user) {
     return <Navigate to="/login" state={{ from: location }} replace />
+  }
+
+  // Fresh invite — user has not set their password yet
+  if (!passwordSet) {
+    return <Navigate to="/reset-password" replace />
   }
 
   if (requireAdmin && !isAdmin) {

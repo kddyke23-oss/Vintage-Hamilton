@@ -17,7 +17,9 @@ export default function ResetPasswordPage() {
       if (session) setValidSession(true)
     })
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'PASSWORD_RECOVERY' && session) setValidSession(true)
+      if ((event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN') && session) {
+        setValidSession(true)
+      }
     })
     return () => subscription.unsubscribe()
   }, [])
@@ -28,10 +30,27 @@ export default function ResetPasswordPage() {
     if (password !== confirm) { setError('Passwords do not match.'); return }
     if (password.length < 8)  { setError('Password must be at least 8 characters.'); return }
     setLoading(true)
-    const { error } = await supabase.auth.updateUser({ password })
+
+    // Update the password
+    const { error: updateError } = await supabase.auth.updateUser({ password })
+    if (updateError) {
+      setError(updateError.message)
+      setLoading(false)
+      return
+    }
+
+    // Mark password as set in profiles
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session?.user?.id) {
+      await supabase
+        .from('profiles')
+        .update({ password_set: true })
+        .eq('id', session.user.id)
+    }
+
     setLoading(false)
-    if (error) { setError(error.message) }
-    else { setDone(true); setTimeout(() => navigate('/'), 3000) }
+    setDone(true)
+    setTimeout(() => navigate('/'), 3000)
   }
 
   return (

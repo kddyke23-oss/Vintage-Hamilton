@@ -7,23 +7,26 @@ export function AuthProvider({ children }) {
   const [user, setUser]                     = useState(null)
   const [session, setSession]               = useState(null)
   const [isAdmin, setIsAdmin]               = useState(false)
+  const [passwordSet, setPasswordSet]       = useState(true) // true by default — only false for fresh invites
   const [appAccess, setAppAccess]           = useState([]) // [{ app_id, role }]
   const [loading, setLoading]               = useState(true)
 
   const loadUserData = async (userId) => {
     if (!userId) {
       setIsAdmin(false)
+      setPasswordSet(true)
       setAppAccess([])
       return
     }
 
-    // Check super admin flag from profiles
+    // Load profile — check admin flag and password_set
     const { data: profile } = await supabase
       .from('profiles')
-      .select('is_admin')
+      .select('is_admin, password_set')
       .eq('id', userId)
       .maybeSingle()
     setIsAdmin(profile?.is_admin === true)
+    setPasswordSet(profile?.password_set !== false) // treat null/missing as true for safety
 
     // Load all app access rows for this user
     const { data: access } = await supabase
@@ -40,26 +43,10 @@ export function AuthProvider({ children }) {
       loadUserData(session?.user?.id).finally(() => setLoading(false))
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
       setUser(session?.user ?? null)
       loadUserData(session?.user?.id).finally(() => setLoading(false))
-
-      // Detect invite link sign-in — if invited_at is set AND this is their
-      // first sign in (last_sign_in_at equals created_at within a few seconds),
-      // redirect to password setup. invited_at persists forever so we must
-      // also confirm it's genuinely their first login.
-      if (event === 'SIGNED_IN' && session?.user) {
-        const u = session.user
-        const isInvited = !!u.invited_at
-        const createdAt = new Date(u.created_at).getTime()
-        const lastSignIn = new Date(u.last_sign_in_at).getTime()
-        const isFirstLogin = Math.abs(lastSignIn - createdAt) < 10000 // within 10 seconds
-        
-        if (isInvited && isFirstLogin && window.location.pathname !== '/reset-password') {
-          window.location.href = '/reset-password'
-        }
-      }
     })
 
     return () => subscription.unsubscribe()
@@ -74,6 +61,7 @@ export function AuthProvider({ children }) {
     const { error } = await supabase.auth.signOut()
     if (!error) {
       setIsAdmin(false)
+      setPasswordSet(true)
       setAppAccess([])
     }
     return { error }
@@ -91,6 +79,7 @@ export function AuthProvider({ children }) {
     user,
     session,
     isAdmin,
+    passwordSet,
     appAccess,
     hasAppAccess,
     isAppAdmin,
