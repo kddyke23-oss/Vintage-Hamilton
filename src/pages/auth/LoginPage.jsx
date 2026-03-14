@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 import { supabase } from '@/lib/supabase'
 
@@ -215,9 +215,21 @@ export default function LoginPage() {
           )}
         </div>
 
-        <p className="text-center text-brand-400 text-xs mt-6">
-          Need access? Contact your community administrator.
-        </p>
+        {/* Footer links */}
+        <div className="flex justify-center gap-6 mt-6">
+          <p className="text-brand-400 text-xs">
+            Need access? Contact your community administrator.
+          </p>
+        </div>
+        <div className="text-center mt-2">
+          <Link
+            to="/login-help"
+            className="text-brand-300 hover:text-gold-400 text-xs underline transition-colors"
+          >
+            📖 Help & Guide
+          </Link>
+        </div>
+
       </div>
     </div>
   )

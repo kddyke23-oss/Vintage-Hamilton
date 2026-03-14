@@ -8,6 +8,7 @@ const navItems = [
   { label: 'Calendar', path: '/apps/calendar' },
   { label: 'Lotto', path: '/apps/lotto' },
   { label: 'Blog', path: '/apps/blog' },
+  { label: 'Help', path: '/help' },
 ]
 
 const textSizes = {
@@ -39,8 +40,6 @@ export default function AppShell({ children }) {
     await signOut()
     navigate('/login')
   }
-
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
 
   return (
     <div className={`min-h-screen bg-brand-50 font-body ${textSizes[textSize].class}`}>
@@ -86,12 +85,19 @@ export default function AppShell({ children }) {
             <span className="text-brand-300 text-sm hidden sm:block">
               {user?.email}
             </span>
-            <button
-              onClick={handleSignOut}
-              className="text-sm bg-brand-700 hover:bg-brand-600 px-4 py-1.5 rounded-full transition-colors"
-            >
-              Sign Out
-            </button>
+
+            {/* Sign Out button with always-visible reminder */}
+            <div className="flex flex-col items-center gap-0.5">
+              <button
+                onClick={handleSignOut}
+                className="text-sm bg-brand-700 hover:bg-brand-600 px-4 py-1.5 rounded-full transition-colors"
+              >
+                Sign Out
+              </button>
+              <span className="text-gold-400 text-xs hidden sm:block">
+                Please sign out when done
+              </span>
+            </div>
           </div>
         </div>
       </header>
