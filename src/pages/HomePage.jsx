@@ -1,6 +1,8 @@
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 import { useAppAccess } from '@/hooks/useAppAccess'
+import { supabase } from '@/lib/supabase'
 
 const ALL_APPS = [
   { id: 'directory', label: 'Resident Directory', description: 'Find and connect with your neighbors', icon: '👥', path: '/apps/directory' },
@@ -8,6 +10,121 @@ const ALL_APPS = [
   { id: 'lotto',     label: 'Lotto Tracker',       description: 'Community lottery pools and results', icon: '🎟️', path: '/apps/lotto' },
   { id: 'blog',      label: 'Community Blog',      description: 'News, stories, and announcements',  icon: '📝', path: '/apps/blog' },
 ]
+
+function formatEventDate(dateStr, timeStr) {
+  const date = new Date(dateStr + 'T00:00:00')
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const tomorrow = new Date(today)
+  tomorrow.setDate(today.getDate() + 1)
+
+  let dayLabel
+  if (date.getTime() === today.getTime()) {
+    dayLabel = 'Today'
+  } else if (date.getTime() === tomorrow.getTime()) {
+    dayLabel = 'Tomorrow'
+  } else {
+    dayLabel = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+  }
+
+  if (!timeStr) return dayLabel
+  const [h, m] = timeStr.split(':').map(Number)
+  const suffix = h >= 12 ? 'pm' : 'am'
+  const hour = h % 12 || 12
+  const mins = m > 0 ? `:${String(m).padStart(2, '0')}` : ''
+  return `${dayLabel} · ${hour}${mins}${suffix}`
+}
+
+function UpcomingEvents() {
+  const [events, setEvents] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetchEvents() {
+      try {
+        const today = new Date().toISOString().split('T')[0]
+        const { data, error } = await supabase
+          .from('calendar_events')
+          .select(`
+            id, title, event_date, event_time, location,
+            calendar_categories ( name, color )
+          `)
+          .eq('removed', false)
+          .gte('event_date', today)
+          .order('event_date', { ascending: true })
+          .order('event_time', { ascending: true, nullsFirst: false })
+          .limit(4)
+
+        if (error) throw error
+        setEvents(data || [])
+      } catch (e) {
+        console.error('Failed to load upcoming events', e)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchEvents()
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-2xl border border-brand-100 p-6 text-center text-brand-400 text-sm">
+        Loading events…
+      </div>
+    )
+  }
+
+  if (events.length === 0) {
+    return (
+      <div className="bg-white rounded-2xl border border-brand-100 p-6 text-center text-brand-400 text-sm">
+        No upcoming events right now. Check back soon!
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-brand-100 divide-y divide-brand-50">
+      {events.map(event => {
+        const category = event.calendar_categories
+        const color = category?.color || '#2C5F8A'
+        return (
+          <div key={event.id} className="flex items-start gap-4 px-5 py-4">
+            {/* Color accent bar */}
+            <div
+              className="w-1 flex-shrink-0 rounded-full self-stretch min-h-[40px]"
+              style={{ backgroundColor: color }}
+            />
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-brand-800 text-sm truncate">{event.title}</p>
+              <p className="text-brand-500 text-xs mt-0.5">
+                {formatEventDate(event.event_date, event.event_time)}
+                {event.location && <> · {event.location}</>}
+              </p>
+              {category?.name && (
+                <span
+                  className="inline-block mt-1.5 px-2 py-0.5 rounded-full text-white text-xs font-medium"
+                  style={{ backgroundColor: color }}
+                >
+                  {category.name}
+                </span>
+              )}
+            </div>
+          </div>
+        )
+      })}
+
+      {/* View all link */}
+      <div className="px-5 py-3">
+        <Link
+          to="/apps/calendar"
+          className="text-sm font-medium text-brand-600 hover:text-brand-800 transition-colors"
+        >
+          View all events →
+        </Link>
+      </div>
+    </div>
+  )
+}
 
 export default function HomePage() {
   const { user, isAdmin } = useAuth()
@@ -67,12 +184,15 @@ export default function HomePage() {
         )}
       </div>
 
-      {/* Upcoming events placeholder */}
+      {/* Upcoming Events — live from calendar_events */}
       <div>
-        <h2 className="font-display text-xl text-brand-800 mb-4">Upcoming Events</h2>
-        <div className="bg-white rounded-2xl border border-brand-100 p-6 text-center text-brand-400 text-sm">
-          Events will appear here once the Social Calendar is set up.
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-display text-xl text-brand-800">Upcoming Events</h2>
+          <Link to="/apps/calendar" className="text-sm text-brand-500 hover:text-brand-700 transition-colors">
+            Full calendar →
+          </Link>
         </div>
+        <UpcomingEvents />
       </div>
     </div>
   )

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 
-const TABS = ['Getting Started', 'Navigating the App', 'Directory', 'Lotto Syndicate', 'Contact & Help']
+const TABS = ['Getting Started', 'Navigating the App', 'Directory', 'Social Calendar', 'Lotto Syndicate', 'Contact & Help']
 
 // Configurable general help contact
 const GENERAL_HELP_CONTACT = 'Keith Dyke'
@@ -146,7 +146,7 @@ export default function HelpPage() {
             <div className="space-y-3">
               <NavItem icon="🏠" label="Home" description="Your dashboard — a summary of recent activity, quick links, and upcoming events." />
               <NavItem icon="📋" label="Directory" description="The Vintage @ Hamilton resident directory. Search for neighbours by name, browse contact details, and more." />
-              <NavItem icon="📅" label="Calendar" description="Community events and social activities. Coming soon!" />
+              <NavItem icon="📅" label="Calendar" description="Community events and social activities — see what's coming up and RSVP." />
               <NavItem icon="🎱" label="Lotto Syndicate" description="Track the community Powerball syndicate — draws, winnings, payments, and member details." />
               <NavItem icon="📝" label="Blog" description="Community news, announcements, and posts from residents. Coming soon!" />
             </div>
@@ -197,8 +197,65 @@ export default function HelpPage() {
           </div>
         )}
 
-        {/* ── Lotto Syndicate ── */}
+        {/* ── Social Calendar ── */}
         {activeTab === 3 && (
+          <div className="space-y-6">
+            <Section title="The Social Calendar 📅">
+              <p className="text-brand-600">
+                The Social Calendar is your community events hub — see what's coming up, RSVP to events you plan
+                to attend, and add new events for everyone to enjoy.
+              </p>
+            </Section>
+
+            <Section title="Viewing events">
+              <Steps steps={[
+                { n: 1, text: <>Click <strong>Calendar</strong> in the sidebar.</> },
+                { n: 2, text: <>Use the <strong>List</strong> or <strong>Grid</strong> button to switch between a scrollable list and a monthly calendar view.</> },
+                { n: 3, text: <>Use the <strong>Category</strong> dropdown to filter events by type (e.g. Social Events, Fitness, Committee Meetings).</> },
+                { n: 4, text: <>Click any event to see full details — location, description, who's going, and any external links.</> },
+              ]} />
+            </Section>
+
+            <Section title="RSVPing to an event">
+              <p className="text-brand-600">
+                On any event's detail view, click <strong>"I'm Going"</strong> to RSVP. You can see a count of who
+                has signed up, and expand the attendee list to see names. Click again to cancel your RSVP.
+              </p>
+            </Section>
+
+            <Section title="Adding an event">
+              <Steps steps={[
+                { n: 1, text: <>Click the <strong>"+ Add Event"</strong> button at the top of the calendar.</> },
+                { n: 2, text: <>Fill in the event title, category, date, and time.</> },
+                { n: 3, text: <>Optionally add a location, description, and a link to any external page (e.g. a sign-up form or map).</> },
+                { n: 4, text: <>Click <strong>"Save Event"</strong> — the event will appear on the calendar immediately.</> },
+              ]} />
+            </Section>
+
+            <Section title="Event categories">
+              <p className="text-brand-600 mb-3">
+                Events are organised by category so you can find what interests you:
+              </p>
+              <div className="space-y-2">
+                <CategoryBadge color="#2C5F8A" name="General FYI" description="Community notices and announcements open to everyone." />
+                <CategoryBadge color="#C9922A" name="Social Events" description="Parties, gatherings, and social get-togethers." />
+                <CategoryBadge color="#2E7D32" name="Fitness & Wellness" description="Exercise classes, walks, and wellness activities." />
+                <CategoryBadge color="#7B3F9E" name="Arts & Crafts" description="Creative workshops and art-focused events." />
+                <CategoryBadge color="#1A3F5C" name="Committee Meetings" description="HOA and community committee meetings." />
+              </div>
+            </Section>
+
+            <Callout>
+              💡 <strong>Tip:</strong> Upcoming events are also shown on your home dashboard — you'll always
+              see what's next without even opening the calendar!
+            </Callout>
+
+            <AdminContact appId="calendar" admins={appAdmins} loading={loadingAdmins} />
+          </div>
+        )}
+
+        {/* ── Lotto Syndicate ── */}
+        {activeTab === 4 && (
           <div className="space-y-6">
             <Section title="The Lotto Syndicate 🎱">
               <p className="text-brand-600">
@@ -232,7 +289,7 @@ export default function HelpPage() {
         )}
 
         {/* ── Contact & Help ── */}
-        {activeTab === 4 && (
+        {activeTab === 5 && (
           <div className="space-y-6">
             <Section title="Need help? We've got you covered 😊">
               <p className="text-brand-600">
@@ -250,10 +307,10 @@ export default function HelpPage() {
                 <p className="text-brand-400 text-sm">Loading...</p>
               ) : (
                 <div className="space-y-4">
-                  {['directory', 'lotto'].map(appId => (
+                  {['directory', 'calendar', 'lotto'].map(appId => (
                     <div key={appId}>
                       <p className="text-sm font-semibold text-brand-700 mb-2 capitalize">
-                        {appId === 'lotto' ? 'Lotto Syndicate' : 'Resident Directory'}
+                        {appId === 'lotto' ? 'Lotto Syndicate' : appId === 'calendar' ? 'Social Calendar' : 'Resident Directory'}
                       </p>
                       {appAdmins[appId]?.length > 0 ? (
                         <div className="space-y-2">
@@ -324,6 +381,21 @@ function NavItem({ icon, label, description }) {
       <span className="text-xl flex-shrink-0">{icon}</span>
       <div>
         <p className="font-semibold text-brand-800 text-sm">{label}</p>
+        <p className="text-brand-500 text-sm">{description}</p>
+      </div>
+    </div>
+  )
+}
+
+function CategoryBadge({ color, name, description }) {
+  return (
+    <div className="flex gap-3 items-start p-3 rounded-lg bg-brand-50 border border-brand-100">
+      <span
+        className="flex-shrink-0 mt-0.5 w-3 h-3 rounded-full"
+        style={{ backgroundColor: color }}
+      />
+      <div>
+        <p className="font-semibold text-brand-800 text-sm">{name}</p>
         <p className="text-brand-500 text-sm">{description}</p>
       </div>
     </div>
