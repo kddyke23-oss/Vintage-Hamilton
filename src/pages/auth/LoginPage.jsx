@@ -40,15 +40,13 @@ export default function LoginPage() {
     setResetError(null)
     setResetLoading(true)
 
-    // Check if email exists in profiles and whether password has been set
+    // Look up profile by email — using RPC to handle text[] array search reliably
     const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('password_set')
-      .ilike('emails', `%${resetEmail}%`)
+      .rpc('get_profile_by_email', { lookup_email: resetEmail.trim().toLowerCase() })
       .maybeSingle()
 
     if (profileError) {
-      setResetError('Something went wrong. Please try again.')
+      setResetError(`Unable to look up your account. Please try again or contact your administrator.`)
       setResetLoading(false)
       return
     }
@@ -60,7 +58,7 @@ export default function LoginPage() {
     }
 
     // Send password reset email — works for both new and existing members
-    const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+    const { error } = await supabase.auth.resetPasswordForEmail(resetEmail.trim(), {
       redirectTo: `${window.location.origin}/reset-password`,
     })
     setResetLoading(false)
