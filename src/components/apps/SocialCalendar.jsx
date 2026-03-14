@@ -48,25 +48,32 @@ function isFutureOrToday(dateStr) {
 function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalendarAdmin, toast, user }) {
   const today = new Date().toISOString().split('T')[0]
 
+  // Filter categories based on profile tags — compute before form init
+  const allowedCategories = categories.filter(cat => {
+    if (!cat.required_tag) return true
+    if (isCalendarAdmin) return true
+    return profile?.tags?.includes(cat.required_tag)
+  })
+
   const [form, setForm] = useState({
     title: editEvent?.title || '',
     description: editEvent?.description || '',
     location: editEvent?.location || '',
     event_date: editEvent?.event_date || today,
     event_time: editEvent?.event_time?.slice(0, 5) || '',
-    category_id: editEvent?.category_id || (categories[0]?.id ?? ''),
+    category_id: editEvent?.category_id || (allowedCategories[0]?.id ?? ''),
     external_url: editEvent?.external_url || '',
   })
   const [saving, setSaving] = useState(false)
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
-  // Filter categories based on profile tags
-  const allowedCategories = categories.filter(cat => {
-    if (!cat.required_tag) return true
-    if (isCalendarAdmin) return true
-    return profile?.tags?.includes(cat.required_tag)
-  })
+  // If categories load after modal opens, set default once available
+  useEffect(() => {
+    if (!editEvent && !form.category_id && allowedCategories.length > 0) {
+      set('category_id', allowedCategories[0].id)
+    }
+  }, [allowedCategories.length])
 
   async function handleSubmit() {
     if (!form.title.trim()) return toast.error('Please enter a title')
