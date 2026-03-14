@@ -14,12 +14,13 @@ export default function LoginPage() {
   const [error, setError]       = useState(null)
   const [loading, setLoading]   = useState(false)
 
-  // Forgot password state
-  const [showReset, setShowReset]         = useState(false)
-  const [resetEmail, setResetEmail]       = useState('')
-  const [resetLoading, setResetLoading]   = useState(false)
-  const [resetSent, setResetSent]         = useState(false)
-  const [resetError, setResetError]       = useState(null)
+  // Set/Reset password state
+  const [showReset, setShowReset]       = useState(false)
+  const [resetEmail, setResetEmail]     = useState('')
+  const [resetLoading, setResetLoading] = useState(false)
+  const [resetSent, setResetSent]       = useState(false)
+  const [resetError, setResetError]     = useState(null)
+  const [isNewMember, setIsNewMember]   = useState(false)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -38,15 +39,46 @@ export default function LoginPage() {
     e.preventDefault()
     setResetError(null)
     setResetLoading(true)
+
+    // Check if email exists in profiles and whether password has been set
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('password_set')
+      .ilike('emails', `%${resetEmail}%`)
+      .maybeSingle()
+
+    if (profileError) {
+      setResetError('Something went wrong. Please try again.')
+      setResetLoading(false)
+      return
+    }
+
+    if (!profile) {
+      setResetError('No account found for that email address. Please check and try again.')
+      setResetLoading(false)
+      return
+    }
+
+    // Send password reset email — works for both new and existing members
     const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
       redirectTo: `${window.location.origin}/reset-password`,
     })
     setResetLoading(false)
     if (error) {
       setResetError(error.message)
-    } else {
-      setResetSent(true)
+      return
     }
+
+    // Track whether this is a new member so we can show the right message
+    setIsNewMember(profile.password_set === false)
+    setResetSent(true)
+  }
+
+  const goBackToSignIn = () => {
+    setShowReset(false)
+    setResetSent(false)
+    setResetError(null)
+    setIsNewMember(false)
   }
 
   return (
@@ -64,7 +96,8 @@ export default function LoginPage() {
         {/* Card */}
         <div className="bg-white rounded-2xl shadow-2xl p-8">
 
-          {!showReset ? (
+          {/* ── Sign In ── */}
+          {!showReset && (
             <>
               <h2 className="font-display text-xl text-brand-800 mb-6">Welcome Back</h2>
 
@@ -94,10 +127,10 @@ export default function LoginPage() {
                     </label>
                     <button
                       type="button"
-                      onClick={() => { setShowReset(true); setResetEmail(email); }}
+                      onClick={() => { setShowReset(true); setResetEmail(email) }}
                       className="text-xs text-brand-400 hover:text-brand-600 underline"
                     >
-                      Forgot password?
+                      Set / Reset Password
                     </button>
                   </div>
                   <input
@@ -116,21 +149,24 @@ export default function LoginPage() {
                 </button>
               </form>
             </>
-          ) : (
+          )}
+
+          {/* ── Set / Reset Password ── */}
+          {showReset && (
             <>
               <button
-                onClick={() => { setShowReset(false); setResetSent(false); setResetError(null); }}
+                onClick={goBackToSignIn}
                 className="text-sm text-brand-400 hover:text-brand-600 mb-4 flex items-center gap-1"
               >
                 ← Back to sign in
               </button>
 
-              <h2 className="font-display text-xl text-brand-800 mb-2">Reset Password</h2>
+              <h2 className="font-display text-xl text-brand-800 mb-2">Set / Reset Password</h2>
 
               {!resetSent ? (
                 <>
                   <p className="text-sm text-brand-500 mb-6">
-                    Enter your email address and we'll send you a link to reset your password.
+                    Enter your email address and we'll send you a link to set or reset your password.
                   </p>
 
                   {resetError && (
@@ -155,7 +191,7 @@ export default function LoginPage() {
                       type="submit" disabled={resetLoading}
                       className="w-full bg-brand-600 hover:bg-brand-500 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg transition-colors"
                     >
-                      {resetLoading ? 'Sending…' : 'Send Reset Link'}
+                      {resetLoading ? 'Checking…' : 'Send Link'}
                     </button>
                   </form>
                 </>
@@ -164,11 +200,13 @@ export default function LoginPage() {
                   <div className="text-4xl mb-4">📬</div>
                   <p className="text-brand-700 font-medium mb-2">Check your inbox</p>
                   <p className="text-sm text-brand-500 mb-6">
-                    We've sent a password reset link to <strong>{resetEmail}</strong>.
-                    The link will expire in 1 hour.
+                    {isNewMember
+                      ? <>Welcome! We've sent a link to <strong>{resetEmail}</strong> to set up your password. Check your inbox and follow the link.</>
+                      : <>We've sent a password reset link to <strong>{resetEmail}</strong>. The link will expire in 1 hour.</>
+                    }
                   </p>
                   <button
-                    onClick={() => { setShowReset(false); setResetSent(false); }}
+                    onClick={goBackToSignIn}
                     className="text-sm text-brand-400 hover:text-brand-600 underline"
                   >
                     Back to sign in
