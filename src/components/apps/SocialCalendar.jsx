@@ -50,9 +50,10 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
 
   // Filter categories based on profile tags — compute before form init
   const allowedCategories = categories.filter(cat => {
-    if (!cat.required_tag) return true
-    if (isCalendarAdmin) return true
-    return profile?.tags?.includes(cat.required_tag)
+    if (!cat.required_tag) return true           // NULL = open to all
+    if (isCalendarAdmin) return true             // admins see everything
+    if (!profile?.tags?.length) return false     // no tags = no restricted categories
+    return profile.tags.includes(cat.required_tag)
   })
 
   const [form, setForm] = useState({
