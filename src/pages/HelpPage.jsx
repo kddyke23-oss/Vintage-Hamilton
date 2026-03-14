@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 
-const TABS = ['Getting Started', 'Navigating the App', 'Directory', 'Social Calendar', 'Lotto Syndicate', 'Contact & Help']
+const TABS = ['Getting Started', 'Navigating the App', 'Directory', 'Social Calendar', 'Blog', 'Lotto Syndicate', 'Contact & Help']
 
 // Configurable general help contact
 const GENERAL_HELP_CONTACT = 'Keith Dyke'
@@ -12,10 +12,20 @@ export default function HelpPage() {
   const navigate = useNavigate()
   const [appAdmins, setAppAdmins] = useState({}) // { lotto: ['Keith Dyke', ...], directory: [...] }
   const [loadingAdmins, setLoadingAdmins] = useState(true)
+  const [calendarCategories, setCalendarCategories] = useState([])
 
   useEffect(() => {
     fetchAppAdmins()
+    fetchCalendarCategories()
   }, [])
+
+  async function fetchCalendarCategories() {
+    const { data } = await supabase
+      .from('calendar_categories')
+      .select('id, name, description, color, required_tag')
+      .order('id')
+    if (data) setCalendarCategories(data)
+  }
 
   async function fetchAppAdmins() {
     try {
@@ -148,7 +158,7 @@ export default function HelpPage() {
               <NavItem icon="📋" label="Directory" description="The Vintage @ Hamilton resident directory. Search for neighbours by name, browse contact details, and more." />
               <NavItem icon="📅" label="Calendar" description="Community events and social activities — see what's coming up and RSVP." />
               <NavItem icon="🎱" label="Lotto Syndicate" description="Track the community Powerball syndicate — draws, winnings, payments, and member details." />
-              <NavItem icon="📝" label="Blog" description="Community news, announcements, and posts from residents. Coming soon!" />
+              <NavItem icon="📝" label="Blog" description="Community news, announcements, and posts from residents. React, comment, and share your own stories." />
             </div>
 
             <Section title="The top bar">
@@ -237,11 +247,19 @@ export default function HelpPage() {
                 Events are organised by category so you can find what interests you:
               </p>
               <div className="space-y-2">
-                <CategoryBadge color="#2C5F8A" name="General FYI" description="Community notices and announcements open to everyone." />
-                <CategoryBadge color="#C9922A" name="Social Events" description="Parties, gatherings, and social get-togethers." />
-                <CategoryBadge color="#2E7D32" name="Fitness & Wellness" description="Exercise classes, walks, and wellness activities." />
-                <CategoryBadge color="#7B3F9E" name="Arts & Crafts" description="Creative workshops and art-focused events." />
-                <CategoryBadge color="#1A3F5C" name="Committee Meetings" description="HOA and community committee meetings." />
+                {calendarCategories.length === 0 ? (
+                  <p className="text-brand-400 text-sm">Loading categories…</p>
+                ) : (
+                  calendarCategories.map(cat => (
+                    <CategoryBadge
+                      key={cat.id}
+                      color={cat.color}
+                      name={cat.name}
+                      description={cat.description || ''}
+                      requiredTag={cat.required_tag}
+                    />
+                  ))
+                )}
               </div>
             </Section>
 
@@ -254,8 +272,68 @@ export default function HelpPage() {
           </div>
         )}
 
-        {/* ── Lotto Syndicate ── */}
+        {/* ── Blog ── */}
         {activeTab === 4 && (
+          <div className="space-y-6">
+            <Section title="The Community Blog 📝">
+              <p className="text-brand-600">
+                The Community Blog is where residents share news, stories, event recaps, and announcements.
+                Anyone with blog access can write a post, leave comments, and react to what others have shared.
+              </p>
+            </Section>
+
+            <Section title="Reading posts">
+              <Steps steps={[
+                { n: 1, text: <>Click <strong>Blog</strong> in the sidebar.</> },
+                { n: 2, text: <>Browse the list of posts — you can see the author, how long ago it was posted, and a preview of the content.</> },
+                { n: 3, text: <>Click the <strong>💬 comments button</strong> on any post card to open the full post and read or add comments.</> },
+              ]} />
+            </Section>
+
+            <Section title="Reacting to posts">
+              <p className="text-brand-600">
+                Each post and comment has <strong>👍</strong> and <strong>❤️</strong> reaction buttons.
+                Click one to add your reaction — click it again to remove it. Reactions are a quick way
+                to show appreciation without needing to write a comment.
+              </p>
+            </Section>
+
+            <Section title="Writing a post">
+              <Steps steps={[
+                { n: 1, text: <>Click the <strong>✏️ Write Post</strong> button at the top of the Blog page.</> },
+                { n: 2, text: <>Give your post a title and write your content in the body field.</> },
+                { n: 3, text: <>Optionally link your post to a calendar event — useful for event previews or recaps.</> },
+                { n: 4, text: <>Click <strong>"Publish Post"</strong> — your post will appear immediately for everyone to read.</> },
+              ]} />
+            </Section>
+
+            <Section title="Commenting on a post">
+              <Steps steps={[
+                { n: 1, text: <>Click the <strong>💬 comments button</strong> on a post card to open it.</> },
+                { n: 2, text: <>Scroll to the bottom of the post and type your comment in the box.</> },
+                { n: 3, text: <>Click <strong>"Post"</strong> or press <strong>Ctrl+Enter</strong> to submit.</> },
+              ]} />
+            </Section>
+
+            <Section title="Reporting content">
+              <p className="text-brand-600">
+                If you see a post or comment that seems inappropriate, use the <strong>🚩 Report</strong> button
+                to flag it. Add a brief reason and submit — an administrator will review it.
+                Reporting is anonymous to other residents.
+              </p>
+            </Section>
+
+            <Callout>
+              💡 <strong>Tip:</strong> Use the search bar at the top of the Blog page to find posts by keyword —
+              handy if you're looking for a specific announcement or recap.
+            </Callout>
+
+            <AdminContact appId="blog" admins={appAdmins} loading={loadingAdmins} />
+          </div>
+        )}
+
+        {/* ── Lotto Syndicate ── */}
+        {activeTab === 5 && (
           <div className="space-y-6">
             <Section title="The Lotto Syndicate 🎱">
               <p className="text-brand-600">
@@ -289,7 +367,7 @@ export default function HelpPage() {
         )}
 
         {/* ── Contact & Help ── */}
-        {activeTab === 5 && (
+        {activeTab === 6 && (
           <div className="space-y-6">
             <Section title="Need help? We've got you covered 😊">
               <p className="text-brand-600">
@@ -307,10 +385,10 @@ export default function HelpPage() {
                 <p className="text-brand-400 text-sm">Loading...</p>
               ) : (
                 <div className="space-y-4">
-                  {['directory', 'calendar', 'lotto'].map(appId => (
+                  {['directory', 'calendar', 'blog', 'lotto'].map(appId => (
                     <div key={appId}>
                       <p className="text-sm font-semibold text-brand-700 mb-2 capitalize">
-                        {appId === 'lotto' ? 'Lotto Syndicate' : appId === 'calendar' ? 'Social Calendar' : 'Resident Directory'}
+                        {appId === 'lotto' ? 'Lotto Syndicate' : appId === 'calendar' ? 'Social Calendar' : appId === 'blog' ? 'Community Blog' : 'Resident Directory'}
                       </p>
                       {appAdmins[appId]?.length > 0 ? (
                         <div className="space-y-2">
@@ -387,16 +465,23 @@ function NavItem({ icon, label, description }) {
   )
 }
 
-function CategoryBadge({ color, name, description }) {
+function CategoryBadge({ color, name, description, requiredTag }) {
   return (
     <div className="flex gap-3 items-start p-3 rounded-lg bg-brand-50 border border-brand-100">
       <span
         className="flex-shrink-0 mt-0.5 w-3 h-3 rounded-full"
         style={{ backgroundColor: color }}
       />
-      <div>
-        <p className="font-semibold text-brand-800 text-sm">{name}</p>
-        <p className="text-brand-500 text-sm">{description}</p>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="font-semibold text-brand-800 text-sm">{name}</p>
+          {requiredTag && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+              {requiredTag} only
+            </span>
+          )}
+        </div>
+        {description && <p className="text-brand-500 text-sm mt-0.5">{description}</p>}
       </div>
     </div>
   )

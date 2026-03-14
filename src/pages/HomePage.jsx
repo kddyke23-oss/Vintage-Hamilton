@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 import { useAppAccess } from '@/hooks/useAppAccess'
 import { supabase } from '@/lib/supabase'
+import AdminReportsWidget from '@/components/apps/AdminReportsWidget'
 
 const ALL_APPS = [
   { id: 'directory', label: 'Resident Directory', description: 'Find and connect with your neighbors', icon: '👥', path: '/apps/directory' },
@@ -194,6 +195,10 @@ export default function HomePage() {
         </div>
         <UpcomingEvents />
       </div>
+
+      {/* Admin reports widget — visible to eligible admins only */}
+      <AdminReportsWidget />
+
     </div>
   )
 }

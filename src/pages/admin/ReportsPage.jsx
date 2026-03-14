@@ -1,0 +1,610 @@
+import { useState, useEffect, useCallback } from 'react'
+import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/context/AuthContext'
+import { useToast } from '@/components/ui/Toast'
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const fmtDate = (ts) => {
+  if (!ts) return ''
+  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+const TARGET_LABELS = { event: '📅 Calendar Event', post: '📝 Blog Post', comment: '💬 Blog Comment' }
+
+const CATEGORY_COLORS = [
+  { label: 'Ocean Blue',   value: '#2C5F8A' },
+  { label: 'Deep Navy',    value: '#1A3F5C' },
+  { label: 'Warm Gold',    value: '#C9922A' },
+  { label: 'Forest Green', value: '#2E7D32' },
+  { label: 'Purple',       value: '#7B3F9E' },
+  { label: 'Teal',         value: '#00796B' },
+  { label: 'Rose',         value: '#C62828' },
+  { label: 'Slate',        value: '#546E7A' },
+]
+
+// ─── Tab: Reports ─────────────────────────────────────────────────────────────
+
+function ReportsTab() {
+  const toast = useToast()
+  const [reports, setReports] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [showResolved, setShowResolved] = useState(false)
+
+  const fetchReports = useCallback(async () => {
+    setLoading(true)
+    const { data, error } = await supabase
+      .from('blog_reports')
+      .select('id, target_type, target_id, reason, resolved, created_at, reported_by')
+      .eq('resolved', showResolved)
+      .order('created_at', { ascending: false })
+
+    if (error) { setLoading(false); return }
+
+    // Fetch reporter names
+    const userIds = [...new Set(data.map(r => r.reported_by).filter(Boolean))]
+    let nameMap = {}
+    if (userIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, names, surname')
+        .in('id', userIds)
+      if (profiles) {
+        profiles.forEach(p => {
+          const first = p.names?.split(' ')[0] || ''
+          nameMap[p.id] = `${first} ${p.surname || ''}`.trim()
+        })
+      }
+    }
+
+    // Fetch content previews
+    const enriched = await Promise.all(data.map(async (report) => {
+      let preview = '(content unavailable)'
+      try {
+        if (report.target_type === 'event') {
+          const { data: ev } = await supabase.from('calendar_events').select('title').eq('id', report.target_id).single()
+          if (ev) preview = ev.title
+        } else if (report.target_type === 'post') {
+          const { data: post } = await supabase.from('blog_posts').select('title').eq('id', report.target_id).single()
+          if (post) preview = post.title
+        } else if (report.target_type === 'comment') {
+          const { data: comment } = await supabase.from('blog_comments').select('body').eq('id', report.target_id).single()
+          if (comment) preview = comment.body.slice(0, 80) + (comment.body.length > 80 ? '…' : '')
+        }
+      } catch {}
+      return { ...report, preview, reporter_name: nameMap[report.reported_by] || 'Unknown' }
+    }))
+
+    setReports(enriched)
+    setLoading(false)
+  }, [showResolved])
+
+  useEffect(() => { fetchReports() }, [fetchReports])
+
+  const handleResolve = async (report) => {
+    const { error } = await supabase
+      .from('blog_reports')
+      .update({ resolved: true })
+      .eq('id', report.id)
+    if (error) { toast.error('Could not resolve report.'); return }
+    toast.success('Report marked as resolved.')
+    fetchReports()
+  }
+
+  const handleReopen = async (report) => {
+    const { error } = await supabase
+      .from('blog_reports')
+      .update({ resolved: false })
+      .eq('id', report.id)
+    if (error) { toast.error('Could not reopen report.'); return }
+    toast.success('Report reopened.')
+    fetchReports()
+  }
+
+  const unresolved = reports.filter(r => !r.resolved)
+  const resolved = reports.filter(r => r.resolved)
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Content Reports</h2>
+          <p className="text-sm text-gray-500 mt-0.5">Flagged content from calendar events, blog posts, and comments.</p>
+        </div>
+        <button
+          onClick={() => setShowResolved(v => !v)}
+          className={`text-sm px-4 py-2 rounded-lg border transition-colors ${showResolved ? 'bg-gray-100 border-gray-300 text-gray-700' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+        >
+          {showResolved ? 'Show Unresolved' : 'Show Resolved'}
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-12 text-gray-400">Loading reports…</div>
+      ) : reports.length === 0 ? (
+        <div className="text-center py-12">
+          <div className="text-4xl mb-3">{showResolved ? '📋' : '✅'}</div>
+          <p className="text-gray-500 font-medium">
+            {showResolved ? 'No resolved reports.' : 'No unresolved reports — all clear!'}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {reports.map(report => (
+            <div key={report.id} className="bg-white rounded-xl border border-gray-200 p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                      {TARGET_LABELS[report.target_type] || report.target_type}
+                    </span>
+                    <span className="text-xs text-gray-400">{fmtDate(report.created_at)}</span>
+                    <span className="text-xs text-gray-400">· reported by <span className="font-medium text-gray-600">{report.reporter_name}</span></span>
+                  </div>
+                  <p className="font-medium text-gray-800 text-sm mb-1 truncate">{report.preview}</p>
+                  <p className="text-sm text-gray-500"><span className="font-medium">Reason:</span> {report.reason}</p>
+                </div>
+                <div className="flex-shrink-0">
+                  {report.resolved ? (
+                    <button
+                      onClick={() => handleReopen(report)}
+                      className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
+                    >
+                      Reopen
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleResolve(report)}
+                      className="text-sm px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors"
+                    >
+                      Mark Resolved
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Category Modal (defined outside tab to prevent focus loss on re-render) ──
+
+function CatModal({ editingCat, catForm, setCatForm, tags, onSave, onClose }) {
+  return (
+    <div
+      className="fixed inset-0 flex items-center justify-center p-4"
+      style={{ zIndex: 1500, backgroundColor: 'rgba(0,0,0,0.5)' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <style>{`:root { --modal-z: 1500; }`}</style>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between p-6 border-b border-gray-100">
+          <h3 className="font-bold text-gray-900">{editingCat === 'new' ? 'New Category' : 'Edit Category'}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl">✕</button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Name <span className="text-red-500">*</span></label>
+            <input
+              type="text"
+              value={catForm.name}
+              onChange={e => setCatForm(f => ({ ...f, name: e.target.value }))}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <input
+              type="text"
+              value={catForm.description}
+              onChange={e => setCatForm(f => ({ ...f, description: e.target.value }))}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Colour</label>
+            <div className="flex flex-wrap gap-2">
+              {CATEGORY_COLORS.map(c => (
+                <button
+                  key={c.value}
+                  onClick={() => setCatForm(f => ({ ...f, color: c.value }))}
+                  title={c.label}
+                  className={`w-8 h-8 rounded-full border-2 transition-all ${catForm.color === c.value ? 'border-gray-900 scale-110' : 'border-transparent hover:border-gray-400'}`}
+                  style={{ backgroundColor: c.value }}
+                />
+              ))}
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-xs px-2 py-1 rounded-full text-white font-medium" style={{ backgroundColor: catForm.color }}>
+                Preview badge
+              </span>
+              <span className="text-xs text-gray-400">{catForm.color}</span>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Required Directory Tag <span className="text-gray-400 font-normal">(optional — restricts who can post)</span>
+            </label>
+            <select
+              value={catForm.required_tag}
+              onChange={e => setCatForm(f => ({ ...f, required_tag: e.target.value }))}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"
+            >
+              <option value="">— No restriction (anyone can post) —</option>
+              {tags.map(t => (
+                <option key={t.id} value={t.label}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="flex justify-end gap-3 p-6 border-t border-gray-100">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+          <button
+            onClick={onSave}
+            disabled={!catForm.name.trim()}
+            className="px-5 py-2 text-sm bg-blue-700 text-white rounded-lg hover:bg-blue-800 disabled:opacity-50 transition-colors"
+          >
+            Save Category
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Tab: Categories & Tags ───────────────────────────────────────────────────
+
+function CategoriesTagsTab() {
+  const toast = useToast()
+
+  // Categories state
+  const [categories, setCategories] = useState([])
+  const [catLoading, setCatLoading] = useState(true)
+  const [editingCat, setEditingCat] = useState(null) // null | 'new' | category object
+  const [catForm, setCatForm] = useState({ name: '', description: '', color: '#2C5F8A', required_tag: '' })
+
+  // Tags state
+  const [tags, setTags] = useState([])
+  const [tagLoading, setTagLoading] = useState(true)
+  const [newTagLabel, setNewTagLabel] = useState('')
+  const [editingTag, setEditingTag] = useState(null)
+  const [editTagLabel, setEditTagLabel] = useState('')
+
+  // ── Fetch ──────────────────────────────────────────────────────────────────
+
+  const fetchCategories = useCallback(async () => {
+    setCatLoading(true)
+    const { data } = await supabase
+      .from('calendar_categories')
+      .select('id, name, description, color, required_tag')
+      .order('id')
+    setCategories(data || [])
+    setCatLoading(false)
+  }, [])
+
+  const fetchTags = useCallback(async () => {
+    setTagLoading(true)
+    const { data } = await supabase
+      .from('directory_tags')
+      .select('id, label')
+      .order('label')
+    setTags(data || [])
+    setTagLoading(false)
+  }, [])
+
+  useEffect(() => { fetchCategories(); fetchTags() }, [fetchCategories, fetchTags])
+
+  // ── Category CRUD ──────────────────────────────────────────────────────────
+
+  const openNewCat = () => {
+    setEditingCat('new')
+    setCatForm({ name: '', description: '', color: '#2C5F8A', required_tag: '' })
+  }
+
+  const openEditCat = (cat) => {
+    setEditingCat(cat)
+    setCatForm({ name: cat.name, description: cat.description || '', color: cat.color || '#2C5F8A', required_tag: cat.required_tag || '' })
+  }
+
+  const saveCat = async () => {
+    if (!catForm.name.trim()) return
+    const payload = {
+      name: catForm.name.trim(),
+      description: catForm.description.trim() || null,
+      color: catForm.color,
+      required_tag: catForm.required_tag || null,
+    }
+    let error
+    if (editingCat === 'new') {
+      ;({ error } = await supabase.from('calendar_categories').insert(payload))
+    } else {
+      ;({ error } = await supabase.from('calendar_categories').update(payload).eq('id', editingCat.id))
+    }
+    if (error) { toast.error('Could not save category.'); return }
+    toast.success(editingCat === 'new' ? 'Category created.' : 'Category updated.')
+    setEditingCat(null)
+    fetchCategories()
+  }
+
+  const deleteCat = async (cat) => {
+    if (!window.confirm(`Delete category "${cat.name}"? Events using it will lose their category.`)) return
+    const { error } = await supabase.from('calendar_categories').delete().eq('id', cat.id)
+    if (error) { toast.error('Could not delete category.'); return }
+    toast.success('Category deleted.')
+    fetchCategories()
+  }
+
+  // ── Tag CRUD ───────────────────────────────────────────────────────────────
+
+  const addTag = async () => {
+    if (!newTagLabel.trim()) return
+    const { error } = await supabase.from('directory_tags').insert({ label: newTagLabel.trim() })
+    if (error) { toast.error(error.code === '23505' ? 'That tag already exists.' : 'Could not add tag.'); return }
+    toast.success('Tag added.')
+    setNewTagLabel('')
+    fetchTags()
+  }
+
+  const saveTag = async (tag) => {
+    if (!editTagLabel.trim()) return
+    const { error } = await supabase.from('directory_tags').update({ label: editTagLabel.trim() }).eq('id', tag.id)
+    if (error) { toast.error('Could not update tag.'); return }
+    toast.success('Tag updated.')
+    setEditingTag(null)
+    fetchTags()
+  }
+
+  const deleteTag = async (tag) => {
+    if (!window.confirm(`Delete tag "${tag.label}"? It will be removed from the category required_tag dropdown but existing profile tags are unaffected.`)) return
+    const { error } = await supabase.from('directory_tags').delete().eq('id', tag.id)
+    if (error) { toast.error('Could not delete tag.'); return }
+    toast.success('Tag deleted.')
+    fetchTags()
+  }
+
+  // ── Category form modal ────────────────────────────────────────────────────
+
+  // (CatModal is defined as a top-level component above to prevent focus loss)
+
+  return (
+    <div className="space-y-10">
+
+      {/* ── Calendar Categories ── */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">Calendar Categories</h2>
+            <p className="text-sm text-gray-500 mt-0.5">Manage event categories and their posting restrictions.</p>
+          </div>
+          <button
+            onClick={openNewCat}
+            className="bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800 transition-colors"
+          >
+            + New Category
+          </button>
+        </div>
+
+        {catLoading ? (
+          <div className="text-sm text-gray-400 py-4">Loading…</div>
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Category</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600 hidden sm:table-cell">Description</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600 hidden md:table-cell">Required Tag</th>
+                  <th className="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {categories.map(cat => (
+                  <tr key={cat.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: cat.color }} />
+                        <span className="font-medium text-gray-800">{cat.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 hidden sm:table-cell">{cat.description || '—'}</td>
+                    <td className="px-4 py-3 hidden md:table-cell">
+                      {cat.required_tag
+                        ? <span className="text-xs px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full">{cat.required_tag}</span>
+                        : <span className="text-gray-400 text-xs">None</span>
+                      }
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button onClick={() => openEditCat(cat)} className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50">Edit</button>
+                        <button onClick={() => deleteCat(cat)} className="text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50">Delete</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── Directory Tags ── */}
+      <div>
+        <div className="mb-4">
+          <h2 className="text-lg font-bold text-gray-900">Directory Tags</h2>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Standardised tags used on resident profiles and as category posting restrictions. Changes here affect what's available in the directory edit modal and category settings.
+          </p>
+        </div>
+
+        {/* Add new tag */}
+        <div className="flex gap-2 mb-4">
+          <input
+            type="text"
+            value={newTagLabel}
+            onChange={e => setNewTagLabel(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') addTag() }}
+            placeholder="New tag label…"
+            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+          />
+          <button
+            onClick={addTag}
+            disabled={!newTagLabel.trim()}
+            className="bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50 transition-colors"
+          >
+            Add Tag
+          </button>
+        </div>
+
+        {tagLoading ? (
+          <div className="text-sm text-gray-400 py-4">Loading…</div>
+        ) : tags.length === 0 ? (
+          <p className="text-sm text-gray-400 italic">No tags yet.</p>
+        ) : (
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Tag</th>
+                  <th className="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {tags.map(tag => (
+                  <tr key={tag.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3">
+                      {editingTag?.id === tag.id ? (
+                        <input
+                          type="text"
+                          value={editTagLabel}
+                          onChange={e => setEditTagLabel(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') saveTag(tag); if (e.key === 'Escape') setEditingTag(null) }}
+                          autoFocus
+                          className="border border-blue-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 w-48"
+                        />
+                      ) : (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                          {tag.label}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {editingTag?.id === tag.id ? (
+                        <div className="flex items-center justify-end gap-2">
+                          <button onClick={() => saveTag(tag)} className="text-xs text-green-600 hover:text-green-800 px-2 py-1 rounded hover:bg-green-50">Save</button>
+                          <button onClick={() => setEditingTag(null)} className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100">Cancel</button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => { setEditingTag(tag); setEditTagLabel(tag.label) }}
+                            className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50"
+                          >
+                            Rename
+                          </button>
+                          <button onClick={() => deleteTag(tag)} className="text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50">Delete</button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Category modal */}
+      {editingCat !== null && (
+        <CatModal
+          editingCat={editingCat}
+          catForm={catForm}
+          setCatForm={setCatForm}
+          tags={tags}
+          onSave={saveCat}
+          onClose={() => setEditingCat(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
+
+const TABS = [
+  { id: 'reports', label: '🚩 Reports' },
+  { id: 'categories', label: '🗂️ Categories & Tags' },
+]
+
+export default function ReportsPage() {
+  const { user } = useAuth()
+  const [activeTab, setActiveTab] = useState('reports')
+  const [isEligible, setIsEligible] = useState(null)
+
+  useEffect(() => {
+    if (!user) return
+    supabase
+      .from('app_access')
+      .select('app_id, role')
+      .eq('user_id', user.id)
+      .then(({ data }) => {
+        const ok = data?.some(a =>
+          a.app_id === 'admin' ||
+          (a.app_id === 'calendar' && a.role === 'admin') ||
+          (a.app_id === 'blog' && a.role === 'admin')
+        )
+        setIsEligible(!!ok)
+      })
+  }, [user])
+
+  if (isEligible === null) {
+    return <div className="flex items-center justify-center h-64 text-gray-400">Checking access…</div>
+  }
+
+  if (!isEligible) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center p-8 bg-white rounded-2xl shadow-sm border border-gray-100 max-w-sm">
+          <div className="text-5xl mb-4">🔒</div>
+          <h2 className="text-xl font-bold text-gray-800 mb-2">Authorisation Required</h2>
+          <p className="text-gray-500 text-sm">You need calendar or blog admin access to view this page.</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-4xl mx-auto px-4 py-8">
+      {/* Page header */}
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900" style={{ fontFamily: "'Playfair Display', serif" }}>
+          Admin Panel
+        </h1>
+        <p className="text-gray-500 text-sm mt-1">Manage reports, calendar categories, and directory tags.</p>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit mb-8">
+        {TABS.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === tab.id
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      {activeTab === 'reports' && <ReportsTab />}
+      {activeTab === 'categories' && <CategoriesTagsTab />}
+    </div>
+  )
+}

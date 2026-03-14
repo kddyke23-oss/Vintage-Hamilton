@@ -17,6 +17,7 @@ import HelpPage from '@/pages/HelpPage'
 import AdminDashboard from '@/pages/admin/AdminDashboard'
 import ResidentsPage from '@/pages/admin/ResidentsPage'
 import AccessPage from '@/pages/admin/AccessPage'
+import ReportsPage from '@/pages/admin/ReportsPage'
 import ResetPasswordPage from '@/pages/auth/ResetPasswordPage'
 
 function ResidentShell({ children }) {
@@ -59,6 +60,7 @@ export default function App() {
               <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
               <Route path="/admin/residents" element={<AdminRoute><ResidentsPage /></AdminRoute>} />
               <Route path="/admin/access" element={<AdminRoute><AccessPage /></AdminRoute>} />
+              <Route path="/admin/reports" element={<AdminRoute><ReportsPage /></AdminRoute>} />
 
               {/* Fallback */}
               <Route path="*" element={<Navigate to="/" replace />} />
