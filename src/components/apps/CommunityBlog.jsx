@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/components/ui/Toast'
@@ -53,7 +54,7 @@ function ReactionBar({ targetType, targetId, residentId, reactions, onReact }) {
 
 // ─── PostCard (list view) ────────────────────────────────────────────────────
 
-function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, onRemove, isOwnPost }) {
+function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, onRemove, isOwnPost, onNavigateToEvent }) {
   const commentCount = post.comment_count || 0
   const likeCount = reactions.filter(r => r.target_type === 'post' && r.target_id === post.id && r.reaction_type === 'like').length
   const heartCount = reactions.filter(r => r.target_type === 'post' && r.target_id === post.id && r.reaction_type === 'heart').length
@@ -70,10 +71,14 @@ function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, o
             {post.title}
           </h3>
           {post.calendar_event && (
-            <div className="mt-1 flex items-center gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 w-fit">
+            <button
+              onClick={() => onNavigateToEvent(post.calendar_event.id)}
+              className="mt-1 flex items-center gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 w-fit hover:bg-amber-100 transition-colors"
+            >
               <span>📅</span>
               <span className="truncate max-w-[200px]">{post.calendar_event.title}</span>
-            </div>
+              <span className="text-amber-400">→</span>
+            </button>
           )}
         </div>
         {(isBlogAdmin || isOwnPost) && (
@@ -131,7 +136,7 @@ function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, o
 
 // ─── PostModal (detail view) ─────────────────────────────────────────────────
 
-function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, onClose, onPostRemoved, toast }) {
+function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, onClose, onPostRemoved, onNavigateToEvent, toast }) {
   const [comments, setComments] = useState([])
   const [newComment, setNewComment] = useState('')
   const [loadingComments, setLoadingComments] = useState(true)
@@ -199,11 +204,12 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
 
   const handleRemovePost = async () => {
     if (!window.confirm('Remove this post? This cannot be undone.')) return
-    const { error } = await supabase
-      .from('blog_posts')
-      .update({ removed: true })
-      .eq('id', post.id)
-    if (error) { toast.error('Could not remove post.'); return }
+    // Soft-delete the post and any attached comments together
+    const [{ error: postError }, { error: commentError }] = await Promise.all([
+      supabase.from('blog_posts').update({ removed: true, calendar_event_id: null }).eq('id', post.id),
+      supabase.from('blog_comments').update({ removed: true }).eq('post_id', post.id),
+    ])
+    if (postError || commentError) { toast.error('Could not remove post.'); return }
     toast.success('Post removed.')
     onPostRemoved(post.id)
     onClose()
@@ -243,10 +249,14 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
           <div className="flex-1 min-w-0 pr-4">
             <h2 className="text-xl font-bold text-gray-900 leading-snug">{post.title}</h2>
             {post.calendar_event && (
-              <div className="mt-2 flex items-center gap-1.5 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 w-fit">
+              <button
+                onClick={() => { onClose(); onNavigateToEvent(post.calendar_event.id) }}
+                className="mt-2 flex items-center gap-1.5 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 w-fit hover:bg-amber-100 transition-colors"
+              >
                 <span>📅</span>
                 <span>Related event: <strong>{post.calendar_event.title}</strong> · {fmtDate(post.calendar_event.event_date)}</span>
-              </div>
+                <span className="text-amber-400 ml-1">→</span>
+              </button>
             )}
             <div className="mt-2 text-sm text-gray-400">
               <span className="font-medium text-gray-600">{post.author_name || 'Resident'}</span>
@@ -512,6 +522,7 @@ function AddPostModal({ user, onClose, onSaved, toast }) {
 export default function CommunityBlog() {
   const { user, profile } = useAuth()
   const toast = useToast()
+  const navigate = useNavigate()
 
   const [posts, setPosts] = useState([])
   const [reactions, setReactions] = useState([])
@@ -522,6 +533,10 @@ export default function CommunityBlog() {
   const [selectedPost, setSelectedPost] = useState(null)
   const [showAddPost, setShowAddPost] = useState(false)
   const [search, setSearch] = useState('')
+
+  const handleNavigateToEvent = (eventId) => {
+    navigate(`/apps/calendar?openEvent=${eventId}`)
+  }
 
   // ── Fetch resident_id & role ──────────────────────────────────────────────
   useEffect(() => {
@@ -644,11 +659,11 @@ export default function CommunityBlog() {
   // ── Remove post ───────────────────────────────────────────────────────────
   const handleRemovePost = async (post) => {
     if (!window.confirm('Remove this post?')) return
-    const { error } = await supabase
-      .from('blog_posts')
-      .update({ removed: true })
-      .eq('id', post.id)
-    if (error) { toast.error('Could not remove post.'); return }
+    const [{ error: postError }, { error: commentError }] = await Promise.all([
+      supabase.from('blog_posts').update({ removed: true, calendar_event_id: null }).eq('id', post.id),
+      supabase.from('blog_comments').update({ removed: true }).eq('post_id', post.id),
+    ])
+    if (postError || commentError) { toast.error('Could not remove post.'); return }
     toast.success('Post removed.')
     setPosts(prev => prev.filter(p => p.id !== post.id))
   }
@@ -706,6 +721,7 @@ export default function CommunityBlog() {
                 isBlogAdmin={isBlogAdmin}
                 onRemove={handleRemovePost}
                 isOwnPost={post.created_by === user?.id}
+                onNavigateToEvent={handleNavigateToEvent}
               />
             ))}
           </div>
@@ -726,6 +742,7 @@ export default function CommunityBlog() {
             setPosts(prev => prev.filter(p => p.id !== id))
             setSelectedPost(null)
           }}
+          onNavigateToEvent={handleNavigateToEvent}
           toast={toast}
         />
       )}

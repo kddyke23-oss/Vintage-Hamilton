@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/components/ui/Toast'
@@ -620,11 +621,19 @@ export default function SocialCalendar() {
   const toast = useToast()
 
   const now = new Date()
-  const [viewMode, setViewMode] = useState(window.innerWidth < 768 ? 'list' : 'grid')
+  const [viewMode, setViewMode] = useState(() => {
+    // If arriving from blog with an event to open, force list mode so event is fetched
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('openEvent')) return 'list'
+    return window.innerWidth < 768 ? 'list' : 'grid'
+  })
   const [currentYear, setCurrentYear] = useState(now.getFullYear())
   const [currentMonth, setCurrentMonth] = useState(now.getMonth())
   const [filterCategory, setFilterCategory] = useState('all')
-  const [showPast, setShowPast] = useState(false)
+  const [showPast, setShowPast] = useState(() => {
+    const params = new URLSearchParams(window.location.search)
+    return !!params.get('openEvent') // show past events if arriving from a blog link
+  })
 
   const [categories, setCategories] = useState([])
   const [events, setEvents] = useState([])
@@ -637,6 +646,19 @@ export default function SocialCalendar() {
   const [editEvent, setEditEvent] = useState(null)
   const [selectedEvent, setSelectedEvent] = useState(null)
   const [reportEvent, setReportEvent] = useState(null)
+
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // ── Auto-open event from ?openEvent=id (linked from blog) ─────────────────
+  useEffect(() => {
+    const openId = searchParams.get('openEvent')
+    if (!openId || loading || events.length === 0) return
+    const match = events.find(e => e.id === parseInt(openId))
+    if (match) {
+      setSelectedEvent(match)
+      setSearchParams({}, { replace: true }) // clean up URL after opening
+    }
+  }, [searchParams, events, loading, setSearchParams])
 
   // ── Fetch profile + admin status ─────────────────────────────────────────
   useEffect(() => {
