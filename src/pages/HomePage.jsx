@@ -6,10 +6,11 @@ import { supabase } from '@/lib/supabase'
 import AdminReportsWidget from '@/components/apps/AdminReportsWidget'
 
 const ALL_APPS = [
-  { id: 'directory', label: 'Resident Directory', description: 'Find and connect with your neighbors', icon: '👥', path: '/apps/directory' },
-  { id: 'calendar',  label: 'Social Calendar',    description: 'Community events and activities',    icon: '📅', path: '/apps/calendar' },
-  { id: 'lotto',     label: 'Lotto Tracker',       description: 'Community lottery pools and results', icon: '🎟️', path: '/apps/lotto' },
-  { id: 'blog',      label: 'Community Blog',      description: 'News, stories, and announcements',  icon: '📝', path: '/apps/blog' },
+  { id: 'directory',       label: 'Resident Directory',         description: 'Find and connect with your neighbors',   icon: '👥', path: '/apps/directory' },
+  { id: 'calendar',        label: 'Social Calendar',            description: 'Community events and activities',         icon: '📅', path: '/apps/calendar' },
+  { id: 'lotto',           label: 'Lotto Tracker',              description: 'Community lottery pools and results',     icon: '🎟️', path: '/apps/lotto' },
+  { id: 'blog',            label: 'Community Blog',             description: 'News, stories, and announcements',        icon: '📝', path: '/apps/blog' },
+  { id: 'recommendations', label: "Residents' Recommendations", description: 'Tips, recommendations and warnings',      icon: '⭐', path: '/apps/recommendations' },
 ]
 
 function formatEventDate(dateStr, timeStr) {
@@ -90,7 +91,6 @@ function UpcomingEvents() {
         const color = category?.color || '#2C5F8A'
         return (
           <div key={event.id} className="flex items-start gap-4 px-5 py-4">
-            {/* Color accent bar */}
             <div
               className="w-1 flex-shrink-0 rounded-full self-stretch min-h-[40px]"
               style={{ backgroundColor: color }}
@@ -113,8 +113,6 @@ function UpcomingEvents() {
           </div>
         )
       })}
-
-      {/* View all link */}
       <div className="px-5 py-3">
         <Link
           to="/apps/calendar"
@@ -130,7 +128,29 @@ function UpcomingEvents() {
 export default function HomePage() {
   const { user, isAdmin } = useAuth()
   const { hasAccess, loading } = useAppAccess()
-  const firstName = user?.user_metadata?.full_name?.split(' ')[0] || 'Neighbor'
+  const [firstName, setFirstName] = useState('Neighbor')
+
+  // Fetch profile to get names field for personalised greeting
+  useEffect(() => {
+    if (!user) return
+    async function fetchProfile() {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('names')
+          .eq('id', user.id)
+          .single()
+        if (error) throw error
+        if (data?.names) {
+          // names may be "Keith" or "Keith Lou" — take the first word
+          setFirstName(data.names.trim().split(' ')[0])
+        }
+      } catch (e) {
+        console.error('Failed to load profile for greeting', e)
+      }
+    }
+    fetchProfile()
+  }, [user])
 
   const visibleApps = ALL_APPS.filter(app => hasAccess(app.id))
 
@@ -185,7 +205,7 @@ export default function HomePage() {
         )}
       </div>
 
-      {/* Upcoming Events — live from calendar_events */}
+      {/* Upcoming Events */}
       <div>
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-display text-xl text-brand-800">Upcoming Events</h2>
@@ -196,9 +216,8 @@ export default function HomePage() {
         <UpcomingEvents />
       </div>
 
-      {/* Admin reports widget — visible to eligible admins only */}
+      {/* Admin reports widget */}
       <AdminReportsWidget />
-
     </div>
   )
 }

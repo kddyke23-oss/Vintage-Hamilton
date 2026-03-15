@@ -3,13 +3,30 @@ import { useSearchParams } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import { useToast } from '@/components/ui/Toast'
 
+// Derive initials from surname + names for avatar circle
+function getInitials(surname, names) {
+  const first = names?.trim().split(' ')[0]?.[0] || ''
+  const last  = surname?.trim()[0] || ''
+  return (first + last).toUpperCase() || '?'
+}
+
+const EMPTY_FORM = {
+  surname: '',
+  names: '',
+  email: '',
+  address: '',
+  phone: '',
+  password: '',
+  directory_visible: true,
+}
+
 export default function ResidentsPage() {
   const toast = useToast()
   const [searchParams] = useSearchParams()
   const [residents, setResidents] = useState([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(searchParams.get('action') || null)
-  const [form, setForm] = useState({ full_name: '', email: '', unit_number: '', phone: '', password: '' })
+  const [form, setForm] = useState(EMPTY_FORM)
   const [editTarget, setEditTarget] = useState(null)
   const [formError, setFormError] = useState(null)
   const [formSuccess, setFormSuccess] = useState(null)
@@ -20,8 +37,8 @@ export default function ResidentsPage() {
     try {
       const { data: profiles, error } = await supabase
         .from('profiles')
-        .select('*')
-        .order('full_name')
+        .select('id, resident_id, surname, names, emails, phones, address, directory_visible, is_active, is_admin, photo_url')
+        .order('surname')
       if (error) throw error
       setResidents(profiles ?? [])
     } catch (e) {
@@ -52,14 +69,15 @@ export default function ResidentsPage() {
     return result
   }
 
+  // ── Invite (send email invite to existing or new resident) ───────────────────
   const handleInvite = async () => {
     if (!form.email) { setFormError('Email is required'); return }
     setSubmitting(true); setFormError(null); setFormSuccess(null)
     try {
-      await callEdgeFunction({ mode: 'invite', email: form.email, full_name: form.full_name })
+      await callEdgeFunction({ mode: 'invite', email: form.email })
       setFormSuccess(`Invitation sent to ${form.email}`)
       toast.success(`Invitation sent to ${form.email}`)
-      setForm({ full_name: '', email: '', unit_number: '', phone: '', password: '' })
+      setForm(EMPTY_FORM)
       fetchResidents()
     } catch (e) {
       setFormError(e.message)
@@ -68,8 +86,41 @@ export default function ResidentsPage() {
     setSubmitting(false)
   }
 
+  // ── Add to Directory (profile record only, no auth account) ─────────────────
+  const handleAddToDirectory = async () => {
+    if (!form.surname)  { setFormError('Surname is required'); return }
+    if (!form.names)    { setFormError('First name(s) are required'); return }
+    if (!form.email)    { setFormError('Email is required'); return }
+    if (!form.address)  { setFormError('Address is required'); return }
+    setSubmitting(true); setFormError(null); setFormSuccess(null)
+    try {
+      const { error } = await supabase.from('profiles').insert({
+        surname: form.surname.toUpperCase(),
+        names: form.names,
+        emails: [form.email],
+        phones: form.phone ? [form.phone] : [],
+        address: form.address,
+        directory_visible: form.directory_visible,
+        is_active: true,
+        is_admin: false,
+      })
+      if (error) throw error
+      setFormSuccess(`${form.names} ${form.surname} added to directory`)
+      toast.success(`${form.names} ${form.surname} added to directory`)
+      setForm(EMPTY_FORM)
+      fetchResidents()
+    } catch (e) {
+      setFormError(e.message)
+      toast.error('Add failed: ' + e.message)
+    }
+    setSubmitting(false)
+  }
+
+  // ── Create Account (auth user + profile link) ────────────────────────────────
   const handleCreate = async () => {
-    if (!form.email) { setFormError('Email is required'); return }
+    if (!form.surname)  { setFormError('Surname is required'); return }
+    if (!form.names)    { setFormError('First name(s) are required'); return }
+    if (!form.email)    { setFormError('Email is required'); return }
     if (!form.password) { setFormError('Temporary password is required'); return }
     setSubmitting(true); setFormError(null); setFormSuccess(null)
     try {
@@ -77,13 +128,14 @@ export default function ResidentsPage() {
         mode: 'create',
         email: form.email,
         password: form.password,
-        full_name: form.full_name,
-        unit_number: form.unit_number,
+        surname: form.surname.toUpperCase(),
+        names: form.names,
+        address: form.address,
         phone: form.phone,
       })
       setFormSuccess(`Account created for ${form.email}`)
       toast.success(`Account created for ${form.email}`)
-      setForm({ full_name: '', email: '', unit_number: '', phone: '', password: '' })
+      setForm(EMPTY_FORM)
       fetchResidents()
     } catch (e) {
       setFormError(e.message)
@@ -92,18 +144,27 @@ export default function ResidentsPage() {
     setSubmitting(false)
   }
 
+  // ── Edit existing resident ───────────────────────────────────────────────────
   const handleEdit = async () => {
-    if (!form.full_name) { setFormError('Full name is required'); return }
+    if (!form.surname) { setFormError('Surname is required'); return }
+    if (!form.names)   { setFormError('First name(s) are required'); return }
     setSubmitting(true); setFormError(null); setFormSuccess(null)
     try {
-      const { error } = await supabase.from('profiles').update({
-        full_name: form.full_name,
-        phone: form.phone,
-        unit_number: form.unit_number,
-      }).eq('id', editTarget.id)
+      const updates = {
+        surname: form.surname.toUpperCase(),
+        names: form.names,
+        address: form.address,
+        directory_visible: form.directory_visible,
+      }
+      // Preserve existing phones array; update index 0 if phone provided
+      if (form.phone) {
+        const existing = editTarget.phones || []
+        updates.phones = [form.phone, ...existing.slice(1)]
+      }
+      const { error } = await supabase.from('profiles').update(updates).eq('resident_id', editTarget.resident_id)
       if (error) throw error
       setFormSuccess('Resident updated successfully')
-      toast.success(`${form.full_name} updated successfully`)
+      toast.success(`${form.names} ${form.surname} updated successfully`)
       fetchResidents()
     } catch (e) {
       setFormError(e.message)
@@ -115,36 +176,48 @@ export default function ResidentsPage() {
   const openEdit = (resident) => {
     setEditTarget(resident)
     setForm({
-      full_name: resident.full_name || '',
-      email: resident.email || '',
-      unit_number: resident.unit_number || '',
-      phone: resident.phone || '',
+      surname: resident.surname || '',
+      names: resident.names || '',
+      email: resident.emails?.[0] || '',
+      address: resident.address || '',
+      phone: resident.phones?.[0] || '',
       password: '',
+      directory_visible: resident.directory_visible ?? true,
     })
     setFormError(null)
     setFormSuccess(null)
     setModal('edit')
   }
 
-  const handleDeactivate = async (id, current, name) => {
+  const openInvite = (resident = null) => {
+    setForm({ ...EMPTY_FORM, email: resident?.emails?.[0] || '' })
+    setFormError(null)
+    setFormSuccess(null)
+    setModal('invite')
+  }
+
+  const handleDeactivate = async (resident) => {
+    const name = `${resident.names} ${resident.surname}`
     try {
-      const { error } = await supabase.from('profiles').update({ is_active: !current }).eq('id', id)
+      const { error } = await supabase.from('profiles').update({ is_active: !resident.is_active }).eq('resident_id', resident.resident_id)
       if (error) throw error
-      toast.success(`${name || 'Resident'} ${current ? 'deactivated' : 'activated'}`)
+      toast.success(`${name} ${resident.is_active ? 'deactivated' : 'activated'}`)
       fetchResidents()
     } catch (e) {
       toast.error('Failed to update status: ' + e.message)
     }
   }
 
-  const handleToggleAdmin = async (userId, isCurrentlyAdmin, name) => {
+  const handleToggleAdmin = async (resident) => {
+    if (!resident.id) return
+    const name = `${resident.names} ${resident.surname}`
     try {
       const { error } = await supabase
         .from('profiles')
-        .update({ is_admin: !isCurrentlyAdmin })
-        .eq('id', userId)
+        .update({ is_admin: !resident.is_admin })
+        .eq('id', resident.id)
       if (error) throw error
-      toast.success(`${name || 'Resident'} ${isCurrentlyAdmin ? 'removed as admin' : 'is now an admin'}`)
+      toast.success(`${name} ${resident.is_admin ? 'removed as admin' : 'is now an admin'}`)
       fetchResidents()
     } catch (e) {
       toast.error('Failed to update admin role: ' + e.message)
@@ -167,8 +240,49 @@ export default function ResidentsPage() {
     setEditTarget(null)
     setFormError(null)
     setFormSuccess(null)
-    setForm({ full_name: '', email: '', unit_number: '', phone: '', password: '' })
+    setForm(EMPTY_FORM)
   }
+
+  // ── Shared form fields ───────────────────────────────────────────────────────
+  const inputClass = 'w-full border border-brand-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400'
+  const disabledClass = 'w-full border border-brand-200 rounded-lg px-4 py-2.5 text-sm bg-brand-50 text-brand-400'
+
+  const NameFields = () => (
+    <>
+      <input placeholder="Surname *" value={form.surname}
+        onChange={e => setForm(f => ({ ...f, surname: e.target.value }))}
+        className={inputClass} />
+      <input placeholder="First name(s) *" value={form.names}
+        onChange={e => setForm(f => ({ ...f, names: e.target.value }))}
+        className={inputClass} />
+    </>
+  )
+
+  const ContactFields = ({ emailDisabled = false }) => (
+    <>
+      {emailDisabled
+        ? <input value={form.email} disabled className={disabledClass} />
+        : <input placeholder="Email address *" type="email" value={form.email}
+            onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+            className={inputClass} />
+      }
+      <input placeholder="Address *" value={form.address}
+        onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
+        className={inputClass} />
+      <input placeholder="Phone (optional)" value={form.phone}
+        onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
+        className={inputClass} />
+    </>
+  )
+
+  const DirectoryVisibleToggle = () => (
+    <label className="flex items-center gap-3 text-sm text-brand-600 cursor-pointer select-none">
+      <input type="checkbox" checked={form.directory_visible}
+        onChange={e => setForm(f => ({ ...f, directory_visible: e.target.checked }))}
+        className="w-4 h-4 rounded accent-brand-600" />
+      Show in resident directory
+    </label>
+  )
 
   return (
     <div className="space-y-6">
@@ -178,9 +292,13 @@ export default function ResidentsPage() {
           <p className="text-brand-500">{residents.length} registered residents</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => setModal('invite')}
+          <button onClick={() => openInvite()}
             className="bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
             ✉️ Invite
+          </button>
+          <button onClick={() => setModal('directory')}
+            className="bg-brand-100 hover:bg-brand-200 text-brand-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+            👤 Add to Directory
           </button>
           <button onClick={() => setModal('create')}
             className="bg-gold-500 hover:bg-gold-400 text-brand-900 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
@@ -194,72 +312,113 @@ export default function ResidentsPage() {
         {loading ? (
           <div className="p-8 text-center text-brand-400 animate-pulse">Loading residents…</div>
         ) : residents.length === 0 ? (
-          <div className="p-8 text-center text-brand-400">No residents yet. Invite or create the first one!</div>
+          <div className="p-8 text-center text-brand-400">No residents yet.</div>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-brand-50 border-b border-brand-100">
-              <tr>
-                <th className="text-left px-6 py-3 text-brand-600 font-semibold">Name</th>
-                <th className="text-left px-6 py-3 text-brand-600 font-semibold">Email</th>
-                <th className="text-left px-6 py-3 text-brand-600 font-semibold">Unit</th>
-                <th className="text-left px-6 py-3 text-brand-600 font-semibold">Phone</th>
-                <th className="text-left px-6 py-3 text-brand-600 font-semibold">Status</th>
-                <th className="text-left px-6 py-3 text-brand-600 font-semibold">Admin</th>
-                <th className="text-left px-6 py-3 text-brand-600 font-semibold">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-brand-50">
-              {residents.map(r => (
-                <tr key={r.id} className="hover:bg-brand-50 transition-colors">
-                  <td className="px-6 py-3 font-medium text-brand-800">{r.full_name || '—'}</td>
-                  <td className="px-6 py-3 text-brand-600">{r.email}</td>
-                  <td className="px-6 py-3 text-brand-500">{r.unit_number || '—'}</td>
-                  <td className="px-6 py-3 text-brand-500">{r.phone || '—'}</td>
-                  <td className="px-6 py-3">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                      r.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
-                    }`}>
-                      {r.is_active ? 'Active' : 'Inactive'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-3">
-                    <button
-                      onClick={() => handleToggleAdmin(r.id, r.is_admin, r.full_name)}
-                      className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
-                        r.is_admin
-                          ? 'bg-gold-100 text-gold-700 hover:bg-red-100 hover:text-red-600'
-                          : 'bg-brand-100 text-brand-500 hover:bg-gold-100 hover:text-gold-700'
-                      }`}
-                      title={r.is_admin ? 'Click to remove admin' : 'Click to make admin'}
-                    >
-                      {r.is_admin ? '⭐ Admin' : '+ Admin'}
-                    </button>
-                  </td>
-                  <td className="px-6 py-3">
-                    <div className="flex gap-2">
-                      <button onClick={() => openEdit(r)}
-                        className="text-brand-400 hover:text-brand-700 text-xs underline">Edit</button>
-                      <button onClick={() => setResetTarget(r)}
-                        className="text-brand-400 hover:text-brand-700 text-xs underline">Reset PWD</button>
-                      <button onClick={() => handleDeactivate(r.id, r.is_active, r.full_name)}
-                        className="text-brand-400 hover:text-brand-700 text-xs underline">
-                        {r.is_active ? 'Deactivate' : 'Activate'}
-                      </button>
-                    </div>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-brand-50 border-b border-brand-100 sticky top-0 z-10">
+                <tr>
+                  <th className="text-left px-6 py-3 text-brand-600 font-semibold">Name</th>
+                  <th className="text-left px-6 py-3 text-brand-600 font-semibold">Email</th>
+                  <th className="text-left px-6 py-3 text-brand-600 font-semibold">Address</th>
+                  <th className="text-left px-6 py-3 text-brand-600 font-semibold">Phone</th>
+                  <th className="text-left px-6 py-3 text-brand-600 font-semibold">Directory</th>
+                  <th className="text-left px-6 py-3 text-brand-600 font-semibold">Status</th>
+                  <th className="text-left px-6 py-3 text-brand-600 font-semibold">Admin</th>
+                  <th className="text-left px-6 py-3 text-brand-600 font-semibold">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-brand-50">
+                {residents.map(r => {
+                  const name = [r.names, r.surname].filter(Boolean).join(' ')
+                  const email = r.emails?.[0] || '—'
+                  const phone = r.phones?.[0] || '—'
+                  const hasAccount = !!r.id
+                  return (
+                    <tr key={r.resident_id} className="hover:bg-brand-50 transition-colors">
+                      <td className="px-6 py-3">
+                        <div className="flex items-center gap-3">
+                          {/* Avatar circle — photo placeholder ready for Phase 5 Session 4 */}
+                          <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-xs font-semibold text-brand-600 flex-shrink-0 overflow-hidden">
+                            {r.photo_url
+                              ? <img src={r.photo_url} alt={name} className="w-full h-full object-cover" />
+                              : getInitials(r.surname, r.names)
+                            }
+                          </div>
+                          <div>
+                            <div className="font-medium text-brand-800">{name || '—'}</div>
+                            {!hasAccount && <div className="text-xs text-brand-300">🔒 no account</div>}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-3 text-brand-600">{email}</td>
+                      <td className="px-6 py-3 text-brand-500">{r.address || '—'}</td>
+                      <td className="px-6 py-3 text-brand-500">{phone}</td>
+                      <td className="px-6 py-3">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                          r.directory_visible ? 'bg-blue-100 text-blue-700' : 'bg-brand-100 text-brand-400'
+                        }`}>
+                          {r.directory_visible ? 'Visible' : 'Hidden'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-3">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                          r.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
+                        }`}>
+                          {r.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-3">
+                        <button
+                          onClick={() => handleToggleAdmin(r)}
+                          disabled={!hasAccount}
+                          className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
+                            !hasAccount ? 'bg-brand-50 text-brand-300 cursor-not-allowed' :
+                            r.is_admin
+                              ? 'bg-gold-100 text-gold-700 hover:bg-red-100 hover:text-red-600'
+                              : 'bg-brand-100 text-brand-500 hover:bg-gold-100 hover:text-gold-700'
+                          }`}
+                          title={!hasAccount ? 'No account yet' : r.is_admin ? 'Click to remove admin' : 'Click to make admin'}
+                        >
+                          {r.is_admin ? '⭐ Admin' : '+ Admin'}
+                        </button>
+                      </td>
+                      <td className="px-6 py-3">
+                        <div className="flex gap-2 flex-wrap">
+                          <button onClick={() => openEdit(r)}
+                            className="text-brand-400 hover:text-brand-700 text-xs underline">Edit</button>
+                          {hasAccount && (
+                            <button onClick={() => setResetTarget(r)}
+                              className="text-brand-400 hover:text-brand-700 text-xs underline">Reset PWD</button>
+                          )}
+                          {!hasAccount && (
+                            <button onClick={() => openInvite(r)}
+                              className="text-brand-400 hover:text-brand-700 text-xs underline">Invite</button>
+                          )}
+                          <button onClick={() => handleDeactivate(r)}
+                            className="text-brand-400 hover:text-brand-700 text-xs underline">
+                            {r.is_active ? 'Deactivate' : 'Activate'}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
-      {/* Invite / Create / Edit Modal */}
+      {/* ── Modals ─────────────────────────────────────────────────────────── */}
       {modal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
             <h2 className="font-display text-xl text-brand-800 mb-4">
-              {modal === 'invite' ? '✉️ Invite Resident' : modal === 'create' ? '➕ Create Account' : '✏️ Edit Resident'}
+              {modal === 'invite'    ? '✉️ Invite Resident' :
+               modal === 'directory' ? '👤 Add to Directory' :
+               modal === 'create'    ? '➕ Create Account' :
+                                       '✏️ Edit Resident'}
             </h2>
 
             {formError && (
@@ -274,23 +433,41 @@ export default function ResidentsPage() {
             )}
 
             <div className="space-y-3">
-              <input placeholder="Full Name" value={form.full_name}
-                onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
-                className="w-full border border-brand-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400" />
-              <input placeholder="Email Address" type="email" value={form.email}
-                disabled={modal === 'edit'}
-                onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                className="w-full border border-brand-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 disabled:bg-brand-50 disabled:text-brand-400" />
-              <input placeholder="Unit Number (optional)" value={form.unit_number}
-                onChange={e => setForm(f => ({ ...f, unit_number: e.target.value }))}
-                className="w-full border border-brand-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400" />
-              <input placeholder="Phone (optional)" value={form.phone}
-                onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
-                className="w-full border border-brand-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400" />
+              {/* Invite — email only */}
+              {modal === 'invite' && (
+                <input placeholder="Email address *" type="email" value={form.email}
+                  onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                  className={inputClass} />
+              )}
+
+              {/* Add to Directory — full profile, no password */}
+              {modal === 'directory' && (
+                <>
+                  <NameFields />
+                  <ContactFields />
+                  <DirectoryVisibleToggle />
+                </>
+              )}
+
+              {/* Create Account — full profile + password */}
               {modal === 'create' && (
-                <input placeholder="Temporary Password" type="password" value={form.password}
-                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                  className="w-full border border-brand-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400" />
+                <>
+                  <NameFields />
+                  <ContactFields />
+                  <input placeholder="Temporary password *" type="password" value={form.password}
+                    onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                    className={inputClass} />
+                  <DirectoryVisibleToggle />
+                </>
+              )}
+
+              {/* Edit — all fields, email read-only */}
+              {modal === 'edit' && (
+                <>
+                  <NameFields />
+                  <ContactFields emailDisabled />
+                  <DirectoryVisibleToggle />
+                </>
               )}
             </div>
 
@@ -300,12 +477,19 @@ export default function ResidentsPage() {
                 Cancel
               </button>
               <button
-                onClick={modal === 'invite' ? handleInvite : modal === 'create' ? handleCreate : handleEdit}
+                onClick={
+                  modal === 'invite'    ? handleInvite :
+                  modal === 'directory' ? handleAddToDirectory :
+                  modal === 'create'    ? handleCreate :
+                                         handleEdit
+                }
                 disabled={submitting}
                 className="flex-1 bg-brand-600 hover:bg-brand-500 disabled:opacity-60 text-white rounded-lg py-2.5 text-sm font-medium transition-colors">
                 {submitting ? 'Please wait…' :
-                  modal === 'invite' ? 'Send Invitation' :
-                  modal === 'create' ? 'Create Account' : 'Save Changes'}
+                  modal === 'invite'    ? 'Send Invitation' :
+                  modal === 'directory' ? 'Add to Directory' :
+                  modal === 'create'    ? 'Create Account' :
+                                         'Save Changes'}
               </button>
             </div>
           </div>
@@ -319,14 +503,14 @@ export default function ResidentsPage() {
             <div className="text-4xl mb-3">🔑</div>
             <h2 className="font-display text-xl text-brand-800 mb-2">Reset Password?</h2>
             <p className="text-brand-500 text-sm mb-5">
-              A password reset email will be sent to <strong>{resetTarget.email}</strong>.
+              A password reset email will be sent to <strong>{resetTarget.emails?.[0]}</strong>.
             </p>
             <div className="flex gap-3">
               <button onClick={() => setResetTarget(null)}
                 className="flex-1 border border-brand-200 text-brand-600 rounded-lg py-2.5 text-sm hover:bg-brand-50 transition-colors">
                 Cancel
               </button>
-              <button onClick={() => handlePasswordReset(resetTarget.email)}
+              <button onClick={() => handlePasswordReset(resetTarget.emails?.[0])}
                 className="flex-1 bg-brand-600 hover:bg-brand-500 text-white rounded-lg py-2.5 text-sm font-medium transition-colors">
                 Send Reset Email
               </button>

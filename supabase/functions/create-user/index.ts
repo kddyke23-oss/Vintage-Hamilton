@@ -17,31 +17,39 @@ Deno.serve(async (req) => {
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
-    const { email, password, full_name, unit_number, phone, mode } = await req.json()
+    const { email, password, surname, names, address, phone, mode } = await req.json()
 
     if (!email) throw new Error('Email is required')
 
     if (mode === 'invite') {
-      const { error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-        data: { full_name }
-      })
+      // Send invite email — profile must already exist (or will be created by trigger)
+      const { error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email)
       if (error) throw error
       return new Response(JSON.stringify({ success: true, mode: 'invite' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
+
     } else {
+      // Create auth user with confirmed email
       if (!password) throw new Error('Password is required')
       const { data, error } = await supabaseAdmin.auth.admin.createUser({
         email,
         password,
         email_confirm: true,
-        user_metadata: { full_name }
       })
       if (error) throw error
 
-      if (unit_number || phone) {
+      // Update the profile record that the trigger created (matched by email via on_auth_user_created)
+      // Allow a short moment for the trigger to fire before we update
+      const profileUpdates = {}
+      if (surname) profileUpdates.surname = surname.toUpperCase()
+      if (names)   profileUpdates.names   = names
+      if (address) profileUpdates.address = address
+      if (phone)   profileUpdates.phones  = [phone]
+
+      if (Object.keys(profileUpdates).length > 0) {
         await supabaseAdmin.from('profiles')
-          .update({ unit_number, phone })
+          .update(profileUpdates)
           .eq('id', data.user.id)
       }
 

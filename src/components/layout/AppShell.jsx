@@ -3,12 +3,13 @@ import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 
 const navItems = [
-  { label: 'Home', path: '/' },
-  { label: 'Directory', path: '/apps/directory' },
-  { label: 'Calendar', path: '/apps/calendar' },
-  { label: 'Lotto', path: '/apps/lotto' },
-  { label: 'Blog', path: '/apps/blog' },
-  { label: 'Help', path: '/help' },
+  { label: 'Home',            path: '/' },
+  { label: 'Directory',       path: '/apps/directory' },
+  { label: 'Calendar',        path: '/apps/calendar' },
+  { label: 'Lotto',           path: '/apps/lotto' },
+  { label: 'Blog',            path: '/apps/blog' },
+  { label: 'Recommendations', path: '/apps/recommendations' },
+  { label: 'Help',            path: '/help' },
 ]
 
 const textSizes = {

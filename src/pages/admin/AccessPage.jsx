@@ -3,10 +3,11 @@ import { supabase } from '@/lib/supabase'
 import { useToast } from '@/components/ui/Toast'
 
 const APPS = [
-  { id: 'directory', label: 'Resident Directory', icon: '👥' },
-  { id: 'calendar',  label: 'Social Calendar',    icon: '📅' },
-  { id: 'lotto',     label: 'Lotto Tracker',       icon: '🎟️' },
-  { id: 'blog',      label: 'Community Blog',      icon: '📝' },
+  { id: 'directory',       label: 'Resident Directory',         icon: '👥' },
+  { id: 'calendar',        label: 'Social Calendar',            icon: '📅' },
+  { id: 'lotto',           label: 'Lotto Tracker',              icon: '🎟️' },
+  { id: 'blog',            label: 'Community Blog',             icon: '📝' },
+  { id: 'recommendations', label: "Residents' Recommendations", icon: '⭐' },
 ]
 
 // Cycle: none → user → admin → none
@@ -18,7 +19,6 @@ const STATE_DISPLAY = {
   admin: { icon: '⭐', label: 'Admin',     className: 'bg-yellow-100 text-yellow-700 hover:bg-red-50 hover:text-red-500' },
 }
 
-// Filter options per column
 const COLUMN_FILTER_OPTIONS = [
   { value: 'all',   label: 'All' },
   { value: 'user',  label: '✅ User' },
@@ -82,7 +82,6 @@ export default function AccessPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(null)
 
-  // Per-column filters: { directory: 'all', calendar: 'all', lotto: 'all', blog: 'all' }
   const [colFilters, setColFilters] = useState(
     Object.fromEntries(APPS.map(a => [a.id, 'all']))
   )
@@ -92,7 +91,7 @@ export default function AccessPage() {
       const [{ data: profiles, error: pError }, { data: accessRows, error: aError }] = await Promise.all([
         supabase
           .from('profiles')
-          .select('id, resident_id, full_name, surname, names, email, emails, unit_number')
+          .select('id, resident_id, surname, names, emails')
           .eq('is_active', true)
           .order('surname'),
         supabase.from('app_access').select('user_id, app_id, role'),
@@ -216,8 +215,9 @@ export default function AccessPage() {
     }
   }
 
-  const displayName  = (r) => r.full_name || [r.surname, r.names].filter(Boolean).join(' ') || '—'
-  const displayEmail = (r) => r.email || r.emails?.[0] || '—'
+  // Derive display name and email from new fields only
+  const displayName  = (r) => [r.surname, r.names].filter(Boolean).join(', ') || '—'
+  const displayEmail = (r) => r.emails?.[0] || '—'
 
   return (
     <div className="space-y-6">
