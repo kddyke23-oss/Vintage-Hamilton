@@ -13,6 +13,7 @@ import DirectoryPage from '@/pages/apps/DirectoryPage'
 import CalendarPage from '@/pages/apps/CalendarPage'
 import LottoPage from '@/pages/apps/LottoPage'
 import BlogPage from '@/pages/apps/BlogPage'
+import RecommendationsPage from '@/pages/apps/RecommendationsPage'
 import HelpPage from '@/pages/HelpPage'
 import AdminDashboard from '@/pages/admin/AdminDashboard'
 import ResidentsPage from '@/pages/admin/ResidentsPage'
@@ -54,6 +55,7 @@ export default function App() {
               <Route path="/apps/calendar" element={<ResidentShell><CalendarPage /></ResidentShell>} />
               <Route path="/apps/lotto" element={<ResidentShell><LottoPage /></ResidentShell>} />
               <Route path="/apps/blog" element={<ResidentShell><BlogPage /></ResidentShell>} />
+              <Route path="/apps/recommendations" element={<ResidentShell><RecommendationsPage /></ResidentShell>} />
               <Route path="/help" element={<ResidentShell><HelpPage /></ResidentShell>} />
 
               {/* Admin routes */}
