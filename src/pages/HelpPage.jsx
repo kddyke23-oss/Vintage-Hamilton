@@ -42,19 +42,13 @@ export default function HelpPage() {
       // Step 2: look up profile names for each user_id
       const userIds = [...new Set(accessRows.map(r => r.user_id))]
       const { data: profiles, error: profilesError } = await supabase
-  .rpc('get_admin_display_names', { user_ids: userIds })
+        .rpc('get_admin_display_names', { user_ids: userIds })
 
-if (profilesError) throw profilesError
-
-const nameMap = {}
-for (const p of profiles) {
-  nameMap[p.id] = p.display_name.trim()
-}
-
+      if (profilesError) throw profilesError
       // Step 3: build a map of user_id → display name
       const nameMap = {}
       for (const p of profiles) {
-        nameMap[p.id] = `${p.names ?? ''} ${p.surname ?? ''}`.trim()
+        nameMap[p.id] = p.display_name.trim()
       }
 
       // Step 4: group by app_id
@@ -96,11 +90,10 @@ for (const p of profiles) {
           <button
             key={tab}
             onClick={() => setActiveTab(i)}
-            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors -mb-px border-b-2 ${
-              activeTab === i
-                ? 'border-gold-400 text-brand-800 bg-white'
-                : 'border-transparent text-brand-400 hover:text-brand-700'
-            }`}
+            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors -mb-px border-b-2 ${activeTab === i
+              ? 'border-gold-400 text-brand-800 bg-white'
+              : 'border-transparent text-brand-400 hover:text-brand-700'
+              }`}
           >
             {tab}
           </button>
