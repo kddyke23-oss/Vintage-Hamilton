@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/components/ui/Toast'
+import { useImageUpload } from '@/hooks/useImageUpload'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,17 @@ const fmt = (ts) => {
 const fmtDate = (ts) => {
   if (!ts) return ''
   return new Date(ts).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+}
+
+// Delete a file from Supabase Storage by its public URL
+async function deleteStoragePhoto(photoUrl, bucket) {
+  if (!photoUrl) return
+  try {
+    const marker = `/object/public/${bucket}/`
+    const idx = photoUrl.indexOf(marker)
+    if (idx === -1) return
+    await supabase.storage.from(bucket).remove([photoUrl.slice(idx + marker.length)])
+  } catch {}
 }
 
 // ─── ReactionBar ────────────────────────────────────────────────────────────
@@ -54,13 +66,19 @@ function ReactionBar({ targetType, targetId, residentId, reactions, onReact }) {
 
 // ─── PostCard (list view) ────────────────────────────────────────────────────
 
-function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, onRemove, isOwnPost, onNavigateToEvent }) {
+function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, onRemove, onEdit, isOwnPost, onNavigateToEvent }) {
   const commentCount = post.comment_count || 0
   const likeCount = reactions.filter(r => r.target_type === 'post' && r.target_id === post.id && r.reaction_type === 'like').length
   const heartCount = reactions.filter(r => r.target_type === 'post' && r.target_id === post.id && r.reaction_type === 'heart').length
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow">
+      {/* Photo thumbnail */}
+      {post.photo_url && (
+        <div className="w-full h-40 overflow-hidden rounded-lg mb-4 cursor-pointer" onClick={() => onOpen(post)}>
+          <img src={post.photo_url} alt={post.title} className="w-full h-full object-cover" />
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="flex-1 min-w-0">
@@ -82,13 +100,24 @@ function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, o
           )}
         </div>
         {(isBlogAdmin || isOwnPost) && (
-          <button
-            onClick={() => onRemove(post)}
-            className="text-gray-400 hover:text-red-500 transition-colors flex-shrink-0 text-sm"
-            title="Remove post"
-          >
-            ✕
-          </button>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {isOwnPost && (
+              <button
+                onClick={() => onEdit(post)}
+                className="text-gray-400 hover:text-blue-500 transition-colors text-sm px-1"
+                title="Edit post"
+              >
+                ✏️
+              </button>
+            )}
+            <button
+              onClick={() => onRemove(post)}
+              className="text-gray-400 hover:text-red-500 transition-colors flex-shrink-0 text-sm"
+              title="Remove post"
+            >
+              ✕
+            </button>
+          </div>
         )}
       </div>
 
@@ -136,7 +165,7 @@ function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, o
 
 // ─── PostModal (detail view) ─────────────────────────────────────────────────
 
-function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, onClose, onPostRemoved, onNavigateToEvent, toast }) {
+function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, onClose, onPostRemoved, onNavigateToEvent, onEdit, toast }) {
   const [comments, setComments] = useState([])
   const [newComment, setNewComment] = useState('')
   const [loadingComments, setLoadingComments] = useState(true)
@@ -146,11 +175,20 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
   const [reportTargetType, setReportTargetType] = useState(null)
   const [reportTargetId, setReportTargetId] = useState(null)
 
+  // Comment photo upload
+  const [commentPhotoFile, setCommentPhotoFile] = useState(null)
+  const [commentPhotoPreview, setCommentPhotoPreview] = useState(null)
+  const commentPhotoRef = useRef(null)
+  const { uploading: commentPhotoUploading, error: commentPhotoError, uploadImage: uploadCommentPhoto } = useImageUpload({
+    bucket: 'blog-comments',
+    maxDimension: 1200,
+  })
+
   const fetchComments = useCallback(async () => {
     setLoadingComments(true)
     const { data, error } = await supabase
       .from('blog_comments')
-      .select('id, body, created_by, created_at, removed')
+      .select('id, body, photo_url, created_by, created_at, removed')
       .eq('post_id', post.id)
       .eq('removed', false)
       .order('created_at', { ascending: true })
@@ -182,12 +220,23 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
   const handleAddComment = async () => {
     if (!newComment.trim()) return
     setSubmitting(true)
+
+    let photo_url = null
+    if (commentPhotoFile) {
+      photo_url = await uploadCommentPhoto(commentPhotoFile)
+      if (!photo_url) { setSubmitting(false); return }
+    }
+
     const { error } = await supabase
       .from('blog_comments')
-      .insert({ post_id: post.id, body: newComment.trim(), created_by: user.id })
+      .insert({ post_id: post.id, body: newComment.trim(), created_by: user.id, photo_url })
     setSubmitting(false)
     if (error) { toast.error('Could not add comment.'); return }
     setNewComment('')
+    setCommentPhotoFile(null)
+    if (commentPhotoPreview) URL.revokeObjectURL(commentPhotoPreview)
+    setCommentPhotoPreview(null)
+    if (commentPhotoRef.current) commentPhotoRef.current.value = ''
     fetchComments()
   }
 
@@ -198,18 +247,32 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
       .update({ removed: true })
       .eq('id', comment.id)
     if (error) { toast.error('Could not remove comment.'); return }
+    deleteStoragePhoto(comment.photo_url, 'blog-comments')
     toast.success('Comment removed.')
     fetchComments()
   }
 
   const handleRemovePost = async () => {
     if (!window.confirm('Remove this post? This cannot be undone.')) return
+
+    // Fetch comment photos before soft-deleting so we can clean them up
+    const { data: commentPhotos } = await supabase
+      .from('blog_comments')
+      .select('photo_url')
+      .eq('post_id', post.id)
+      .eq('removed', false)
+
     // Soft-delete the post and any attached comments together
     const [{ error: postError }, { error: commentError }] = await Promise.all([
       supabase.from('blog_posts').update({ removed: true, calendar_event_id: null }).eq('id', post.id),
       supabase.from('blog_comments').update({ removed: true }).eq('post_id', post.id),
     ])
     if (postError || commentError) { toast.error('Could not remove post.'); return }
+
+    // Clean up storage (fire and forget)
+    deleteStoragePhoto(post.photo_url, 'blog-posts')
+    commentPhotos?.forEach(c => deleteStoragePhoto(c.photo_url, 'blog-comments'))
+
     toast.success('Post removed.')
     onPostRemoved(post.id)
     onClose()
@@ -265,6 +328,11 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            {isOwnPost && (
+              <button onClick={() => { onClose(); onEdit(post) }} className="text-sm text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50 transition-colors">
+                ✏️ Edit
+              </button>
+            )}
             {canRemovePost && (
               <button onClick={handleRemovePost} className="text-sm text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50 transition-colors">
                 Remove post
@@ -281,6 +349,13 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
 
         {/* Body */}
         <div className="p-6 border-b border-gray-100">
+          {post.photo_url && (
+            <img
+              src={post.photo_url}
+              alt={post.title}
+              className="w-full max-h-72 object-cover rounded-xl mb-4"
+            />
+          )}
           <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">{post.body}</p>
           <div className="mt-4">
             <ReactionBar
@@ -320,6 +395,9 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
                           <span className="text-xs text-gray-400">{fmt(comment.created_at)}</span>
                         </div>
                         <p className="text-sm text-gray-800 whitespace-pre-wrap">{comment.body}</p>
+                        {comment.photo_url && (
+                          <img src={comment.photo_url} alt="" className="mt-2 rounded-lg max-h-48 object-cover w-full" />
+                        )}
                       </div>
                       <div className="flex items-center gap-3 mt-1.5 pl-1">
                         <ReactionBar
@@ -361,14 +439,42 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
                 rows={2}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-300"
               />
+
+              {/* Comment photo preview */}
+              {commentPhotoPreview && (
+                <div className="relative mt-2 rounded-lg overflow-hidden border border-gray-200 w-32">
+                  <img src={commentPhotoPreview} alt="Preview" className="w-full h-20 object-cover" />
+                  <button
+                    onClick={() => { setCommentPhotoFile(null); URL.revokeObjectURL(commentPhotoPreview); setCommentPhotoPreview(null); if (commentPhotoRef.current) commentPhotoRef.current.value = '' }}
+                    className="absolute top-1 right-1 bg-white bg-opacity-90 rounded-full w-5 h-5 flex items-center justify-center text-gray-700 text-xs font-bold shadow"
+                  >×</button>
+                </div>
+              )}
+              {commentPhotoError && <p className="text-xs text-red-500 mt-1">{commentPhotoError}</p>}
+
               <div className="flex items-center justify-between mt-1">
-                <span className="text-xs text-gray-400">Ctrl+Enter to submit</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-gray-400">Ctrl+Enter to submit</span>
+                  <button
+                    type="button"
+                    onClick={() => commentPhotoRef.current?.click()}
+                    className="text-xs text-gray-400 hover:text-gray-600 transition"
+                    title="Add photo"
+                  >📷</button>
+                  <input
+                    ref={commentPhotoRef}
+                    type="file"
+                    accept="image/jpeg,image/jpg,image/png,image/webp"
+                    className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (!f) return; setCommentPhotoFile(f); setCommentPhotoPreview(URL.createObjectURL(f)) }}
+                  />
+                </div>
                 <button
                   onClick={handleAddComment}
-                  disabled={submitting || !newComment.trim()}
+                  disabled={submitting || commentPhotoUploading || !newComment.trim()}
                   className="text-sm bg-blue-700 text-white px-4 py-1.5 rounded-lg hover:bg-blue-800 disabled:opacity-50 transition-colors"
                 >
-                  {submitting ? 'Posting…' : 'Post'}
+                  {commentPhotoUploading ? 'Uploading…' : submitting ? 'Posting…' : 'Post'}
                 </button>
               </div>
             </div>
@@ -410,14 +516,25 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
   )
 }
 
-// ─── AddPostModal ────────────────────────────────────────────────────────────
+// ─── Add / Edit Post Modal ────────────────────────────────────────────────────
 
-function AddPostModal({ user, onClose, onSaved, toast }) {
-  const [title, setTitle] = useState('')
-  const [body, setBody] = useState('')
-  const [linkedEventId, setLinkedEventId] = useState('')
+function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
+  const isEditMode = editPost !== null
+  const [title, setTitle] = useState(editPost?.title ?? '')
+  const [body, setBody] = useState(editPost?.body ?? '')
+  const [linkedEventId, setLinkedEventId] = useState(editPost?.calendar_event_id ? String(editPost.calendar_event_id) : '')
   const [events, setEvents] = useState([])
   const [saving, setSaving] = useState(false)
+
+  // Photo upload
+  const [photoFile, setPhotoFile] = useState(null)
+  const [photoPreview, setPhotoPreview] = useState(editPost?.photo_url ?? null)
+  const existingPhotoUrl = editPost?.photo_url ?? null
+  const fileInputRef = useRef(null)
+  const { uploading: photoUploading, error: photoError, uploadImage } = useImageUpload({
+    bucket: 'blog-posts',
+    maxDimension: 1200,
+  })
 
   useEffect(() => {
     // Load recent + upcoming events for linking
@@ -436,16 +553,44 @@ function AddPostModal({ user, onClose, onSaved, toast }) {
   const handleSave = async () => {
     if (!title.trim() || !body.trim()) return
     setSaving(true)
-    const payload = {
-      title: title.trim(),
-      body: body.trim(),
-      created_by: user.id,
-      calendar_event_id: linkedEventId ? parseInt(linkedEventId) : null,
+
+    // Resolve photo_url
+    let photo_url = null
+    if (photoFile) {
+      photo_url = await uploadImage(photoFile)
+      if (!photo_url) { setSaving(false); return }
+    } else if (photoPreview && photoPreview === existingPhotoUrl) {
+      photo_url = existingPhotoUrl // unchanged
     }
-    const { error } = await supabase.from('blog_posts').insert(payload)
-    setSaving(false)
-    if (error) { toast.error('Could not save post.'); return }
-    toast.success('Post published!')
+    // if photoPreview is null → photo removed → photo_url stays null
+
+    if (isEditMode) {
+      const { error } = await supabase
+        .from('blog_posts')
+        .update({ title: title.trim(), body: body.trim(), photo_url,
+          calendar_event_id: linkedEventId ? parseInt(linkedEventId) : null })
+        .eq('id', editPost.id)
+      setSaving(false)
+      if (error) { toast.error('Could not update post.'); return }
+      // Clean up old photo from storage if replaced or removed
+      if (existingPhotoUrl && existingPhotoUrl !== photo_url) {
+        deleteStoragePhoto(existingPhotoUrl, 'blog-posts')
+      }
+      toast.success('Post updated!')
+    } else {
+      const payload = {
+        title: title.trim(),
+        body: body.trim(),
+        created_by: user.id,
+        calendar_event_id: linkedEventId ? parseInt(linkedEventId) : null,
+        photo_url,
+      }
+      const { error } = await supabase.from('blog_posts').insert(payload)
+      setSaving(false)
+      if (error) { toast.error('Could not save post.'); return }
+      toast.success('Post published!')
+    }
+
     onSaved()
     onClose()
   }
@@ -459,7 +604,7 @@ function AddPostModal({ user, onClose, onSaved, toast }) {
       <style>{`:root { --modal-z: 1500; }`}</style>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
         <div className="flex items-center justify-between p-6 border-b border-gray-100">
-          <h2 className="text-xl font-bold text-gray-900">New Post</h2>
+          <h2 className="text-xl font-bold text-gray-900">{isEditMode ? 'Edit Post' : 'New Post'}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl">✕</button>
         </div>
         <div className="p-6 space-y-4">
@@ -501,15 +646,43 @@ function AddPostModal({ user, onClose, onSaved, toast }) {
             </select>
             <p className="text-xs text-gray-400 mt-1">Shows events from the last 30 days and upcoming.</p>
           </div>
+
+          {/* Photo upload */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Photo <span className="text-gray-400 font-normal">(optional)</span></label>
+            {photoPreview ? (
+              <div className="relative rounded-lg overflow-hidden border border-gray-200">
+                <img src={photoPreview} alt="Preview" className="w-full max-h-48 object-cover" />
+                <button
+                  type="button"
+                  onClick={() => { setPhotoFile(null); if (photoPreview && photoPreview !== existingPhotoUrl) URL.revokeObjectURL(photoPreview); setPhotoPreview(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
+                  className="absolute top-2 right-2 bg-white bg-opacity-90 rounded-full w-7 h-7 flex items-center justify-center shadow text-gray-700 font-bold text-sm"
+                >×</button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full border border-dashed border-gray-300 rounded-lg px-4 py-3 bg-gray-50 hover:bg-gray-100 transition flex flex-col items-center gap-1 cursor-pointer"
+              >
+                <span className="text-xl">📷</span>
+                <span className="text-sm text-gray-500">Click to add a photo</span>
+                <span className="text-xs text-gray-400">JPEG, PNG or WebP · max 5 MB</span>
+              </button>
+            )}
+            <input ref={fileInputRef} type="file" accept="image/jpeg,image/jpg,image/png,image/webp" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (!f) return; setPhotoFile(f); setPhotoPreview(URL.createObjectURL(f)) }} />
+            {photoError && <p className="text-xs text-red-500 mt-1">{photoError}</p>}
+          </div>
         </div>
         <div className="flex justify-end gap-3 p-6 border-t border-gray-100">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
           <button
             onClick={handleSave}
-            disabled={saving || !title.trim() || !body.trim()}
+            disabled={saving || photoUploading || !title.trim() || !body.trim()}
             className="px-5 py-2 text-sm bg-blue-700 text-white rounded-lg hover:bg-blue-800 disabled:opacity-50 transition-colors"
           >
-            {saving ? 'Publishing…' : 'Publish Post'}
+            {photoUploading ? 'Uploading photo…' : saving ? 'Saving…' : isEditMode ? 'Save Changes' : 'Publish Post'}
           </button>
         </div>
       </div>
@@ -532,6 +705,7 @@ export default function CommunityBlog() {
 
   const [selectedPost, setSelectedPost] = useState(null)
   const [showAddPost, setShowAddPost] = useState(false)
+  const [editPost, setEditPost] = useState(null)
   const [search, setSearch] = useState('')
 
   const handleNavigateToEvent = (eventId) => {
@@ -570,7 +744,7 @@ export default function CommunityBlog() {
     const { data, error } = await supabase
       .from('blog_posts')
       .select(`
-        id, title, body, created_by, created_at, locked, removed,
+        id, title, body, photo_url, created_by, created_at, locked, removed,
         calendar_event_id,
         calendar_events ( id, title, event_date )
       `)
@@ -659,11 +833,24 @@ export default function CommunityBlog() {
   // ── Remove post ───────────────────────────────────────────────────────────
   const handleRemovePost = async (post) => {
     if (!window.confirm('Remove this post?')) return
+
+    // Fetch comment photos before soft-deleting
+    const { data: commentPhotos } = await supabase
+      .from('blog_comments')
+      .select('photo_url')
+      .eq('post_id', post.id)
+      .eq('removed', false)
+
     const [{ error: postError }, { error: commentError }] = await Promise.all([
       supabase.from('blog_posts').update({ removed: true, calendar_event_id: null }).eq('id', post.id),
       supabase.from('blog_comments').update({ removed: true }).eq('post_id', post.id),
     ])
     if (postError || commentError) { toast.error('Could not remove post.'); return }
+
+    // Clean up storage (fire and forget)
+    deleteStoragePhoto(post.photo_url, 'blog-posts')
+    commentPhotos?.forEach(c => deleteStoragePhoto(c.photo_url, 'blog-comments'))
+
     toast.success('Post removed.')
     setPosts(prev => prev.filter(p => p.id !== post.id))
   }
@@ -720,6 +907,7 @@ export default function CommunityBlog() {
                 onOpen={setSelectedPost}
                 isBlogAdmin={isBlogAdmin}
                 onRemove={handleRemovePost}
+                onEdit={p => setEditPost(p)}
                 isOwnPost={post.created_by === user?.id}
                 onNavigateToEvent={handleNavigateToEvent}
               />
@@ -738,6 +926,7 @@ export default function CommunityBlog() {
           reactions={reactions}
           onReact={handleReact}
           onClose={() => setSelectedPost(null)}
+          onEdit={p => { setSelectedPost(null); setEditPost(p) }}
           onPostRemoved={id => {
             setPosts(prev => prev.filter(p => p.id !== id))
             setSelectedPost(null)
@@ -753,6 +942,17 @@ export default function CommunityBlog() {
           user={user}
           onClose={() => setShowAddPost(false)}
           onSaved={fetchPosts}
+          toast={toast}
+        />
+      )}
+
+      {/* Edit post modal */}
+      {editPost && (
+        <AddPostModal
+          user={user}
+          editPost={editPost}
+          onClose={() => setEditPost(null)}
+          onSaved={() => { setEditPost(null); fetchPosts() }}
           toast={toast}
         />
       )}

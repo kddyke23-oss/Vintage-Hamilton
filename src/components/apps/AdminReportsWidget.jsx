@@ -20,18 +20,32 @@ export default function AdminReportsWidget() {
       const eligible = access?.some(a =>
         a.app_id === 'admin' ||
         (a.app_id === 'calendar' && a.role === 'admin') ||
-        (a.app_id === 'blog' && a.role === 'admin')
+        (a.app_id === 'blog' && a.role === 'admin') ||
+        (a.app_id === 'recommendations' && a.role === 'admin')
       )
 
       if (!eligible) { setLoading(false); return }
       setIsEligible(true)
 
-      const { count } = await supabase
-        .from('blog_reports')
-        .select('id', { count: 'exact', head: true })
-        .eq('resolved', false)
+      // Fetch all three counts in parallel
+      const [
+        { count: blogCount },
+        { count: recReportCount },
+        { count: steerClearCount },
+      ] = await Promise.all([
+        supabase.from('blog_reports')
+          .select('id', { count: 'exact', head: true })
+          .eq('resolved', false),
+        supabase.from('rec_reports')
+          .select('id', { count: 'exact', head: true })
+          .eq('resolved', false),
+        supabase.from('recommendations')
+          .select('id', { count: 'exact', head: true })
+          .eq('pending_review', true)
+          .eq('removed', false),
+      ])
 
-      setUnresolvedCount(count || 0)
+      setUnresolvedCount((blogCount || 0) + (recReportCount || 0) + (steerClearCount || 0))
       setLoading(false)
     }
     load()
@@ -57,7 +71,7 @@ export default function AdminReportsWidget() {
           <span className="text-2xl">🚩</span>
           <div>
             <p className="font-medium text-gray-800 text-sm">Content Reports</p>
-            <p className="text-xs text-gray-400 mt-0.5">Flagged posts, comments, and events</p>
+            <p className="text-xs text-gray-400 mt-0.5">Flagged posts, comments, events and recommendations</p>
           </div>
         </div>
         <div className="flex items-center gap-3">

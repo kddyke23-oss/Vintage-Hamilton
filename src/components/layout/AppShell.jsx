@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
+import { supabase } from '@/lib/supabase'
 
 const navItems = [
   { label: 'Home',            path: '/' },
@@ -24,6 +25,22 @@ export default function AppShell({ children }) {
   const location = useLocation()
   const [textSize, setTextSize] = useState('normal')
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [isAppAdmin, setIsAppAdmin] = useState(false)
+
+  // Check if user has app-level admin access (reports panel)
+  // Includes super admins and any calendar/blog/directory/recommendations admin
+  useEffect(() => {
+    if (!user) { setIsAppAdmin(false); return }
+    if (isAdmin) { setIsAppAdmin(true); return } // super admins always get it
+    const APP_ADMIN_IDS = ['calendar', 'blog', 'directory', 'recommendations']
+    supabase
+      .from('app_access')
+      .select('app_id, role')
+      .eq('user_id', user.id)
+      .eq('role', 'admin')
+      .in('app_id', APP_ADMIN_IDS)
+      .then(({ data }) => setIsAppAdmin(!!(data?.length)))
+  }, [user, isAdmin])
 
   // Close sidebar on mobile when route changes
   useEffect(() => {
@@ -157,6 +174,26 @@ export default function AppShell({ children }) {
                       d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                   </svg>
                   Admin
+                </Link>
+              </div>
+            )}
+
+            {/* App Admin link — anyone with app or super admin access */}
+            {isAppAdmin && (
+              <div className="pt-3 mt-3 border-t border-brand-700">
+                <Link
+                  to="/admin/reports"
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                    location.pathname.startsWith('/admin/reports')
+                      ? 'bg-gold-500 text-brand-900'
+                      : 'text-brand-400 hover:bg-brand-700 hover:text-white'
+                  }`}
+                >
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                  App Admin
                 </Link>
               </div>
             )}

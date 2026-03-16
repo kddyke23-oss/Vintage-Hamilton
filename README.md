@@ -17,7 +17,7 @@ Access is managed at two levels:
 Residents without an auth account appear in the App Access screen as locked (🔒). Access toggles unlock automatically after their first login, when the `on_auth_user_created` trigger links their auth UUID to their existing profile by matching email.
 
 ### Resident Directory
-The directory stores resident contact information (name, address, phones, emails, tags) separately from auth credentials, so residents can be pre-loaded before they have accounts. Each resident can edit their own entry; directory admins and super admins can edit, add, or remove any entry. Features include search, tag filtering, print (full or filtered view), and select mode for bulk email/phone actions.
+The directory stores resident contact information (name, address, phones, emails, tags) separately from auth credentials, so residents can be pre-loaded before they have accounts. Each resident card displays an avatar photo (or initials circle if no photo uploaded). Each resident can edit their own entry including uploading their own avatar photo; directory admins and super admins can edit, add, or remove any entry. Features include search, tag filtering, print (full or filtered view), and select mode for bulk email/phone actions.
 
 ### Admin Portal — Residents
 The Residents admin page supports three actions:
@@ -39,14 +39,16 @@ A full Powerball syndicate management tool for the community's lottery group. Tr
 Community events with RSVP, attendee lists, category colour coding, and an upcoming events widget on the homepage. Admins can add, edit, and remove events.
 
 ### Community Blog
-Resident posts with categories, tags, comments, and photo support. Admins can moderate posts and comments via the reports panel. Blog posts can be linked to calendar events.
+Resident posts with comments and photo support. Posts can include a photo (uploaded and compressed in-browser). Comments can also include photos. Post authors can edit their own posts after publishing. Admins can moderate posts and comments via the reports panel. Blog posts can be linked to calendar events.
 
 ### Residents' Recommendations
 A community recommendations board with two post types:
 - **Recommend** — positive recommendations (contractors, services, restaurants, etc.)
 - **Steer Clear** — warnings about bad experiences
 
-Residents can react to posts (❤️ or 👎 on recommendations; 👍 or 🤔 on steer clears). Negative reactions require a mandatory comment which is routed to the admin reports panel. Admins can make comments public, dismiss them, or remove the post entirely.
+Posts support an optional photo (compressed in-browser before upload). Clicking a card opens a full detail modal showing the complete description, photo, contact details, and reactions. Post authors can edit their own posts; if a post has received any reactions the type (recommend/avoid) is locked and cannot be changed. Steer Clear posts are auto-flagged for admin review on creation.
+
+Residents can react to posts (❤️ or 👎 on recommendations; 👍 or 🤔 on steer clears). Negative reactions require a mandatory comment which is routed to the admin reports panel. Admins can make comments public, dismiss them, acknowledge Steer Clear posts, or remove posts entirely. Removing a post auto-resolves all associated reports and cleans up any photo from storage.
 
 ---
 
@@ -72,15 +74,21 @@ src/
     AuthContext.jsx          # Supabase auth state, isAdmin, hasAppAccess(), isAppAdmin()
   components/
     layout/
-      AppShell.jsx           # Main app layout — header, sidebar nav, footer
+      AppShell.jsx           # Main app layout — header, sidebar nav (incl. App Admin link), footer
       AdminShell.jsx         # Admin portal layout
     apps/
       LottoTracker.jsx       # Lotto Tracker sub-application component
-      AdminReportsWidget.jsx # Homepage widget showing unresolved report counts
+      AdminReportsWidget.jsx # Homepage widget showing unresolved report counts (blog + recs + steer clear)
+      RecommendationsTracker.jsx # Recommendations board with detail modal, edit, photo upload
+      CommunityBlog.jsx      # Community blog with post/comment photos and edit
+      SocialCalendar.jsx     # Social calendar with RSVP and repeat occurrence
+      ResidentDirectory.jsx  # Full directory component (search, CRUD, print, select mode, avatars)
     ui/
       ProtectedRoute.jsx     # Auth guard (supports requireAdmin flag)
       Toast.jsx              # Toast notification system
       ErrorBoundary.jsx      # Top-level error boundary
+  hooks/
+    useImageUpload.js        # Shared image upload hook — Canvas compression + Supabase Storage upload
   pages/
     auth/
       LoginPage.jsx          # Email/password login + forgot password flow
@@ -89,11 +97,13 @@ src/
       LottoPage.jsx          # Lotto Tracker access wrapper
       CalendarPage.jsx       # Social Calendar
       BlogPage.jsx           # Community Blog
-      RecommendationsPage.jsx # Residents' Recommendations (Phase 5 — in progress)
+      RecommendationsPage.jsx # Residents' Recommendations
+      DirectoryPage.jsx      # Directory access wrapper
     admin/
       AdminDashboard.jsx     # Stats and counts
-      ResidentsPage.jsx      # Resident management (invite, add to directory, create account)
+      ResidentsPage.jsx      # Resident management (invite, add to directory, create account, avatar upload)
       AccessPage.jsx         # Per-app access control with role cycling
+      ReportsPage.jsx        # Reports panel — blog reports, rec reports, steer clear review, categories manager
     ResidentDirectory.jsx    # Full directory component (search, CRUD, print, select mode)
     HomePage.jsx             # Welcome dashboard + quick links + upcoming events
     HelpPage.jsx             # User help and FAQs
@@ -175,7 +185,28 @@ Extends Supabase `auth.users`. Contains both auth-facing fields and directory fi
 | period_id | int | FK → lotto_periods |
 | amount | numeric(8,2) | Amount paid for this period |
 
-### `rec_categories` / `rec_subcategories`
+### `blog_posts`
+| Column | Type | Notes |
+|--------|------|-------|
+| id | serial | Primary key |
+| title | text | Post title |
+| body | text | Post body |
+| photo_url | text | Optional photo (Phase 5 Session 4) |
+| created_by | uuid | FK → auth.users |
+| calendar_event_id | int nullable | FK → calendar_events |
+| created_at | timestamptz | |
+| removed | boolean | Soft delete flag |
+
+### `blog_comments`
+| Column | Type | Notes |
+|--------|------|-------|
+| id | serial | Primary key |
+| post_id | int | FK → blog_posts |
+| body | text | Comment text |
+| photo_url | text | Optional photo (Phase 5 Session 4) |
+| created_by | uuid | FK → auth.users |
+| created_at | timestamptz | |
+| removed | boolean | Soft delete flag |
 Admin-managed category hierarchy for recommendations.
 
 | Seed categories | Subcategories |
@@ -240,7 +271,18 @@ One reaction per user per post (enforced by UNIQUE constraint).
 
 ---
 
-## Getting Started
+## Supabase Storage Buckets
+
+All buckets are **public** (read access for anon + authenticated). Write access is restricted to authenticated users only.
+
+| Bucket | Used for | Max dimension | Notes |
+|--------|----------|--------------|-------|
+| `avatars` | Resident profile photos | 400px | Displayed on directory cards and edit modals |
+| `recommendations` | Recommendation card photos | 1200px | One photo per post |
+| `blog-posts` | Blog post photos | 1200px | One photo per post |
+| `blog-comments` | Blog comment photos | 1200px | One photo per comment |
+
+All uploads are compressed in-browser via the Canvas API (JPEG at 80% quality) before upload using the shared `useImageUpload` hook. Hard limit of 5 MB on source file size. Old photos are deleted from storage whenever a photo is replaced or a post/comment/profile is removed.
 
 ### 1. Install dependencies
 ```bash
@@ -291,15 +333,20 @@ Open http://localhost:5173
 | 1 | Schema SQL + RLS + seed categories | ✅ Complete |
 | 2 | Recommendations UI (list, cards, add post, filters) | ✅ Complete |
 | 3 | Reactions, reports flow, public comments modal | ✅ Complete |
-| 4 | Admin panel updates + homepage widget + photo upload hook | 🔲 Next |
-| 5 | Help page update + retrofit photos into Blog and Profile | 🔲 Planned |
+| 4 | Admin panel updates + homepage widget + photo upload across all features + edit post/rec + App Admin nav | ✅ Complete |
+| 5 | Help page update | 🔲 Planned |
 
 ---
 
-## Planned Enhancements
+## Planned Enhancements / Backlog
 - **Text size toggle persistence** — save A/A+/A++ preference per user in Supabase (deferred Phase 2+)
 - **Notifications sub-application** — per-user notification system (no spec yet)
 - **Post-UAT schema cleanup** — ESLint config, directory tag input → dropdown
+- **Dual photo preview in Add Post modal** — show both card crop and detail crop simultaneously so resident can judge framing before posting (Recommendations and Blog)
+- **Test environment** — separate Supabase project for testing, with a defined branch/promote workflow so testing never touches production data
+- **Automated test pack** — regression suite (Playwright or Vitest) covering existing features + new feature tests that roll into regression on each release
+- **Calendar — full recurring event rules** — weekly/monthly recurrence, end date, edit-all vs edit-one (deferred Phase 2+)
+- **Calendar — venue booking integration** — Clubhouse/Pickleball court booking or external link (deferred)
 
 ---
 

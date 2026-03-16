@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useLocation } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
+import { useImageUpload } from "@/hooks/useImageUpload";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -15,6 +17,20 @@ function formatDate(ts) {
 function truncate(text, max = 160) {
   if (!text) return "";
   return text.length > max ? text.slice(0, max).trimEnd() + "…" : text;
+}
+
+// Extract storage path from a Supabase public URL and delete the file
+// e.g. https://xyz.supabase.co/storage/v1/object/public/recommendations/cards/file.jpg
+// → deletes 'cards/file.jpg' from the 'recommendations' bucket
+async function deleteStoragePhoto(photoUrl, bucket) {
+  if (!photoUrl) return;
+  try {
+    const marker = `/object/public/${bucket}/`;
+    const idx = photoUrl.indexOf(marker);
+    if (idx === -1) return;
+    const storagePath = photoUrl.slice(idx + marker.length);
+    await supabase.storage.from(bucket).remove([storagePath]);
+  } catch {}
 }
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
@@ -38,21 +54,39 @@ function Toast({ message, type, onClose }) {
   );
 }
 
-// ─── Add Post Modal ───────────────────────────────────────────────────────────
+// ─── Add / Edit Post Modal ────────────────────────────────────────────────────
 
-function AddPostModal({ categories, subcategories, residentId, onClose, onSaved }) {
-  const [postType, setPostType] = useState("recommend");
+function AddPostModal({ categories, subcategories, residentId, onClose, onSaved, editRec = null }) {
+  const isEditMode = editRec !== null;
+
+  const [postType, setPostType] = useState(editRec?.type ?? "recommend");
   const [form, setForm] = useState({
-    title: "",
-    description: "",
-    category_id: "",
-    subcategory_id: "",
-    external_url: "",
-    contact_phone: "",
-    contact_email: "",
+    title:         editRec?.title ?? "",
+    description:   editRec?.description ?? "",
+    category_id:   editRec?.category_id ? String(editRec.category_id) : "",
+    subcategory_id: editRec?.subcategory_id ? String(editRec.subcategory_id) : "",
+    external_url:  editRec?.external_url ?? "",
+    contact_phone: editRec?.contact_phone ?? "",
+    contact_email: editRec?.contact_email ?? "",
   });
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
+
+  // Photo upload
+  const [photoFile, setPhotoFile] = useState(null);
+  // In edit mode seed the preview from the existing photo_url
+  const [photoPreview, setPhotoPreview] = useState(editRec?.photo_url ?? null);
+  // Track whether we want to keep the existing photo (no new file selected, preview still showing)
+  const existingPhotoUrl = editRec?.photo_url ?? null;
+  const fileInputRef = useRef(null);
+  const { uploading: photoUploading, error: photoError, uploadImage } = useImageUpload({
+    bucket: "recommendations",
+    folder: "cards",
+    maxDimension: 1200,
+  });
+
+  // Has this post received any reactions? If so, type change is locked.
+  const hasReactions = (editRec?.rec_reactions?.length ?? 0) > 0;
 
   const filteredSubs = subcategories.filter(
     (s) => String(s.category_id) === String(form.category_id)
@@ -60,6 +94,22 @@ function AddPostModal({ categories, subcategories, residentId, onClose, onSaved 
 
   const set = (field) => (e) =>
     setForm((prev) => ({ ...prev, [field]: e.target.value }));
+
+  const handlePhotoChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return;
+    setPhotoFile(file);
+    const url = URL.createObjectURL(file);
+    setPhotoPreview(url);
+  };
+
+  const handleRemovePhoto = () => {
+    setPhotoFile(null);
+    if (photoPreview && photoPreview !== existingPhotoUrl) URL.revokeObjectURL(photoPreview);
+    setPhotoPreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
   const validate = () => {
     const errs = {};
@@ -72,11 +122,21 @@ function AddPostModal({ categories, subcategories, residentId, onClose, onSaved 
 
   const handleSubmit = async () => {
     const errs = validate();
-    if (Object.keys(errs).length) {
-      setErrors(errs);
-      return;
-    }
+    if (Object.keys(errs).length) { setErrors(errs); return; }
     setSaving(true);
+
+    // Resolve photo_url:
+    // - new file selected → upload it
+    // - preview still shows existing url, no new file → keep existing
+    // - preview cleared → set null (remove photo)
+    let photo_url = null;
+    if (photoFile) {
+      photo_url = await uploadImage(photoFile);
+      if (!photo_url) { setSaving(false); return; }
+    } else if (photoPreview && photoPreview === existingPhotoUrl) {
+      photo_url = existingPhotoUrl;
+    }
+
     const payload = {
       type: postType,
       title: form.title.trim(),
@@ -86,16 +146,26 @@ function AddPostModal({ categories, subcategories, residentId, onClose, onSaved 
       external_url: form.external_url.trim() || null,
       contact_phone: form.contact_phone.trim() || null,
       contact_email: form.contact_email.trim() || null,
-      created_by: residentId,
-      removed: false,
-      // pending_review set by DB trigger for 'avoid' posts
+      photo_url,
     };
-    const { error } = await supabase.from("recommendations").insert(payload);
+
+    let error;
+    if (isEditMode) {
+      ;({ error } = await supabase.from("recommendations").update(payload).eq("id", editRec.id));
+    } else {
+      ;({ error } = await supabase.from("recommendations").insert({
+        ...payload,
+        created_by: residentId,
+        removed: false,
+        // pending_review set by DB trigger for 'avoid' posts
+      }));
+    }
+
     setSaving(false);
     if (error) {
       onSaved(null, error.message);
     } else {
-      onSaved(postType);
+      onSaved(postType, null, isEditMode);
     }
   };
 
@@ -121,47 +191,54 @@ function AddPostModal({ categories, subcategories, residentId, onClose, onSaved 
           }`}
         >
           <div>
-            <h2
-              className={`font-bold text-lg font-['Playfair_Display'] ${labelColor}`}
-            >
-              {isAvoid ? "⚠️ Post a Steer Clear Warning" : "⭐ Share a Recommendation"}
+            <h2 className={`font-bold text-lg font-['Playfair_Display'] ${labelColor}`}>
+              {isEditMode
+                ? isAvoid ? "⚠️ Edit Steer Clear Warning" : "⭐ Edit Recommendation"
+                : isAvoid ? "⚠️ Post a Steer Clear Warning" : "⭐ Share a Recommendation"}
             </h2>
             <p className="text-xs text-gray-500 mt-0.5">
-              {isAvoid
+              {isEditMode
+                ? "Update your post details below"
+                : isAvoid
                 ? "Warn your neighbours about a bad experience"
                 : "Recommend a business, service, or product to your neighbours"}
             </p>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
-          >
-            ×
-          </button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
         </div>
 
         {/* Type toggle */}
-        <div className="px-6 pt-4 pb-2 flex gap-2">
-          <button
-            onClick={() => setPostType("recommend")}
-            className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition ${
-              postType === "recommend"
-                ? "bg-[#2C5F8A] text-white border-[#2C5F8A]"
-                : "bg-white text-gray-500 border-gray-200 hover:border-[#2C5F8A]"
-            }`}
-          >
-            ⭐ Recommendation
-          </button>
-          <button
-            onClick={() => setPostType("avoid")}
-            className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition ${
-              postType === "avoid"
-                ? "bg-red-600 text-white border-red-600"
-                : "bg-white text-gray-500 border-gray-200 hover:border-red-400"
-            }`}
-          >
-            ⚠️ Steer Clear
-          </button>
+        <div className="px-6 pt-4 pb-2 flex flex-col gap-2">
+          <div className="flex gap-2">
+            <button
+              onClick={() => { if (!hasReactions) setPostType("recommend"); }}
+              disabled={hasReactions}
+              className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition ${
+                postType === "recommend"
+                  ? "bg-[#2C5F8A] text-white border-[#2C5F8A]"
+                  : "bg-white text-gray-500 border-gray-200 hover:border-[#2C5F8A]"
+              } ${hasReactions ? "opacity-60 cursor-not-allowed" : ""}`}
+            >
+              ⭐ Recommendation
+            </button>
+            <button
+              onClick={() => { if (!hasReactions) setPostType("avoid"); }}
+              disabled={hasReactions}
+              className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition ${
+                postType === "avoid"
+                  ? "bg-red-600 text-white border-red-600"
+                  : "bg-white text-gray-500 border-gray-200 hover:border-red-400"
+              } ${hasReactions ? "opacity-60 cursor-not-allowed" : ""}`}
+            >
+              ⚠️ Steer Clear
+            </button>
+          </div>
+          {/* Locked type message */}
+          {isEditMode && hasReactions && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              ⚠️ Post type cannot be changed after reactions have been received — please remove and repost if needed.
+            </p>
+          )}
         </div>
 
         {/* Form body */}
@@ -286,16 +363,56 @@ function AddPostModal({ categories, subcategories, residentId, onClose, onSaved 
             </div>
           </div>
 
-          {/* Photo upload — placeholder until Session 4 */}
+          {/* Photo upload */}
           <div>
             <label className={labelClass}>Photo</label>
-            <div className="border border-dashed border-gray-300 rounded-lg px-4 py-3 bg-gray-50 flex items-center gap-3">
-              <span className="text-2xl">📷</span>
-              <div>
-                <p className="text-sm text-gray-400 font-medium">Photo upload coming soon</p>
-                <p className="text-xs text-gray-400">Available in a future update</p>
+
+            {photoPreview ? (
+              /* Preview state */
+              <div className="relative rounded-lg overflow-hidden border border-gray-200 bg-gray-50">
+                <img
+                  src={photoPreview}
+                  alt="Preview"
+                  className="w-full max-h-48 object-cover"
+                />
+                <button
+                  onClick={handleRemovePhoto}
+                  className="absolute top-2 right-2 bg-white bg-opacity-90 hover:bg-opacity-100 text-gray-700 rounded-full w-7 h-7 flex items-center justify-center shadow text-sm font-bold transition"
+                  title="Remove photo"
+                >
+                  ×
+                </button>
               </div>
-            </div>
+            ) : (
+              /* Drop zone / picker */
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full border border-dashed border-gray-300 rounded-lg px-4 py-4 bg-gray-50 hover:bg-gray-100 transition flex flex-col items-center gap-1 cursor-pointer"
+              >
+                <span className="text-2xl">📷</span>
+                <span className="text-sm text-gray-500 font-medium">
+                  Click to add a photo
+                </span>
+                <span className="text-xs text-gray-400">
+                  JPEG, PNG or WebP · max 5 MB · compressed automatically
+                </span>
+              </button>
+            )}
+
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/jpg,image/png,image/webp"
+              onChange={handlePhotoChange}
+              className="hidden"
+            />
+
+            {/* Upload error */}
+            {photoError && (
+              <p className="text-xs text-red-500 mt-1">{photoError}</p>
+            )}
           </div>
         </div>
 
@@ -309,10 +426,18 @@ function AddPostModal({ categories, subcategories, residentId, onClose, onSaved 
           </button>
           <button
             onClick={handleSubmit}
-            disabled={saving}
+            disabled={saving || photoUploading}
             className={`px-5 py-2 text-sm font-semibold text-white rounded-lg transition ${btnColor} disabled:opacity-60`}
           >
-            {saving ? "Saving…" : isAvoid ? "Post Warning" : "Post Recommendation"}
+            {photoUploading
+              ? "Uploading photo…"
+              : saving
+              ? "Saving…"
+              : isEditMode
+              ? "Save Changes"
+              : isAvoid
+              ? "Post Warning"
+              : "Post Recommendation"}
           </button>
         </div>
       </div>
@@ -552,6 +677,325 @@ function PublicCommentsModal({ rec, onClose }) {
   );
 }
 
+// ─── Recommendation Detail Modal ─────────────────────────────────────────────
+
+function RecDetailModal({
+  rec,
+  isAdmin,
+  currentResidentId,
+  onClose,
+  onRemove,
+  onEdit,
+  onAcknowledge,
+  onReactionChange,
+  onConflictToast,
+}) {
+  const isAvoid = rec.type === "avoid";
+
+  const positiveType = isAvoid ? "agree" : "heart";
+  const negativeType = isAvoid ? "notmyexperience" : "thumbsdown";
+  const positiveEmoji = isAvoid ? "👍" : "❤️";
+  const negativeEmoji = isAvoid ? "🤔" : "👎";
+
+  const positiveReactions = (rec.rec_reactions || []).filter(
+    (r) => r.reaction_type === positiveType
+  );
+  const negativeReactions = (rec.rec_reactions || []).filter(
+    (r) => r.reaction_type === negativeType
+  );
+
+  const myReaction = (rec.rec_reactions || []).find(
+    (r) => String(r.user_id) === String(currentResidentId)
+  );
+  const myPositive = myReaction?.reaction_type === positiveType;
+  const myNegative = myReaction?.reaction_type === negativeType;
+  const isOwner = String(rec.created_by) === String(currentResidentId);
+
+  const [showNegativeModal, setShowNegativeModal] = useState(false);
+  const [reactSaving, setReactSaving] = useState(false);
+  const [publicComments, setPublicComments] = useState([]);
+  const [commentsLoading, setCommentsLoading] = useState(true);
+
+  const recommenderName = rec.profiles
+    ? `${rec.profiles.names ?? ""} ${rec.profiles.surname ?? ""}`.trim()
+    : "A neighbour";
+  const categoryName = rec.rec_categories?.name ?? "";
+  const subcategoryName = rec.rec_subcategories?.name ?? "";
+
+  // Fetch public comments on mount
+  useEffect(() => {
+    const fetchComments = async () => {
+      const { data } = await supabase
+        .from("rec_reports")
+        .select("id, comment, created_at, profiles!reporter_id(names, surname)")
+        .eq("recommendation_id", rec.id)
+        .eq("comment_public", true)
+        .order("created_at", { ascending: true });
+      setPublicComments(data || []);
+      setCommentsLoading(false);
+    };
+    fetchComments();
+  }, [rec.id]);
+
+  // ── Positive reaction ──
+  const handlePositiveClick = async () => {
+    if (isOwner || reactSaving) return;
+    if (myNegative) { onConflictToast(); return; }
+    setReactSaving(true);
+    if (myPositive) {
+      await supabase
+        .from("rec_reactions")
+        .delete()
+        .eq("recommendation_id", rec.id)
+        .eq("user_id", currentResidentId);
+    } else {
+      await supabase
+        .from("rec_reactions")
+        .upsert(
+          { recommendation_id: rec.id, user_id: currentResidentId, reaction_type: positiveType },
+          { onConflict: "recommendation_id,user_id" }
+        );
+    }
+    setReactSaving(false);
+    onReactionChange(rec.id);
+  };
+
+  // ── Negative reaction ──
+  const handleNegativeClick = () => {
+    if (isOwner || reactSaving) return;
+    if (myPositive) { onConflictToast(); return; }
+    if (myNegative) { handleRemoveNegative(); return; }
+    setShowNegativeModal(true);
+  };
+
+  const handleRemoveNegative = async () => {
+    setReactSaving(true);
+    await Promise.all([
+      supabase.from("rec_reactions").delete()
+        .eq("recommendation_id", rec.id).eq("user_id", currentResidentId),
+      supabase.from("rec_reports").delete()
+        .eq("recommendation_id", rec.id).eq("reporter_id", currentResidentId),
+    ]);
+    setReactSaving(false);
+    onReactionChange(rec.id);
+  };
+
+  const handleNegativeSaved = () => {
+    setShowNegativeModal(false);
+    onReactionChange(rec.id);
+  };
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-[1500] flex items-center justify-center p-4"
+        style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+        onClick={onClose}
+      >
+        <div
+          className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Photo */}
+          {rec.photo_url && (
+            <div className="w-full max-h-56 overflow-hidden shrink-0">
+              <img
+                src={rec.photo_url}
+                alt={rec.title}
+                className="w-full h-full object-cover"
+              />
+            </div>
+          )}
+
+          {/* Type banner */}
+          <div
+            className={`px-5 py-2 flex items-center justify-between text-xs font-semibold shrink-0 ${
+              isAvoid ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800"
+            }`}
+          >
+            <span>{isAvoid ? "⚠️ Steer Clear" : "⭐ Recommendation"}</span>
+            {rec.pending_review && isAdmin && (
+              <span className="bg-red-500 text-white px-2 py-0.5 rounded-full text-[10px]">
+                Pending Review
+              </span>
+            )}
+          </div>
+
+          {/* Scrollable body */}
+          <div className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
+            {/* Category breadcrumb */}
+            {categoryName && (
+              <div className="flex items-center gap-1 text-xs text-gray-400">
+                <span>{categoryName}</span>
+                {subcategoryName && <><span>›</span><span>{subcategoryName}</span></>}
+              </div>
+            )}
+
+            {/* Title */}
+            <h2 className="font-bold text-xl text-gray-800 font-['Playfair_Display'] leading-snug">
+              {rec.title}
+            </h2>
+
+            {/* Description — full, no truncation */}
+            {rec.description && (
+              <p className="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap">
+                {rec.description}
+              </p>
+            )}
+
+            {/* Contact details */}
+            {(rec.contact_phone || rec.contact_email || rec.external_url) && (
+              <div className="flex flex-wrap gap-3 text-sm text-gray-500 border border-gray-100 rounded-xl px-4 py-3 bg-gray-50">
+                {rec.contact_phone && (
+                  <a href={`tel:${rec.contact_phone}`}
+                    className="flex items-center gap-1.5 hover:text-[#2C5F8A] transition">
+                    📞 {rec.contact_phone}
+                  </a>
+                )}
+                {rec.contact_email && (
+                  <a href={`mailto:${rec.contact_email}`}
+                    className="flex items-center gap-1.5 hover:text-[#2C5F8A] transition">
+                    ✉️ {rec.contact_email}
+                  </a>
+                )}
+                {rec.external_url && (
+                  <a href={rec.external_url} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 hover:text-[#2C5F8A] transition">
+                    🔗 Visit website
+                  </a>
+                )}
+              </div>
+            )}
+
+            {/* Recommender + date */}
+            <div className="text-xs text-gray-400">
+              Posted by{" "}
+              <span className="font-medium text-gray-600">{recommenderName}</span>
+              {" · "}
+              {formatDate(rec.created_at)}
+            </div>
+
+            {/* Reactions */}
+            <div className="flex items-center gap-3 pt-1">
+              {/* Positive */}
+              <button
+                onClick={handlePositiveClick}
+                disabled={isOwner || reactSaving}
+                title={isOwner ? "You can't react to your own post" : myPositive ? "Remove reaction" : ""}
+                className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-full transition font-medium
+                  ${isOwner ? "cursor-default opacity-40 bg-gray-100 text-gray-400" : ""}
+                  ${!isOwner && myPositive
+                    ? isAvoid ? "bg-blue-100 text-blue-700" : "bg-rose-100 text-rose-600"
+                    : !isOwner ? "bg-gray-100 text-gray-500 hover:bg-gray-200" : ""
+                  }`}
+              >
+                {positiveEmoji} {positiveReactions.length}
+              </button>
+
+              {/* Negative — non-owners only */}
+              {!isOwner && (
+                <button
+                  onClick={handleNegativeClick}
+                  disabled={reactSaving}
+                  title={myNegative ? "Remove your reaction" : isAvoid ? "Not my experience" : "Thumbs down"}
+                  className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-full transition font-medium
+                    ${myNegative
+                      ? "bg-orange-100 text-orange-700"
+                      : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                    }`}
+                >
+                  {negativeEmoji} {negativeReactions.length}
+                </button>
+              )}
+
+              {/* Negative count (display only) for owner */}
+              {isOwner && (
+                <span className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-full bg-gray-100 text-gray-400">
+                  {negativeEmoji} {negativeReactions.length}
+                </span>
+              )}
+            </div>
+
+            {/* Public comments */}
+            {!commentsLoading && publicComments.length > 0 && (
+              <div className="space-y-2 pt-1">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  Neighbour Comments
+                </p>
+                {publicComments.map((c) => {
+                  const name = c.profiles
+                    ? `${c.profiles.names ?? ""} ${c.profiles.surname ?? ""}`.trim()
+                    : "A neighbour";
+                  return (
+                    <div key={c.id} className="bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
+                      <p className="text-sm text-gray-700 leading-relaxed">{c.comment}</p>
+                      <p className="text-xs text-gray-400 mt-1.5">
+                        {name} · {formatDate(c.created_at)}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Owner / Admin controls */}
+            {(isOwner || isAdmin) && (
+              <div className="pt-2 border-t border-gray-100 flex flex-wrap gap-4 items-center">
+                {/* Admin: acknowledge pending Steer Clear */}
+                {isAdmin && isAvoid && rec.pending_review && (
+                  <button
+                    onClick={() => { onClose(); onAcknowledge(rec); }}
+                    className="text-sm text-green-600 hover:text-green-800 font-medium transition"
+                  >
+                    ✓ Acknowledge
+                  </button>
+                )}
+                {isOwner && (
+                  <button
+                    onClick={() => { onClose(); onEdit(rec); }}
+                    className="text-sm text-[#2C5F8A] hover:text-[#1A3F5C] transition"
+                  >
+                    Edit post
+                  </button>
+                )}
+                {(isOwner || isAdmin) && (
+                  <button
+                    onClick={() => { onClose(); onRemove(rec); }}
+                    className="text-sm text-red-500 hover:text-red-700 transition"
+                  >
+                    Remove post
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Footer close button */}
+          <div className="px-6 py-4 border-t border-gray-100 shrink-0 flex justify-end">
+            <button
+              onClick={onClose}
+              className="px-5 py-2 text-sm font-semibold bg-[#2C5F8A] text-white rounded-lg hover:bg-[#1A3F5C] transition"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Negative reaction modal — sits above detail modal */}
+      {showNegativeModal && (
+        <NegativeReactionModal
+          rec={rec}
+          reactionType={negativeType}
+          residentId={currentResidentId}
+          onClose={() => setShowNegativeModal(false)}
+          onSaved={handleNegativeSaved}
+        />
+      )}
+    </>
+  );
+}
+
 // ─── Recommendation Card ──────────────────────────────────────────────────────
 
 function RecommendationCard({
@@ -559,6 +1003,8 @@ function RecommendationCard({
   isAdmin,
   currentResidentId,
   onRemove,
+  onEdit,
+  onAcknowledge,
   onReactionChange,
   onConflictToast,
 }) {
@@ -589,6 +1035,7 @@ function RecommendationCard({
   const hasPublicComments = (rec.rec_reports || []).some((r) => r.comment_public);
 
   // Modal state (local to each card)
+  const [showDetail, setShowDetail] = useState(false);
   const [showNegativeModal, setShowNegativeModal] = useState(false);
   const [showPublicComments, setShowPublicComments] = useState(false);
   const [reactSaving, setReactSaving] = useState(false);
@@ -679,10 +1126,22 @@ function RecommendationCard({
   return (
     <>
       <div
-        className={`rounded-2xl border shadow-sm hover:shadow-md transition-shadow bg-white overflow-hidden flex flex-col ${
+        onClick={() => setShowDetail(true)}
+        className={`rounded-2xl border shadow-sm hover:shadow-md transition-shadow bg-white overflow-hidden flex flex-col cursor-pointer ${
           isAvoid ? "border-red-200" : "border-[#C9922A]/30"
         }`}
       >
+        {/* Photo thumbnail */}
+        {rec.photo_url && (
+          <div className="w-full h-36 overflow-hidden shrink-0">
+            <img
+              src={rec.photo_url}
+              alt={rec.title}
+              className="w-full h-full object-cover"
+            />
+          </div>
+        )}
+
         {/* Type banner */}
         <div
           className={`px-4 py-1.5 flex items-center justify-between text-xs font-semibold ${
@@ -771,7 +1230,7 @@ function RecommendationCard({
             <div className="flex items-center gap-2">
               {/* Positive reaction */}
               <button
-                onClick={handlePositiveClick}
+                onClick={(e) => { e.stopPropagation(); handlePositiveClick(); }}
                 disabled={isOwner || reactSaving}
                 title={
                   isOwner
@@ -797,7 +1256,7 @@ function RecommendationCard({
               {/* Negative reaction button — only for non-owners */}
               {!isOwner && (
                 <button
-                  onClick={handleNegativeClick}
+                  onClick={(e) => { e.stopPropagation(); handleNegativeClick(); }}
                   disabled={reactSaving}
                   title={myNegative ? "Remove your reaction" : isAvoid ? "Not my experience" : "Thumbs down"}
                   className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full transition
@@ -817,10 +1276,10 @@ function RecommendationCard({
                 </span>
               )}
 
-              {/* View public comments link — visible to everyone when public comments exist */}
+              {/* View public comments — opens detail modal */}
               {hasPublicComments && (
                 <button
-                  onClick={() => setShowPublicComments(true)}
+                  onClick={(e) => { e.stopPropagation(); setShowDetail(true); }}
                   className="text-xs text-[#2C5F8A] underline underline-offset-2 hover:text-[#1A3F5C] transition"
                   title="View neighbour comments"
                 >
@@ -830,21 +1289,46 @@ function RecommendationCard({
             </div>
           </div>
 
-          {/* Admin controls */}
-          {isAdmin && (
+          {/* Owner / Admin controls */}
+          {(isOwner || isAdmin) && (
             <div className="flex gap-2 pt-2 border-t border-gray-100">
-              <button
-                onClick={() => onRemove(rec)}
-                className="text-xs text-red-500 hover:text-red-700 transition"
-              >
-                Remove post
-              </button>
+              {isOwner && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onEdit(rec); }}
+                  className="text-xs text-[#2C5F8A] hover:text-[#1A3F5C] transition"
+                >
+                  Edit post
+                </button>
+              )}
+              {(isOwner || isAdmin) && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onRemove(rec); }}
+                  className="text-xs text-red-500 hover:text-red-700 transition"
+                >
+                  Remove post
+                </button>
+              )}
             </div>
           )}
         </div>
       </div>
 
-      {/* Negative reaction modal (z-index above card grid, below nav) */}
+      {/* Detail modal */}
+      {showDetail && (
+        <RecDetailModal
+          rec={rec}
+          isAdmin={isAdmin}
+          currentResidentId={currentResidentId}
+          onClose={() => setShowDetail(false)}
+          onRemove={onRemove}
+          onEdit={onEdit}
+          onAcknowledge={onAcknowledge}
+          onReactionChange={onReactionChange}
+          onConflictToast={onConflictToast}
+        />
+      )}
+
+      {/* Negative reaction modal */}
       {showNegativeModal && (
         <NegativeReactionModal
           rec={rec}
@@ -852,14 +1336,6 @@ function RecommendationCard({
           residentId={currentResidentId}
           onClose={() => setShowNegativeModal(false)}
           onSaved={handleNegativeSaved}
-        />
-      )}
-
-      {/* Public comments modal */}
-      {showPublicComments && (
-        <PublicCommentsModal
-          rec={rec}
-          onClose={() => setShowPublicComments(false)}
         />
       )}
     </>
@@ -906,7 +1382,8 @@ function ConfirmRemoveModal({ rec, onClose, onConfirm, saving }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function RecommendationsTracker({ currentUserId, residentId, isAdmin }) {
-  const [activeTab, setActiveTab] = useState("recommend"); // 'recommend' | 'avoid'
+  const location = useLocation();
+  const [activeTab, setActiveTab] = useState("recommend");
   const [recs, setRecs] = useState([]);
   const [categories, setCategories] = useState([]);
   const [subcategories, setSubcategories] = useState([]);
@@ -915,18 +1392,49 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
   // Filters
   const [filterCategory, setFilterCategory] = useState("");
   const [filterSubcategory, setFilterSubcategory] = useState("");
-  const [sortBy, setSortBy] = useState("newest"); // 'newest' | 'popular'
+  const [sortBy, setSortBy] = useState("newest");
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
   const [removeTarget, setRemoveTarget] = useState(null);
   const [removeSaving, setRemoveSaving] = useState(false);
+  const [deepLinkRec, setDeepLinkRec] = useState(null); // rec to open via ?openPost
 
   // Toast
   const [toast, setToast] = useState(null);
   const showToast = (message, type = "success") => setToast({ message, type });
   const showConflictToast = () =>
     showToast("You can't react both positively and negatively — remove your existing reaction first.", "error");
+
+  // ── Deep link: ?openPost=ID ──
+  // Navigating here from admin reports opens the detail modal for that post
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const openPostId = params.get("openPost");
+    if (!openPostId) return;
+
+    const fetchDeepLinkRec = async () => {
+      const { data } = await supabase
+        .from("recommendations")
+        .select(
+          `*, profiles!created_by(resident_id, names, surname),
+          rec_categories!category_id(id, name),
+          rec_subcategories!subcategory_id(id, name),
+          rec_reactions(id, reaction_type, user_id),
+          rec_reports!recommendation_id(id, comment_public)`
+        )
+        .eq("id", openPostId)
+        .single();
+
+      if (data) {
+        // Switch to the correct tab so the card list matches
+        setActiveTab(data.type);
+        setDeepLinkRec(data);
+      }
+    };
+    fetchDeepLinkRec();
+  }, [location.search]);
 
   // ── Fetch categories ──
   useEffect(() => {
@@ -1021,19 +1529,38 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
     (s) => String(s.category_id) === String(filterCategory)
   );
 
-  // ── Add post saved ──
-  const handlePostSaved = (postType, errorMsg) => {
+  // ── Add / Edit post saved ──
+  const handlePostSaved = (postType, errorMsg, wasEdit = false) => {
     setShowAddModal(false);
+    setEditTarget(null);
     if (errorMsg) {
       showToast(`Error: ${errorMsg}`, "error");
       return;
     }
     showToast(
-      postType === "avoid"
+      wasEdit
+        ? "Post updated successfully!"
+        : postType === "avoid"
         ? "Steer Clear warning posted and flagged for admin review."
         : "Recommendation posted successfully!"
     );
     fetchRecs();
+  };
+
+  // ── Acknowledge Steer Clear ──
+  const handleAcknowledge = async (rec) => {
+    const { error } = await supabase
+      .from("recommendations")
+      .update({ pending_review: false })
+      .eq("id", rec.id);
+    if (error) {
+      showToast("Could not acknowledge post.", "error");
+    } else {
+      showToast("Steer Clear acknowledged — post stays live.");
+      setRecs((prev) =>
+        prev.map((r) => r.id === rec.id ? { ...r, pending_review: false } : r)
+      );
+    }
   };
 
   // ── Remove post ──
@@ -1049,6 +1576,8 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
     if (error) {
       showToast("Failed to remove post", "error");
     } else {
+      // Clean up photo from storage (fire and forget — don't block on this)
+      deleteStoragePhoto(removeTarget.photo_url, "recommendations");
       showToast("Post removed.");
       setRecs((prev) => prev.filter((r) => r.id !== removeTarget.id));
     }
@@ -1205,6 +1734,8 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
               isAdmin={isAdmin}
               currentResidentId={residentId}
               onRemove={(r) => setRemoveTarget(r)}
+              onEdit={(r) => setEditTarget(r)}
+              onAcknowledge={handleAcknowledge}
               onReactionChange={handleReactionChange}
               onConflictToast={showConflictToast}
             />
@@ -1223,12 +1754,38 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
         />
       )}
 
+      {editTarget && (
+        <AddPostModal
+          categories={categories}
+          subcategories={subcategories}
+          residentId={residentId}
+          editRec={editTarget}
+          onClose={() => setEditTarget(null)}
+          onSaved={handlePostSaved}
+        />
+      )}
+
       {removeTarget && (
         <ConfirmRemoveModal
           rec={removeTarget}
           onClose={() => setRemoveTarget(null)}
           onConfirm={handleRemoveConfirm}
           saving={removeSaving}
+        />
+      )}
+
+      {/* Deep-link detail modal — opened via ?openPost=ID from admin reports */}
+      {deepLinkRec && (
+        <RecDetailModal
+          rec={deepLinkRec}
+          isAdmin={isAdmin}
+          currentResidentId={residentId}
+          onClose={() => setDeepLinkRec(null)}
+          onRemove={(r) => { setDeepLinkRec(null); setRemoveTarget(r); }}
+          onEdit={(r) => { setDeepLinkRec(null); setEditTarget(r); }}
+          onAcknowledge={(r) => { setDeepLinkRec(null); handleAcknowledge(r); }}
+          onReactionChange={handleReactionChange}
+          onConflictToast={showConflictToast}
         />
       )}
 

@@ -1,5 +1,17 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
+import { useImageUpload } from "@/hooks/useImageUpload";
+
+// Delete a file from Supabase Storage by its public URL
+async function deleteStoragePhoto(photoUrl, bucket) {
+  if (!photoUrl) return
+  try {
+    const marker = `/object/public/${bucket}/`
+    const idx = photoUrl.indexOf(marker)
+    if (idx === -1) return
+    await supabase.storage.from(bucket).remove([photoUrl.slice(idx + marker.length)])
+  } catch {}
+}
 
 // ─── Streets ──────────────────────────────────────────────────────────────────
 const STREETS = [
@@ -85,42 +97,64 @@ function ResidentCard({ entry, canEdit, onEdit, onDelete, selectMode, selected, 
           letterSpacing: "0.04em", textTransform: "uppercase",
         }}>Hidden</div>
       )}
-      <div style={{ fontFamily: "var(--font-display)", fontSize: "1.1rem", fontWeight: "700", color: "var(--color-primary-dark)", marginBottom: "0.15rem" }}>
-        {entry.surname}
-      </div>
-      <div style={{ fontSize: "0.875rem", color: "#6b7280", marginBottom: "0.75rem", fontFamily: "var(--font-body)" }}>
-        {entry.names}
-      </div>
-      {entry.address && <DetailRow icon={<IconPin />} value={entry.address} />}
-      {entry.phones?.length > 0 && <DetailRow icon={<IconPhone />} value={entry.phones.join(" / ")} />}
-      {entry.emails?.length > 0 && (
-        <DetailRow icon={<IconMail />} value={
-          entry.emails.map((em, i) => (
-            <span key={i}>
-              <a href={`mailto:${em}`} style={{ color: "var(--color-primary)", textDecoration: "none" }}
-                onClick={e => e.stopPropagation()}>{em}</a>
-              {i < entry.emails.length - 1 ? " / " : ""}
-            </span>
-          ))
-        } />
-      )}
-      {entry.tags?.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginTop: "0.6rem" }}>
-          {entry.tags.map((tag, i) => (
-            <span key={i} style={{
-              background: "rgba(var(--color-primary-rgb), 0.08)", color: "var(--color-primary)",
-              padding: "0.15rem 0.5rem", borderRadius: "12px", fontSize: "0.72rem", fontWeight: "600",
-              fontFamily: "var(--font-body)",
-            }}>{tag}</span>
-          ))}
+
+      {/* Card layout: info left, photo right */}
+      <div style={{ display: "flex", gap: "0.75rem", alignItems: "flex-start" }}>
+        {/* Info column */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: "var(--font-display)", fontSize: "1.1rem", fontWeight: "700", color: "var(--color-primary-dark)", marginBottom: "0.15rem" }}>
+            {entry.surname}
+          </div>
+          <div style={{ fontSize: "0.875rem", color: "#6b7280", marginBottom: "0.75rem", fontFamily: "var(--font-body)" }}>
+            {entry.names}
+          </div>
+          {entry.address && <DetailRow icon={<IconPin />} value={entry.address} />}
+          {entry.phones?.length > 0 && <DetailRow icon={<IconPhone />} value={entry.phones.join(" / ")} />}
+          {entry.emails?.length > 0 && (
+            <DetailRow icon={<IconMail />} value={
+              entry.emails.map((em, i) => (
+                <span key={i}>
+                  <a href={`mailto:${em}`} style={{ color: "var(--color-primary)", textDecoration: "none" }}
+                    onClick={e => e.stopPropagation()}>{em}</a>
+                  {i < entry.emails.length - 1 ? " / " : ""}
+                </span>
+              ))
+            } />
+          )}
+          {entry.tags?.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginTop: "0.6rem" }}>
+              {entry.tags.map((tag, i) => (
+                <span key={i} style={{
+                  background: "rgba(var(--color-primary-rgb), 0.08)", color: "var(--color-primary)",
+                  padding: "0.15rem 0.5rem", borderRadius: "12px", fontSize: "0.72rem", fontWeight: "600",
+                  fontFamily: "var(--font-body)",
+                }}>{tag}</span>
+              ))}
+            </div>
+          )}
+          {canEdit && !selectMode && (
+            <div style={{ display: "flex", gap: "0.4rem", marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid #f0f0f0" }}>
+              <button onClick={onEdit} style={btnOutlineStyle}><IconEdit /> Edit</button>
+              {onDelete && <button onClick={onDelete} style={btnDangerStyle}><IconTrash /> Remove</button>}
+            </div>
+          )}
         </div>
-      )}
-      {canEdit && !selectMode && (
-        <div style={{ display: "flex", gap: "0.4rem", marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid #f0f0f0" }}>
-          <button onClick={onEdit} style={btnOutlineStyle}><IconEdit /> Edit</button>
-          {onDelete && <button onClick={onDelete} style={btnDangerStyle}><IconTrash /> Remove</button>}
+
+        {/* Photo column */}
+        <div style={{
+          width: "135px", height: "135px", borderRadius: "10px", flexShrink: 0,
+          overflow: "hidden", background: "rgba(var(--color-primary-rgb), 0.08)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          border: "2px solid rgba(var(--color-primary-rgb), 0.12)",
+        }}>
+          {entry.photo_url
+            ? <img src={entry.photo_url} alt={entry.names} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            : <span style={{ fontFamily: "var(--font-display)", fontSize: "1.8rem", fontWeight: "700", color: "var(--color-primary)", opacity: 0.6 }}>
+                {((entry.names?.[0] || "") + (entry.surname?.[0] || "")).toUpperCase()}
+              </span>
+          }
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -260,6 +294,16 @@ function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAd
   });
   const [newTag, setNewTag] = useState("");
 
+  // Photo upload
+  const [photoFile, setPhotoFile] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(entry.photo_url || null);
+  const existingPhotoUrl = entry.photo_url || null;
+  const photoInputRef = useRef(null);
+  const { uploading: photoUploading, error: photoUploadError, uploadImage } = useImageUpload({
+    bucket: "avatars",
+    maxDimension: 400,
+  });
+
   const updateField = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
   const updateArr   = (field, i, val) => { const a = [...form[field]]; a[i] = val; setForm(prev => ({ ...prev, [field]: a })); };
   const addArr      = (field) => setForm(prev => ({ ...prev, [field]: [...prev[field], ""] }));
@@ -267,13 +311,23 @@ function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAd
   const addTag      = () => { if (newTag.trim() && !form.tags.includes(newTag.trim())) { setForm(prev => ({ ...prev, tags: [...prev.tags, newTag.trim()] })); setNewTag(""); } };
   const removeTag   = (tag) => setForm(prev => ({ ...prev, tags: prev.tags.filter(t => t !== tag) }));
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!form.surname.trim()) { alert("Surname is required."); return; }
     // Reassemble address string
     const streetName = form.street === "__other__" ? form.customStreet.trim() : form.street;
     const address = form.houseNumber.trim() && streetName
       ? `${form.houseNumber.trim()} ${streetName}`
       : streetName || form.houseNumber.trim() || "";
+
+    // Handle photo
+    let photo_url = existingPhotoUrl; // default: keep existing
+    if (photoFile) {
+      const uploaded = await uploadImage(photoFile);
+      if (!uploaded) return; // error shown by hook
+      photo_url = uploaded;
+    } else if (!photoPreview) {
+      photo_url = null; // preview cleared — remove photo
+    }
 
     onSave({
       ...entry,
@@ -286,6 +340,7 @@ function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAd
       notify_calendar: form.notify_calendar,
       notify_blog: form.notify_blog,
       directory_visible: form.directory_visible,
+      photo_url,
     });
   };
 
@@ -301,6 +356,66 @@ function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAd
 
         {/* Scrollable fields */}
         <div style={{ overflowY: "auto", padding: "0 2rem", flex: 1 }}>
+
+          {/* ── Profile Photo ── */}
+          <ModalField label="Profile Photo">
+            <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+              {/* Avatar preview */}
+              <div style={{
+                width: "72px", height: "72px", borderRadius: "50%", flexShrink: 0,
+                overflow: "hidden", background: "rgba(var(--color-primary-rgb), 0.1)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                border: "2px solid rgba(var(--color-primary-rgb), 0.2)",
+              }}>
+                {photoPreview
+                  ? <img src={photoPreview} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  : <span style={{ fontFamily: "var(--font-display)", fontSize: "1.2rem", fontWeight: "700", color: "var(--color-primary)" }}>
+                      {((form.names?.[0] || "") + (form.surname?.[0] || "")).toUpperCase() || "?"}
+                    </span>
+                }
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                <button
+                  type="button"
+                  onClick={() => photoInputRef.current?.click()}
+                  style={{ ...btnSecStyle, fontSize: "0.8rem", padding: "0.35rem 0.75rem" }}
+                >
+                  {photoPreview ? "Change photo" : "Upload photo"}
+                </button>
+                {photoPreview && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPhotoFile(null);
+                      if (photoPreview !== existingPhotoUrl) URL.revokeObjectURL(photoPreview);
+                      setPhotoPreview(null);
+                      if (photoInputRef.current) photoInputRef.current.value = "";
+                    }}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", fontSize: "0.8rem", textAlign: "left", padding: 0 }}
+                  >
+                    Remove photo
+                  </button>
+                )}
+                <span style={{ fontSize: "0.72rem", color: "#9ca3af" }}>JPEG, PNG or WebP · max 5 MB</span>
+              </div>
+            </div>
+            <input
+              ref={photoInputRef}
+              type="file"
+              accept="image/jpeg,image/jpg,image/png,image/webp"
+              style={{ display: "none" }}
+              onChange={e => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                setPhotoFile(f);
+                setPhotoPreview(URL.createObjectURL(f));
+              }}
+            />
+            {photoUploadError && (
+              <p style={{ fontSize: "0.75rem", color: "#ef4444", marginTop: "0.35rem" }}>{photoUploadError}</p>
+            )}
+          </ModalField>
+
           <ModalField label="Surname *">
             <input value={form.surname} onChange={e => updateField("surname", e.target.value.toUpperCase())} style={inputStyle} placeholder="e.g. SMITH" />
           </ModalField>
@@ -425,8 +540,8 @@ function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAd
 
         {/* Fixed footer — always visible */}
         <div style={{ display: "flex", gap: "0.5rem", padding: "1rem 2rem 1.5rem", flexShrink: 0, borderTop: "1px solid #f0f0f0" }}>
-          <button onClick={handleSubmit} disabled={isSaving} style={{ ...btnPrimaryStyle, flex: 1 }}>
-            {isSaving ? "Saving…" : "Save"}
+          <button onClick={handleSubmit} disabled={isSaving || photoUploading} style={{ ...btnPrimaryStyle, flex: 1 }}>
+            {photoUploading ? "Uploading photo…" : isSaving ? "Saving…" : "Save"}
           </button>
           <button onClick={onClose} style={{ ...btnSecStyle, flex: 1 }}>Cancel</button>
         </div>
@@ -731,7 +846,7 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
     setLoading(true);
     let query = supabase
       .from("profiles")
-      .select("resident_id, id, surname, names, address, phones, emails, tags, directory_visible, notify_calendar, notify_blog")
+      .select("resident_id, id, surname, names, address, phones, emails, tags, directory_visible, notify_calendar, notify_blog, photo_url")
       .not("surname", "is", null)
       .order("surname");
     if (!includeHidden) query = query.eq("directory_visible", true);
@@ -777,6 +892,11 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
     const { resident_id, id, _isOwnRecord, ...fields } = entry;
     let error;
     if (resident_id) {
+      // Clean up old avatar if photo changed or removed
+      const existing = residents.find(r => r.resident_id === resident_id);
+      if (existing?.photo_url && existing.photo_url !== fields.photo_url) {
+        deleteStoragePhoto(existing.photo_url, 'avatars');
+      }
       ({ error } = await supabase.from("profiles").update(fields).eq("resident_id", resident_id));
     } else {
       ({ error } = await supabase.from("profiles").insert([{ ...fields }]));

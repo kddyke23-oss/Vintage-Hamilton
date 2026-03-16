@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/components/ui/Toast'
@@ -11,6 +12,18 @@ const fmtDate = (ts) => {
 }
 
 const TARGET_LABELS = { event: '📅 Calendar Event', post: '📝 Blog Post', comment: '💬 Blog Comment' }
+
+// Extract storage path from a Supabase public URL and delete the file
+async function deleteStoragePhoto(photoUrl, bucket) {
+  if (!photoUrl) return;
+  try {
+    const marker = `/object/public/${bucket}/`;
+    const idx = photoUrl.indexOf(marker);
+    if (idx === -1) return;
+    const storagePath = photoUrl.slice(idx + marker.length);
+    await supabase.storage.from(bucket).remove([storagePath]);
+  } catch {}
+}
 
 const CATEGORY_COLORS = [
   { label: 'Ocean Blue',   value: '#2C5F8A' },
@@ -255,6 +268,323 @@ function CatModal({ editingCat, catForm, setCatForm, tags, onSave, onClose }) {
   )
 }
 
+// ─── Tab: Recommendations ─────────────────────────────────────────────────────
+
+function RecommendationsTab({ onCountChange }) {
+  const toast = useToast()
+  const navigate = useNavigate()
+
+  // Negative reaction reports
+  const [reports, setReports] = useState([])
+  const [reportsLoading, setReportsLoading] = useState(true)
+  const [showResolvedReports, setShowResolvedReports] = useState(false)
+
+  // Steer Clear pending review
+  const [steerClear, setSteerClear] = useState([])
+  const [steerLoading, setSteerLoading] = useState(true)
+
+  const fetchReports = useCallback(async () => {
+    setReportsLoading(true)
+    const { data } = await supabase
+      .from('rec_reports')
+      .select(`
+        id, reaction_type, comment, comment_public, resolved, created_at,
+        profiles!reporter_id(names, surname),
+        recommendations(id, title, type)
+      `)
+      .eq('resolved', showResolvedReports)
+      .order('created_at', { ascending: false })
+    setReports(data || [])
+    setReportsLoading(false)
+  }, [showResolvedReports])
+
+  const fetchSteerClear = useCallback(async () => {
+    setSteerLoading(true)
+    const { data } = await supabase
+      .from('recommendations')
+      .select(`
+        id, title, description, created_at, pending_review,
+        profiles!created_by(names, surname),
+        rec_categories(name)
+      `)
+      .eq('pending_review', true)
+      .eq('removed', false)
+      .order('created_at', { ascending: false })
+    setSteerClear(data || [])
+    setSteerLoading(false)
+  }, [])
+
+  useEffect(() => { fetchReports() }, [fetchReports])
+  useEffect(() => { fetchSteerClear() }, [fetchSteerClear])
+
+  // ── Report actions ──────────────────────────────────────────────────────────
+
+  const handleMakePublic = async (report) => {
+    const { error } = await supabase
+      .from('rec_reports')
+      .update({ comment_public: true, resolved: true })
+      .eq('id', report.id)
+    if (error) { toast.error('Could not update report.'); return }
+    toast.success('Comment made public and report resolved.')
+    fetchReports()
+    onCountChange()
+  }
+
+  const handleDismissReport = async (report) => {
+    const { error } = await supabase
+      .from('rec_reports')
+      .update({ resolved: true, comment_public: false })
+      .eq('id', report.id)
+    if (error) { toast.error('Could not dismiss report.'); return }
+    toast.success('Report dismissed.')
+    fetchReports()
+    onCountChange()
+  }
+
+  const handleRemovePost = async (recId) => {
+    if (!window.confirm('Remove this recommendation? This cannot be undone.')) return
+
+    // Fetch photo_url before removing so we can clean up storage
+    const { data: recData } = await supabase
+      .from('recommendations')
+      .select('photo_url')
+      .eq('id', recId)
+      .single()
+
+    // Soft-delete the post — if it's already gone, treat that as success
+    const { error } = await supabase
+      .from('recommendations')
+      .update({ removed: true })
+      .eq('id', recId)
+
+    if (error && error.code !== 'PGRST116') {
+      toast.error('Could not remove post.')
+      return
+    }
+
+    // Clean up photo from storage (fire and forget)
+    if (recData?.photo_url) {
+      deleteStoragePhoto(recData.photo_url, 'recommendations')
+    }
+
+    // Auto-resolve all associated rec_reports so they don't linger
+    await supabase
+      .from('rec_reports')
+      .update({ resolved: true })
+      .eq('recommendation_id', recId)
+
+    toast.success('Post removed and associated reports resolved.')
+    fetchReports()
+    fetchSteerClear()
+    onCountChange()
+  }
+
+  // ── Steer Clear actions ─────────────────────────────────────────────────────
+
+  const handleAcknowledge = async (rec) => {
+    const { error } = await supabase
+      .from('recommendations')
+      .update({ pending_review: false })
+      .eq('id', rec.id)
+    if (error) { toast.error('Could not acknowledge.'); return }
+    toast.success('Steer Clear acknowledged — post stays live.')
+    fetchSteerClear()
+    onCountChange()
+  }
+
+  const reactionLabel = (type) => ({
+    thumbsdown: '👎 Thumbs Down',
+    notmyexperience: '🤔 Not My Experience',
+  }[type] || type)
+
+  return (
+    <div className="space-y-10">
+
+      {/* ── Steer Clear Pending Review ── */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">⚠️ Steer Clear — Pending Review</h2>
+            <p className="text-sm text-gray-500 mt-0.5">
+              New Steer Clear warnings are live immediately but flagged for admin review.
+            </p>
+          </div>
+          {steerClear.length > 0 && (
+            <span className="bg-red-500 text-white text-xs font-bold px-2.5 py-1 rounded-full">
+              {steerClear.length}
+            </span>
+          )}
+        </div>
+
+        {steerLoading ? (
+          <div className="text-center py-8 text-gray-400">Loading…</div>
+        ) : steerClear.length === 0 ? (
+          <div className="text-center py-8">
+            <div className="text-3xl mb-2">✅</div>
+            <p className="text-gray-500 text-sm">No Steer Clear posts awaiting review.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {steerClear.map(rec => {
+              const author = rec.profiles
+                ? `${rec.profiles.names ?? ''} ${rec.profiles.surname ?? ''}`.trim()
+                : 'Unknown'
+              return (
+                <div key={rec.id} className="bg-white rounded-xl border border-red-200 p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-50 text-red-700">
+                          ⚠️ Steer Clear
+                        </span>
+                        {rec.rec_categories?.name && (
+                          <span className="text-xs text-gray-400">{rec.rec_categories.name}</span>
+                        )}
+                        <span className="text-xs text-gray-400">{fmtDate(rec.created_at)}</span>
+                      </div>
+                      <p className="font-semibold text-gray-800 mb-1">{rec.title}</p>
+                      {rec.description && (
+                        <p className="text-sm text-gray-500 line-clamp-2">{rec.description}</p>
+                      )}
+                      <p className="text-xs text-gray-400 mt-2">Posted by <span className="font-medium text-gray-600">{author}</span></p>
+                      <button
+                        onClick={() => navigate(`/apps/recommendations?openPost=${rec.id}`)}
+                        className="text-xs text-[#2C5F8A] hover:text-[#1A3F5C] underline underline-offset-2 mt-1 transition"
+                      >
+                        View post →
+                      </button>
+                    </div>
+                    <div className="flex flex-col gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => handleAcknowledge(rec)}
+                        className="text-sm px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors whitespace-nowrap"
+                      >
+                        ✓ Acknowledge
+                      </button>
+                      <button
+                        onClick={() => handleRemovePost(rec.id)}
+                        className="text-sm px-3 py-1.5 rounded-lg border border-red-300 text-red-600 hover:bg-red-50 transition-colors whitespace-nowrap"
+                      >
+                        Remove Post
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── Negative Reaction Reports ── */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">👎 Negative Reaction Reports</h2>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Comments submitted with thumbs-down or "not my experience" reactions.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowResolvedReports(v => !v)}
+            className={`text-sm px-4 py-2 rounded-lg border transition-colors ${
+              showResolvedReports
+                ? 'bg-gray-100 border-gray-300 text-gray-700'
+                : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            {showResolvedReports ? 'Show Unresolved' : 'Show Resolved'}
+          </button>
+        </div>
+
+        {reportsLoading ? (
+          <div className="text-center py-8 text-gray-400">Loading…</div>
+        ) : reports.length === 0 ? (
+          <div className="text-center py-8">
+            <div className="text-3xl mb-2">{showResolvedReports ? '📋' : '✅'}</div>
+            <p className="text-gray-500 text-sm">
+              {showResolvedReports ? 'No resolved reports.' : 'No unresolved reports — all clear!'}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {reports.map(report => {
+              const reporter = report.profiles
+                ? `${report.profiles.names ?? ''} ${report.profiles.surname ?? ''}`.trim()
+                : 'Unknown'
+              const recTitle = report.recommendations?.title ?? '(post unavailable)'
+              const recId = report.recommendations?.id
+              return (
+                <div key={report.id} className="bg-white rounded-xl border border-gray-200 p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-orange-50 text-orange-700">
+                          {reactionLabel(report.reaction_type)}
+                        </span>
+                        {report.comment_public && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">
+                            Public
+                          </span>
+                        )}
+                        <span className="text-xs text-gray-400">{fmtDate(report.created_at)}</span>
+                        <span className="text-xs text-gray-400">
+                          · by <span className="font-medium text-gray-600">{reporter}</span>
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-400 mb-1">
+                        On: <span className="font-medium text-gray-600">{recTitle}</span>
+                        {recId && (
+                          <button
+                            onClick={() => navigate(`/apps/recommendations?openPost=${recId}`)}
+                            className="ml-2 text-[#2C5F8A] hover:text-[#1A3F5C] underline underline-offset-2 transition"
+                          >
+                            View post →
+                          </button>
+                        )}
+                      </p>
+                      <p className="text-sm text-gray-700 bg-gray-50 rounded-lg px-3 py-2 border border-gray-100 mt-2">
+                        "{report.comment}"
+                      </p>
+                    </div>
+
+                    {!report.resolved ? (
+                      <div className="flex flex-col gap-2 flex-shrink-0">
+                        <button
+                          onClick={() => handleMakePublic(report)}
+                          className="text-sm px-3 py-1.5 rounded-lg bg-[#2C5F8A] text-white hover:bg-[#1A3F5C] transition-colors whitespace-nowrap"
+                        >
+                          Make Public
+                        </button>
+                        <button
+                          onClick={() => handleDismissReport(report)}
+                          className="text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors whitespace-nowrap"
+                        >
+                          Dismiss
+                        </button>
+                        {recId && (
+                          <button
+                            onClick={() => handleRemovePost(recId)}
+                            className="text-sm px-3 py-1.5 rounded-lg border border-red-300 text-red-600 hover:bg-red-50 transition-colors whitespace-nowrap"
+                          >
+                            Remove Post
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-gray-400 italic flex-shrink-0">Resolved</span>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Tab: Categories & Tags ───────────────────────────────────────────────────
 
 function CategoriesTagsTab() {
@@ -266,8 +596,34 @@ function CategoriesTagsTab() {
   const [editingCat, setEditingCat] = useState(null) // null | 'new' | category object
   const [catForm, setCatForm] = useState({ name: '', description: '', color: '#2C5F8A', required_tag: '' })
 
-  // Tags state
-  const [tags, setTags] = useState([])
+  // Rec categories state
+  const [recCats, setRecCats] = useState([])
+  const [recCatLoading, setRecCatLoading] = useState(true)
+  const [recSubs, setRecSubs] = useState([])
+  const [editingRecCat, setEditingRecCat] = useState(null) // null | 'new' | object
+  const [recCatForm, setRecCatForm] = useState({ name: '' })
+  const [recCatSaving, setRecCatSaving] = useState(false)
+  // Subcategory inline add
+  const [newSubName, setNewSubName] = useState('')
+  const [newSubCatId, setNewSubCatId] = useState(null)
+  const [editingSub, setEditingSub] = useState(null) // { id, name }
+
+  const fetchRecCats = useCallback(async () => {
+    setRecCatLoading(true)
+    const { data: cats } = await supabase
+      .from('rec_categories')
+      .select('id, name')
+      .order('id')
+    const { data: subs } = await supabase
+      .from('rec_subcategories')
+      .select('id, category_id, name')
+      .order('name')
+    setRecCats(cats || [])
+    setRecSubs(subs || [])
+    setRecCatLoading(false)
+  }, [])
+
+  useEffect(() => { fetchRecCats() }, [fetchRecCats])
   const [tagLoading, setTagLoading] = useState(true)
   const [newTagLabel, setNewTagLabel] = useState('')
   const [editingTag, setEditingTag] = useState(null)
@@ -335,6 +691,59 @@ function CategoriesTagsTab() {
     if (error) { toast.error('Could not delete category.'); return }
     toast.success('Category deleted.')
     fetchCategories()
+  }
+
+  // ── Rec Category CRUD ──────────────────────────────────────────────────────
+
+  const saveRecCat = async () => {
+    if (!recCatForm.name.trim()) return
+    setRecCatSaving(true)
+    let error
+    if (editingRecCat === 'new') {
+      ;({ error } = await supabase.from('rec_categories').insert({ name: recCatForm.name.trim() }))
+    } else {
+      ;({ error } = await supabase.from('rec_categories').update({ name: recCatForm.name.trim() }).eq('id', editingRecCat.id))
+    }
+    setRecCatSaving(false)
+    if (error) { toast.error('Could not save category.'); return }
+    toast.success(editingRecCat === 'new' ? 'Category created.' : 'Category updated.')
+    setEditingRecCat(null)
+    fetchRecCats()
+  }
+
+  const deleteRecCat = async (cat) => {
+    if (!window.confirm(`Delete "${cat.name}"? All its subcategories will also be deleted.`)) return
+    const { error } = await supabase.from('rec_categories').delete().eq('id', cat.id)
+    if (error) { toast.error('Could not delete category.'); return }
+    toast.success('Category deleted.')
+    fetchRecCats()
+  }
+
+  const addRecSub = async (categoryId) => {
+    if (!newSubName.trim()) return
+    const { error } = await supabase.from('rec_subcategories').insert({ category_id: categoryId, name: newSubName.trim() })
+    if (error) { toast.error('Could not add subcategory.'); return }
+    toast.success('Subcategory added.')
+    setNewSubName('')
+    setNewSubCatId(null)
+    fetchRecCats()
+  }
+
+  const saveRecSub = async (sub) => {
+    if (!editingSub?.name?.trim()) return
+    const { error } = await supabase.from('rec_subcategories').update({ name: editingSub.name.trim() }).eq('id', sub.id)
+    if (error) { toast.error('Could not update subcategory.'); return }
+    toast.success('Subcategory updated.')
+    setEditingSub(null)
+    fetchRecCats()
+  }
+
+  const deleteRecSub = async (sub) => {
+    if (!window.confirm(`Delete subcategory "${sub.name}"?`)) return
+    const { error } = await supabase.from('rec_subcategories').delete().eq('id', sub.id)
+    if (error) { toast.error('Could not delete subcategory.'); return }
+    toast.success('Subcategory deleted.')
+    fetchRecCats()
   }
 
   // ── Tag CRUD ───────────────────────────────────────────────────────────────
@@ -426,6 +835,135 @@ function CategoriesTagsTab() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── Recommendation Categories ── */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">Recommendation Categories</h2>
+            <p className="text-sm text-gray-500 mt-0.5">Categories and subcategories used in the Recommendations feature.</p>
+          </div>
+          <button
+            onClick={() => { setEditingRecCat('new'); setRecCatForm({ name: '' }) }}
+            className="bg-[#2C5F8A] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#1A3F5C] transition-colors"
+          >
+            + New Category
+          </button>
+        </div>
+
+        {/* Inline new/edit category form */}
+        {editingRecCat !== null && (
+          <div className="bg-[#EAF0F7] border border-blue-200 rounded-xl p-4 mb-4 flex items-center gap-3">
+            <input
+              type="text"
+              value={recCatForm.name}
+              onChange={e => setRecCatForm({ name: e.target.value })}
+              onKeyDown={e => { if (e.key === 'Enter') saveRecCat(); if (e.key === 'Escape') setEditingRecCat(null) }}
+              placeholder="Category name…"
+              autoFocus
+              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#2C5F8A]"
+            />
+            <button
+              onClick={saveRecCat}
+              disabled={recCatSaving || !recCatForm.name.trim()}
+              className="bg-[#2C5F8A] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#1A3F5C] disabled:opacity-50 transition-colors"
+            >
+              {recCatSaving ? 'Saving…' : editingRecCat === 'new' ? 'Add' : 'Save'}
+            </button>
+            <button onClick={() => setEditingRecCat(null)} className="text-sm text-gray-500 hover:text-gray-700 px-2 py-2">Cancel</button>
+          </div>
+        )}
+
+        {recCatLoading ? (
+          <div className="text-sm text-gray-400 py-4">Loading…</div>
+        ) : recCats.length === 0 ? (
+          <p className="text-sm text-gray-400 italic">No categories yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {recCats.map(cat => {
+              const catSubs = recSubs.filter(s => s.category_id === cat.id)
+              const isAddingSub = newSubCatId === cat.id
+              return (
+                <div key={cat.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                  {/* Category row */}
+                  <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-100">
+                    <span className="font-semibold text-gray-800 text-sm">{cat.name}</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => { setEditingRecCat(cat); setRecCatForm({ name: cat.name }) }}
+                        className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50"
+                      >Edit</button>
+                      <button
+                        onClick={() => deleteRecCat(cat)}
+                        className="text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50"
+                      >Delete</button>
+                    </div>
+                  </div>
+
+                  {/* Subcategories */}
+                  <div className="divide-y divide-gray-50">
+                    {catSubs.map(sub => (
+                      <div key={sub.id} className="flex items-center justify-between px-5 py-2">
+                        {editingSub?.id === sub.id ? (
+                          <input
+                            type="text"
+                            value={editingSub.name}
+                            onChange={e => setEditingSub(s => ({ ...s, name: e.target.value }))}
+                            onKeyDown={e => { if (e.key === 'Enter') saveRecSub(sub); if (e.key === 'Escape') setEditingSub(null) }}
+                            autoFocus
+                            className="flex-1 border border-blue-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 mr-3"
+                          />
+                        ) : (
+                          <span className="text-sm text-gray-600">↳ {sub.name}</span>
+                        )}
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {editingSub?.id === sub.id ? (
+                            <>
+                              <button onClick={() => saveRecSub(sub)} className="text-xs text-green-600 hover:text-green-800 px-2 py-1 rounded hover:bg-green-50">Save</button>
+                              <button onClick={() => setEditingSub(null)} className="text-xs text-gray-500 px-2 py-1 rounded hover:bg-gray-100">Cancel</button>
+                            </>
+                          ) : (
+                            <>
+                              <button onClick={() => setEditingSub({ id: sub.id, name: sub.name })} className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50">Edit</button>
+                              <button onClick={() => deleteRecSub(sub)} className="text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50">Delete</button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+
+                    {/* Inline add subcategory */}
+                    {isAddingSub ? (
+                      <div className="flex items-center gap-2 px-5 py-2">
+                        <input
+                          type="text"
+                          value={newSubName}
+                          onChange={e => setNewSubName(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') addRecSub(cat.id); if (e.key === 'Escape') { setNewSubCatId(null); setNewSubName('') } }}
+                          placeholder="Subcategory name…"
+                          autoFocus
+                          className="flex-1 border border-blue-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                        />
+                        <button onClick={() => addRecSub(cat.id)} className="text-xs text-green-600 hover:text-green-800 px-2 py-1 rounded hover:bg-green-50">Add</button>
+                        <button onClick={() => { setNewSubCatId(null); setNewSubName('') }} className="text-xs text-gray-500 px-2 py-1 rounded hover:bg-gray-100">Cancel</button>
+                      </div>
+                    ) : (
+                      <div className="px-5 py-2">
+                        <button
+                          onClick={() => { setNewSubCatId(cat.id); setNewSubName('') }}
+                          className="text-xs text-[#2C5F8A] hover:text-[#1A3F5C] hover:underline"
+                        >
+                          + Add subcategory
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>
@@ -535,6 +1073,7 @@ function CategoriesTagsTab() {
 
 const TABS = [
   { id: 'reports', label: '🚩 Reports' },
+  { id: 'recommendations', label: '⭐ Recommendations' },
   { id: 'categories', label: '🗂️ Categories & Tags' },
 ]
 
@@ -542,6 +1081,23 @@ export default function ReportsPage() {
   const { user } = useAuth()
   const [activeTab, setActiveTab] = useState('reports')
   const [isEligible, setIsEligible] = useState(null)
+  const [tabCounts, setTabCounts] = useState({ reports: 0, recommendations: 0 })
+
+  const fetchTabCounts = useCallback(async () => {
+    const [
+      { count: blogCount },
+      { count: recReportCount },
+      { count: steerCount },
+    ] = await Promise.all([
+      supabase.from('blog_reports').select('id', { count: 'exact', head: true }).eq('resolved', false),
+      supabase.from('rec_reports').select('id', { count: 'exact', head: true }).eq('resolved', false),
+      supabase.from('recommendations').select('id', { count: 'exact', head: true }).eq('pending_review', true).eq('removed', false),
+    ])
+    setTabCounts({
+      reports: blogCount || 0,
+      recommendations: (recReportCount || 0) + (steerCount || 0),
+    })
+  }, [])
 
   useEffect(() => {
     if (!user) return
@@ -553,9 +1109,11 @@ export default function ReportsPage() {
         const ok = data?.some(a =>
           a.app_id === 'admin' ||
           (a.app_id === 'calendar' && a.role === 'admin') ||
-          (a.app_id === 'blog' && a.role === 'admin')
+          (a.app_id === 'blog' && a.role === 'admin') ||
+          (a.app_id === 'recommendations' && a.role === 'admin')
         )
         setIsEligible(!!ok)
+        if (ok) fetchTabCounts()
       })
   }, [user])
 
@@ -587,23 +1145,32 @@ export default function ReportsPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit mb-8">
-        {TABS.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              activeTab === tab.id
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+        {TABS.map(tab => {
+          const count = tabCounts[tab.id] || 0
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                activeTab === tab.id
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {tab.label}
+              {count > 0 && (
+                <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center leading-none">
+                  {count}
+                </span>
+              )}
+            </button>
+          )
+        })}
       </div>
 
       {/* Tab content */}
       {activeTab === 'reports' && <ReportsTab />}
+      {activeTab === 'recommendations' && <RecommendationsTab onCountChange={fetchTabCounts} />}
       {activeTab === 'categories' && <CategoriesTagsTab />}
     </div>
   )

@@ -1,13 +1,25 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import { useToast } from '@/components/ui/Toast'
+import { useImageUpload } from '@/hooks/useImageUpload'
 
 // Derive initials from surname + names for avatar circle
 function getInitials(surname, names) {
   const first = names?.trim().split(' ')[0]?.[0] || ''
   const last  = surname?.trim()[0] || ''
   return (first + last).toUpperCase() || '?'
+}
+
+// Delete a file from Supabase Storage by its public URL
+async function deleteStoragePhoto(photoUrl, bucket) {
+  if (!photoUrl) return
+  try {
+    const marker = `/object/public/${bucket}/`
+    const idx = photoUrl.indexOf(marker)
+    if (idx === -1) return
+    await supabase.storage.from(bucket).remove([photoUrl.slice(idx + marker.length)])
+  } catch {}
 }
 
 const EMPTY_FORM = {
@@ -33,6 +45,15 @@ export default function ResidentsPage() {
   const [formSuccess, setFormSuccess] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [resetTarget, setResetTarget] = useState(null)
+
+  // Avatar photo upload (edit modal)
+  const [avatarFile, setAvatarFile] = useState(null)
+  const [avatarPreview, setAvatarPreview] = useState(null)
+  const avatarInputRef = useRef(null)
+  const { uploading: avatarUploading, error: avatarUploadError, uploadImage: uploadAvatar } = useImageUpload({
+    bucket: 'avatars',
+    maxDimension: 400,
+  })
 
   const fetchResidents = async () => {
     try {
@@ -178,6 +199,18 @@ export default function ResidentsPage() {
         const existing = editTarget.phones || []
         updates.phones = [form.phone, ...existing.slice(1)]
       }
+      // Handle avatar photo
+      if (avatarFile) {
+        const url = await uploadAvatar(avatarFile)
+        if (!url) { setSubmitting(false); return }
+        updates.photo_url = url
+        // Clean up old photo from storage if replaced
+        if (editTarget.photo_url) deleteStoragePhoto(editTarget.photo_url, 'avatars')
+      } else if (!avatarPreview) {
+        // Preview was cleared — remove photo
+        updates.photo_url = null
+        if (editTarget.photo_url) deleteStoragePhoto(editTarget.photo_url, 'avatars')
+      }
       const { error } = await supabase.from('profiles').update(updates).eq('resident_id', editTarget.resident_id)
       if (error) throw error
       setFormSuccess('Resident updated successfully')
@@ -202,6 +235,8 @@ export default function ResidentsPage() {
       directory_visible: resident.directory_visible ?? true,
       sendInvite: false,
     })
+    setAvatarFile(null)
+    setAvatarPreview(resident.photo_url || null)
     setFormError(null)
     setFormSuccess(null)
     setModal('edit')
@@ -492,6 +527,55 @@ export default function ResidentsPage() {
               {/* Edit — all fields, email read-only */}
               {modal === 'edit' && (
                 <>
+                  {/* Avatar upload */}
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-brand-700 mb-2">Profile Photo</label>
+                    <div className="flex items-center gap-4">
+                      {/* Preview */}
+                      <div className="w-16 h-16 rounded-full overflow-hidden bg-brand-100 flex items-center justify-center flex-shrink-0 border-2 border-brand-200">
+                        {avatarPreview
+                          ? <img src={avatarPreview} alt="Avatar" className="w-full h-full object-cover" />
+                          : <span className="text-brand-600 font-bold text-lg font-display">
+                              {getInitials(editTarget?.surname, editTarget?.names)}
+                            </span>
+                        }
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <button
+                          type="button"
+                          onClick={() => avatarInputRef.current?.click()}
+                          className="text-sm text-brand-600 border border-brand-200 rounded-lg px-3 py-1.5 hover:bg-brand-50 transition-colors"
+                        >
+                          {avatarPreview ? 'Change photo' : 'Upload photo'}
+                        </button>
+                        {avatarPreview && (
+                          <button
+                            type="button"
+                            onClick={() => { setAvatarFile(null); setAvatarPreview(null); if (avatarInputRef.current) avatarInputRef.current.value = '' }}
+                            className="text-sm text-red-500 hover:text-red-700 transition-colors"
+                          >
+                            Remove photo
+                          </button>
+                        )}
+                        <p className="text-xs text-gray-400">JPEG, PNG or WebP · max 5 MB</p>
+                      </div>
+                    </div>
+                    <input
+                      ref={avatarInputRef}
+                      type="file"
+                      accept="image/jpeg,image/jpg,image/png,image/webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0]
+                        if (!file) return
+                        setAvatarFile(file)
+                        setAvatarPreview(URL.createObjectURL(file))
+                      }}
+                    />
+                    {avatarUploadError && (
+                      <p className="text-xs text-red-500 mt-1">{avatarUploadError}</p>
+                    )}
+                  </div>
                   <NameFields />
                   <ContactFields emailDisabled />
                   <DirectoryVisibleToggle />
@@ -511,9 +595,10 @@ export default function ResidentsPage() {
                   modal === 'create'    ? handleCreate :
                                          handleEdit
                 }
-                disabled={submitting}
+                disabled={submitting || avatarUploading}
                 className="flex-1 bg-brand-600 hover:bg-brand-500 disabled:opacity-60 text-white rounded-lg py-2.5 text-sm font-medium transition-colors">
-                {submitting ? 'Please wait…' :
+                {avatarUploading ? 'Uploading photo…' :
+                 submitting ? 'Please wait…' :
                   modal === 'invite'    ? 'Send Invitation' :
                   modal === 'directory' ? (form.sendInvite ? 'Add & Send Invite' : 'Add to Directory') :
                   modal === 'create'    ? 'Create Account' :
