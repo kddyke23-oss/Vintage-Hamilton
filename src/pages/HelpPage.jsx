@@ -44,6 +44,8 @@ export default function HelpPage() {
       const { data: profiles, error: profilesError } = await supabase
         .rpc('get_admin_display_names', { user_ids: userIds })
 
+        console.log('RPC result:', profiles, profilesError)
+
       if (profilesError) throw profilesError
       // Step 3: build a map of user_id → display name
       const nameMap = {}
