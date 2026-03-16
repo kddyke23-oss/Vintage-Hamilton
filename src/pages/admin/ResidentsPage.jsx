@@ -18,6 +18,7 @@ const EMPTY_FORM = {
   phone: '',
   password: '',
   directory_visible: true,
+  sendInvite: true,
 }
 
 export default function ResidentsPage() {
@@ -69,7 +70,7 @@ export default function ResidentsPage() {
     return result
   }
 
-  // ── Invite (send email invite to existing or new resident) ───────────────────
+  // ── Invite only (for existing directory residents with no account) ────────────
   const handleInvite = async () => {
     if (!form.email) { setFormError('Email is required'); return }
     setSubmitting(true); setFormError(null); setFormSuccess(null)
@@ -86,14 +87,15 @@ export default function ResidentsPage() {
     setSubmitting(false)
   }
 
-  // ── Add to Directory (profile record only, no auth account) ─────────────────
-  const handleAddToDirectory = async () => {
+  // ── Add Resident (profile + optional invite in one step) ─────────────────────
+  const handleAddResident = async () => {
     if (!form.surname)  { setFormError('Surname is required'); return }
     if (!form.names)    { setFormError('First name(s) are required'); return }
     if (!form.email)    { setFormError('Email is required'); return }
     if (!form.address)  { setFormError('Address is required'); return }
     setSubmitting(true); setFormError(null); setFormSuccess(null)
     try {
+      // Step 1: insert profile
       const { error } = await supabase.from('profiles').insert({
         surname: form.surname.toUpperCase(),
         names: form.names,
@@ -105,8 +107,23 @@ export default function ResidentsPage() {
         is_admin: false,
       })
       if (error) throw error
-      setFormSuccess(`${form.names} ${form.surname} added to directory`)
-      toast.success(`${form.names} ${form.surname} added to directory`)
+
+      // Step 2: optionally send invite
+      if (form.sendInvite) {
+        try {
+          await callEdgeFunction({ mode: 'invite', email: form.email })
+          setFormSuccess(`${form.names} ${form.surname} added and invitation sent to ${form.email}`)
+          toast.success(`${form.names} ${form.surname} added — invitation sent`)
+        } catch (inviteErr) {
+          // Profile was saved; invite failed — surface a clear message but don't roll back
+          setFormSuccess(`${form.names} ${form.surname} added to directory`)
+          toast.error(`Added to directory, but invite failed: ${inviteErr.message}`)
+        }
+      } else {
+        setFormSuccess(`${form.names} ${form.surname} added to directory`)
+        toast.success(`${form.names} ${form.surname} added to directory`)
+      }
+
       setForm(EMPTY_FORM)
       fetchResidents()
     } catch (e) {
@@ -183,6 +200,7 @@ export default function ResidentsPage() {
       phone: resident.phones?.[0] || '',
       password: '',
       directory_visible: resident.directory_visible ?? true,
+      sendInvite: false,
     })
     setFormError(null)
     setFormSuccess(null)
@@ -190,7 +208,7 @@ export default function ResidentsPage() {
   }
 
   const openInvite = (resident = null) => {
-    setForm({ ...EMPTY_FORM, email: resident?.emails?.[0] || '' })
+    setForm({ ...EMPTY_FORM, email: resident?.emails?.[0] || '', sendInvite: false })
     setFormError(null)
     setFormSuccess(null)
     setModal('invite')
@@ -284,6 +302,18 @@ export default function ResidentsPage() {
     </label>
   )
 
+  const SendInviteToggle = () => (
+    <label className="flex items-center gap-3 text-sm cursor-pointer select-none mt-1 pt-3 border-t border-brand-100">
+      <input type="checkbox" checked={form.sendInvite}
+        onChange={e => setForm(f => ({ ...f, sendInvite: e.target.checked }))}
+        className="w-4 h-4 rounded accent-brand-600" />
+      <span>
+        <span className="font-medium text-brand-700">Send invitation email</span>
+        <span className="block text-xs text-brand-400 mt-0.5">Resident will receive a link to set their password</span>
+      </span>
+    </label>
+  )
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -292,17 +322,13 @@ export default function ResidentsPage() {
           <p className="text-brand-500">{residents.length} registered residents</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => openInvite()}
+          <button onClick={() => { setForm(EMPTY_FORM); setFormError(null); setFormSuccess(null); setModal('directory') }}
             className="bg-brand-600 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-            ✉️ Invite
-          </button>
-          <button onClick={() => setModal('directory')}
-            className="bg-brand-100 hover:bg-brand-200 text-brand-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-            👤 Add to Directory
+            ➕ Add Resident
           </button>
           <button onClick={() => setModal('create')}
             className="bg-gold-500 hover:bg-gold-400 text-brand-900 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-            ➕ Create Account
+            🔑 Create Account
           </button>
         </div>
       </div>
@@ -334,11 +360,12 @@ export default function ResidentsPage() {
                   const email = r.emails?.[0] || '—'
                   const phone = r.phones?.[0] || '—'
                   const hasAccount = !!r.id
+
                   return (
                     <tr key={r.resident_id} className="hover:bg-brand-50 transition-colors">
                       <td className="px-6 py-3">
                         <div className="flex items-center gap-3">
-                          {/* Avatar circle — photo placeholder ready for Phase 5 Session 4 */}
+                          {/* Avatar circle */}
                           <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-xs font-semibold text-brand-600 flex-shrink-0 overflow-hidden">
                             {r.photo_url
                               ? <img src={r.photo_url} alt={name} className="w-full h-full object-cover" />
@@ -416,8 +443,8 @@ export default function ResidentsPage() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
             <h2 className="font-display text-xl text-brand-800 mb-4">
               {modal === 'invite'    ? '✉️ Invite Resident' :
-               modal === 'directory' ? '👤 Add to Directory' :
-               modal === 'create'    ? '➕ Create Account' :
+               modal === 'directory' ? '➕ Add Resident' :
+               modal === 'create'    ? '🔑 Create Account' :
                                        '✏️ Edit Resident'}
             </h2>
 
@@ -433,19 +460,20 @@ export default function ResidentsPage() {
             )}
 
             <div className="space-y-3">
-              {/* Invite — email only */}
+              {/* Invite only — email field for existing directory-only residents */}
               {modal === 'invite' && (
                 <input placeholder="Email address *" type="email" value={form.email}
                   onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
                   className={inputClass} />
               )}
 
-              {/* Add to Directory — full profile, no password */}
+              {/* Add Resident — full profile + optional invite */}
               {modal === 'directory' && (
                 <>
                   <NameFields />
                   <ContactFields />
                   <DirectoryVisibleToggle />
+                  <SendInviteToggle />
                 </>
               )}
 
@@ -479,7 +507,7 @@ export default function ResidentsPage() {
               <button
                 onClick={
                   modal === 'invite'    ? handleInvite :
-                  modal === 'directory' ? handleAddToDirectory :
+                  modal === 'directory' ? handleAddResident :
                   modal === 'create'    ? handleCreate :
                                          handleEdit
                 }
@@ -487,7 +515,7 @@ export default function ResidentsPage() {
                 className="flex-1 bg-brand-600 hover:bg-brand-500 disabled:opacity-60 text-white rounded-lg py-2.5 text-sm font-medium transition-colors">
                 {submitting ? 'Please wait…' :
                   modal === 'invite'    ? 'Send Invitation' :
-                  modal === 'directory' ? 'Add to Directory' :
+                  modal === 'directory' ? (form.sendInvite ? 'Add & Send Invite' : 'Add to Directory') :
                   modal === 'create'    ? 'Create Account' :
                                          'Save Changes'}
               </button>

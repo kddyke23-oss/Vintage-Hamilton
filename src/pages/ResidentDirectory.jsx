@@ -445,6 +445,197 @@ function ModalField({ label, children }) {
   );
 }
 
+// ─── Add Resident Modal (directory + optional invite) ─────────────────────────
+async function callEdgeFunction(payload) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error("No active session");
+  const response = await fetch(
+    `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-user`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${session.access_token}` },
+      body: JSON.stringify(payload),
+    }
+  );
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || "Something went wrong");
+  return result;
+}
+
+function AddResidentModal({ onSaved, onClose }) {
+  const [form, setForm] = useState({
+    surname: "", names: "",
+    houseNumber: "", street: STREETS[0], customStreet: "",
+    phones: [""], emails: [""],
+    tags: [], directory_visible: true, sendInvite: true,
+  });
+  const [newTag, setNewTag]   = useState("");
+  const [saving, setSaving]   = useState(false);
+  const [error, setError]     = useState(null);
+  const [success, setSuccess] = useState(null);
+
+  const upd    = (f, v) => setForm(p => ({ ...p, [f]: v }));
+  const updArr = (f, i, v) => { const a = [...form[f]]; a[i] = v; setForm(p => ({ ...p, [f]: a })); };
+  const addArr = (f) => setForm(p => ({ ...p, [f]: [...p[f], ""] }));
+  const remArr = (f, i) => { const a = form[f].filter((_, idx) => idx !== i); setForm(p => ({ ...p, [f]: a.length ? a : [""] })); };
+  const addTag = () => { if (newTag.trim() && !form.tags.includes(newTag.trim())) { setForm(p => ({ ...p, tags: [...p.tags, newTag.trim()] })); setNewTag(""); } };
+  const remTag = (t) => setForm(p => ({ ...p, tags: p.tags.filter(x => x !== t) }));
+
+  const handleSubmit = async () => {
+    if (!form.surname.trim()) { setError("Surname is required"); return; }
+    if (!form.names.trim())   { setError("First name(s) are required"); return; }
+    const emails = form.emails.filter(e => e.trim());
+    if (form.sendInvite && !emails.length) { setError("Email is required to send an invitation"); return; }
+
+    const streetName = form.street === "__other__" ? form.customStreet.trim() : form.street;
+    const address = form.houseNumber.trim() && streetName
+      ? `${form.houseNumber.trim()} ${streetName}`
+      : streetName || form.houseNumber.trim() || "";
+
+    setSaving(true); setError(null); setSuccess(null);
+    try {
+      const { error: insertError } = await supabase.from("profiles").insert([{
+        surname: form.surname.toUpperCase().trim(),
+        names: form.names.trim(),
+        address,
+        phones: form.phones.filter(p => p.trim()),
+        emails,
+        tags: form.tags,
+        directory_visible: form.directory_visible,
+        is_active: true,
+        is_admin: false,
+      }]);
+      if (insertError) throw insertError;
+
+      if (form.sendInvite && emails[0]) {
+        try {
+          await callEdgeFunction({ mode: "invite", email: emails[0] });
+          setSuccess(`${form.names} ${form.surname} added — invitation sent to ${emails[0]}`);
+        } catch (inviteErr) {
+          setSuccess(`${form.names} ${form.surname} added to directory`);
+          setError(`Invite failed: ${inviteErr.message} — use Invite in the admin panel to retry`);
+        }
+      } else {
+        setSuccess(`${form.names} ${form.surname} added to directory`);
+      }
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div style={overlayStyle} onClick={onClose}>
+      <div style={modalStyle} onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1.5rem 2rem 1rem", flexShrink: 0 }}>
+          <h3 style={{ fontFamily: "var(--font-display)", color: "var(--color-primary)", fontSize: "1.3rem", margin: 0 }}>➕ Add Resident</h3>
+          <button onClick={onClose} style={iconBtnStyle}><IconX /></button>
+        </div>
+
+        {/* Feedback banners */}
+        {error && (
+          <div style={{ margin: "0 2rem 0.75rem", padding: "0.6rem 0.85rem", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: "6px", fontSize: "0.85rem", color: "#dc2626" }}>
+            ❌ {error}
+          </div>
+        )}
+        {success && (
+          <div style={{ margin: "0 2rem 0.75rem", padding: "0.6rem 0.85rem", background: "#f0fdf4", border: "1px solid #86efac", borderRadius: "6px", fontSize: "0.85rem", color: "#16a34a" }}>
+            ✅ {success}
+          </div>
+        )}
+
+        {/* Scrollable fields */}
+        <div style={{ overflowY: "auto", padding: "0 2rem", flex: 1 }}>
+          <ModalField label="Surname *">
+            <input value={form.surname} onChange={e => upd("surname", e.target.value.toUpperCase())} style={inputStyle} placeholder="e.g. SMITH" />
+          </ModalField>
+          <ModalField label="First Names *">
+            <input value={form.names} onChange={e => upd("names", e.target.value)} style={inputStyle} placeholder="e.g. John Mary" />
+          </ModalField>
+          <ModalField label="Street">
+            <select value={form.street} onChange={e => upd("street", e.target.value)} style={{ ...inputStyle, width: "100%", marginBottom: "0.5rem" }}>
+              {STREETS.map(s => <option key={s} value={s}>{s}</option>)}
+              <option value="__other__">Other / Unknown</option>
+            </select>
+            {form.street === "__other__" && (
+              <input value={form.customStreet} onChange={e => upd("customStreet", e.target.value)} style={{ ...inputStyle, width: "100%" }} placeholder="Enter street name" />
+            )}
+          </ModalField>
+          <ModalField label="House Number">
+            <input value={form.houseNumber} onChange={e => upd("houseNumber", e.target.value)} style={{ ...inputStyle, width: "120px" }} placeholder="e.g. 12" type="number" min="1" />
+          </ModalField>
+          <ModalField label="Phone Numbers">
+            {form.phones.map((phone, i) => (
+              <div key={i} style={{ display: "flex", gap: "0.4rem", marginBottom: "0.3rem" }}>
+                <input value={phone} onChange={e => updArr("phones", i, e.target.value)} style={{ ...inputStyle, flex: 1 }} placeholder="Phone number" />
+                {form.phones.length > 1 && <button type="button" onClick={() => remArr("phones", i)} style={iconBtnStyle}><IconMinus /></button>}
+              </div>
+            ))}
+            <button type="button" onClick={() => addArr("phones")} style={addMoreBtnStyle}><IconPlus /> Add Phone</button>
+          </ModalField>
+          <ModalField label="Email Addresses">
+            {form.emails.map((email, i) => (
+              <div key={i} style={{ display: "flex", gap: "0.4rem", marginBottom: "0.3rem" }}>
+                <input value={email} onChange={e => updArr("emails", i, e.target.value)} style={{ ...inputStyle, flex: 1 }} placeholder="email@example.com" type="email" />
+                {form.emails.length > 1 && <button type="button" onClick={() => remArr("emails", i)} style={iconBtnStyle}><IconMinus /></button>}
+              </div>
+            ))}
+            <button type="button" onClick={() => addArr("emails")} style={addMoreBtnStyle}><IconPlus /> Add Email</button>
+          </ModalField>
+          <ModalField label="Tags / Roles">
+            <div style={{ display: "flex", gap: "0.4rem" }}>
+              <input value={newTag} onChange={e => setNewTag(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && (e.preventDefault(), addTag())}
+                style={{ ...inputStyle, flex: 1 }} placeholder="e.g. Social Committee" />
+              <button type="button" onClick={addTag} style={addMoreBtnStyle}><IconPlus /> Add</button>
+            </div>
+            {form.tags.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginTop: "0.5rem" }}>
+                {form.tags.map((tag, i) => (
+                  <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", background: "rgba(var(--color-primary-rgb),0.08)", color: "var(--color-primary)", padding: "0.2rem 0.5rem", borderRadius: "12px", fontSize: "0.8rem" }}>
+                    {tag}
+                    <button onClick={() => remTag(tag)} style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", padding: 0, display: "flex" }}><IconX /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </ModalField>
+          <ModalField label="Directory Visibility">
+            <label style={{ display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer", padding: "0.5rem 0.75rem", borderRadius: "6px", background: form.directory_visible ? "#f0fdf4" : "#fef2f2", border: `1px solid ${form.directory_visible ? "#86efac" : "#fca5a5"}` }}>
+              <input type="checkbox" checked={form.directory_visible} onChange={e => upd("directory_visible", e.target.checked)} style={{ width: "16px", height: "16px", accentColor: "var(--color-primary)", cursor: "pointer", flexShrink: 0 }} />
+              <div>
+                <div style={{ fontSize: "0.875rem", fontWeight: "600", color: "#374151" }}>{form.directory_visible ? "Visible in directory" : "Hidden from directory"}</div>
+                <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>{form.directory_visible ? "Resident appears on the directory page" : "Resident is not shown to other residents"}</div>
+              </div>
+            </label>
+          </ModalField>
+
+          {/* Send invite toggle — separated with a divider */}
+          <div style={{ borderTop: "1px solid #f0f0f0", paddingTop: "1rem", marginBottom: "1rem" }}>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: "0.75rem", cursor: "pointer", padding: "0.75rem", borderRadius: "6px", background: form.sendInvite ? "rgba(30,73,118,0.04)" : "#f9fafb", border: `1px solid ${form.sendInvite ? "rgba(30,73,118,0.2)" : "#e5e7eb"}` }}>
+              <input type="checkbox" checked={form.sendInvite} onChange={e => upd("sendInvite", e.target.checked)} style={{ width: "16px", height: "16px", accentColor: "var(--color-primary)", cursor: "pointer", flexShrink: 0, marginTop: "2px" }} />
+              <div>
+                <div style={{ fontSize: "0.875rem", fontWeight: "600", color: "#374151" }}>Send invitation email</div>
+                <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginTop: "0.15rem" }}>Resident will receive a link to set their password</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ display: "flex", gap: "0.5rem", padding: "1rem 2rem 1.5rem", flexShrink: 0, borderTop: "1px solid #f0f0f0" }}>
+          <button onClick={handleSubmit} disabled={saving} style={{ ...btnPrimaryStyle, flex: 1 }}>
+            {saving ? "Saving…" : form.sendInvite ? "Add & Send Invite" : "Add to Directory"}
+          </button>
+          <button onClick={onClose} style={{ ...btnSecStyle, flex: 1 }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Print View ───────────────────────────────────────────────────────────────
 function openPrintWindow(data) {
   const sorted = [...data].sort((a, b) => (a.surname || "").localeCompare(b.surname || ""));
@@ -806,11 +997,11 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
         <EntryModal entry={editingEntry} onSave={handleSave} onClose={() => setEditingEntry(null)} title="Edit Resident" isSaving={isSaving} isOwnRecord={!!editingEntry._isOwnRecord} isAdmin={canAdminister} />
       )}
 
-      {/* ── Add Modal ── */}
+      {/* ── Add Resident Modal ── */}
       {showAddModal && (
-        <EntryModal
-          entry={{ surname: "", names: "", address: "", phones: [""], emails: [""], tags: [], directory_visible: true }}
-          onSave={handleSave} onClose={() => setShowAddModal(false)} title="Add Resident" isSaving={isSaving} isAdmin={canAdminister}
+        <AddResidentModal
+          onSaved={() => { fetchResidents(showHidden); setShowAddModal(false); }}
+          onClose={() => setShowAddModal(false)}
         />
       )}
 
