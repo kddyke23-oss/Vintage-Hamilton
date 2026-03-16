@@ -101,7 +101,6 @@ function AddPostModal({ categories, subcategories, residentId, onClose, onSaved 
 
   const isAvoid = postType === "avoid";
   const labelColor = isAvoid ? "text-red-700" : "text-[#2C5F8A]";
-  const accentBorder = isAvoid ? "border-red-300 focus:ring-red-400" : "border-[#C9922A] focus:ring-[#C9922A]";
   const btnColor = isAvoid
     ? "bg-red-600 hover:bg-red-700"
     : "bg-[#C9922A] hover:bg-[#a97820]";
@@ -321,19 +320,278 @@ function AddPostModal({ categories, subcategories, residentId, onClose, onSaved 
   );
 }
 
+// ─── Negative Reaction Modal ──────────────────────────────────────────────────
+// Shown when user clicks 👎 or 🤔 — requires a mandatory comment before submitting.
+
+function NegativeReactionModal({ rec, reactionType, residentId, onClose, onSaved }) {
+  const [comment, setComment] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const isAvoid = rec.type === "avoid";
+  const emoji = isAvoid ? "🤔" : "👎";
+  const label = isAvoid ? "Not My Experience" : "Thumbs Down";
+  const promptText = isAvoid
+    ? "Please describe your experience to help your neighbours:"
+    : "Please share why you disagree with this recommendation:";
+
+  const handleSubmit = async () => {
+    if (!comment.trim()) {
+      setError("A comment is required.");
+      return;
+    }
+    setSaving(true);
+
+    // 1. Upsert reaction row (toggles: if they already reacted negatively this replaces it;
+    //    UNIQUE(recommendation_id, user_id) means we upsert on conflict)
+    const { error: reactionError } = await supabase
+      .from("rec_reactions")
+      .upsert(
+        {
+          recommendation_id: rec.id,
+          user_id: residentId,
+          reaction_type: reactionType,
+        },
+        { onConflict: "recommendation_id,user_id" }
+      );
+
+    if (reactionError) {
+      setSaving(false);
+      setError("Failed to save reaction. Please try again.");
+      return;
+    }
+
+    // 2. Insert report with the mandatory comment
+    const { error: reportError } = await supabase.from("rec_reports").insert({
+      recommendation_id: rec.id,
+      reporter_id: residentId,
+      reaction_type: reactionType,
+      comment: comment.trim(),
+      comment_public: false,
+    });
+
+    setSaving(false);
+    if (reportError) {
+      setError("Failed to submit your comment. Please try again.");
+      return;
+    }
+
+    onSaved(reactionType);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[1600] flex items-center justify-center p-4"
+      style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col">
+        {/* Header */}
+        <div className="px-6 py-4 bg-gray-50 rounded-t-2xl border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h2 className="font-bold text-gray-800 text-base font-['Playfair_Display']">
+              {emoji} {label}
+            </h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Your comment will be reviewed by an administrator
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-6 py-5 space-y-3">
+          {/* Post title context */}
+          <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm text-gray-600 border border-gray-100">
+            <span className="font-semibold text-gray-800">{rec.title}</span>
+          </div>
+
+          {/* Comment */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">
+              {promptText} <span className="text-red-500">*</span>
+            </label>
+            <textarea
+              value={comment}
+              onChange={(e) => {
+                setComment(e.target.value);
+                if (error) setError("");
+              }}
+              rows={4}
+              maxLength={500}
+              placeholder="Share your experience or reason…"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#2C5F8A] resize-none text-gray-800 placeholder-gray-400"
+            />
+            <div className="flex justify-between items-center mt-1">
+              {error ? (
+                <p className="text-xs text-red-500">{error}</p>
+              ) : (
+                <p className="text-xs text-gray-400">
+                  Your comment will only be visible to admins unless they choose to make it public.
+                </p>
+              )}
+              <span className="text-xs text-gray-400 ml-2 shrink-0">
+                {comment.length}/500
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 transition text-gray-600"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={saving}
+            className="px-5 py-2 text-sm font-semibold text-white bg-[#2C5F8A] hover:bg-[#1A3F5C] rounded-lg transition disabled:opacity-60"
+          >
+            {saving ? "Submitting…" : "Submit"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Public Comments Modal ────────────────────────────────────────────────────
+// Shown when a resident clicks a negative reaction count that has public comments.
+
+function PublicCommentsModal({ rec, onClose }) {
+  const [comments, setComments] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const isAvoid = rec.type === "avoid";
+  const emoji = isAvoid ? "🤔" : "👎";
+  const label = isAvoid ? "Not My Experience" : "Thumbs Down";
+
+  useEffect(() => {
+    const fetchComments = async () => {
+      const { data } = await supabase
+        .from("rec_reports")
+        .select("id, comment, created_at, profiles!reporter_id(names, surname)")
+        .eq("recommendation_id", rec.id)
+        .eq("comment_public", true)
+        .order("created_at", { ascending: true });
+      setComments(data || []);
+      setLoading(false);
+    };
+    fetchComments();
+  }, [rec.id]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[1600] flex items-center justify-center p-4"
+      style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[80vh]">
+        {/* Header */}
+        <div className="px-6 py-4 bg-gray-50 rounded-t-2xl border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h2 className="font-bold text-gray-800 text-base font-['Playfair_Display']">
+              {emoji} {label} — Neighbour Comments
+            </h2>
+            <p className="text-xs text-gray-500 mt-0.5 truncate max-w-[280px]">
+              {rec.title}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 text-2xl leading-none ml-3"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-6 py-4 overflow-y-auto flex-1">
+          {loading ? (
+            <div className="flex justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#2C5F8A]" />
+            </div>
+          ) : comments.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-8">No public comments yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {comments.map((c) => {
+                const name = c.profiles
+                  ? `${c.profiles.names ?? ""} ${c.profiles.surname ?? ""}`.trim()
+                  : "A neighbour";
+                return (
+                  <div key={c.id} className="bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
+                    <p className="text-sm text-gray-700 leading-relaxed">{c.comment}</p>
+                    <p className="text-xs text-gray-400 mt-2">
+                      {name} · {formatDate(c.created_at)}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-gray-100 flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-5 py-2 text-sm font-semibold bg-[#2C5F8A] text-white rounded-lg hover:bg-[#1A3F5C] transition"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Recommendation Card ──────────────────────────────────────────────────────
 
-function RecommendationCard({ rec, isAdmin, currentResidentId, onRemove }) {
+function RecommendationCard({
+  rec,
+  isAdmin,
+  currentResidentId,
+  onRemove,
+  onReactionChange,
+  onConflictToast,
+}) {
   const isAvoid = rec.type === "avoid";
 
+  const positiveType = isAvoid ? "agree" : "heart";
+  const negativeType = isAvoid ? "notmyexperience" : "thumbsdown";
   const positiveEmoji = isAvoid ? "👍" : "❤️";
   const negativeEmoji = isAvoid ? "🤔" : "👎";
-  const positiveReactions = (rec.rec_reactions || []).filter((r) =>
-    isAvoid ? r.reaction_type === "agree" : r.reaction_type === "heart"
+
+  const positiveReactions = (rec.rec_reactions || []).filter(
+    (r) => r.reaction_type === positiveType
   );
-  const negativeReactions = (rec.rec_reactions || []).filter((r) =>
-    isAvoid ? r.reaction_type === "notmyexperience" : r.reaction_type === "thumbsdown"
+  const negativeReactions = (rec.rec_reactions || []).filter(
+    (r) => r.reaction_type === negativeType
   );
+
+  // Has the current resident already reacted?
+  const myReaction = (rec.rec_reactions || []).find(
+    (r) => String(r.user_id) === String(currentResidentId)
+  );
+  const myPositive = myReaction?.reaction_type === positiveType;
+  const myNegative = myReaction?.reaction_type === negativeType;
+
+  const isOwner = String(rec.created_by) === String(currentResidentId);
+
+  // Public comments available to show?
+  const hasPublicComments = (rec.rec_reports || []).some((r) => r.comment_public);
+
+  // Modal state (local to each card)
+  const [showNegativeModal, setShowNegativeModal] = useState(false);
+  const [showPublicComments, setShowPublicComments] = useState(false);
+  const [reactSaving, setReactSaving] = useState(false);
 
   const recommenderName = rec.profiles
     ? `${rec.profiles.names ?? ""} ${rec.profiles.surname ?? ""}`.trim()
@@ -342,130 +600,269 @@ function RecommendationCard({ rec, isAdmin, currentResidentId, onRemove }) {
   const categoryName = rec.rec_categories?.name ?? "";
   const subcategoryName = rec.rec_subcategories?.name ?? "";
 
+  // ── Toggle positive reaction ──
+  const handlePositiveClick = async () => {
+    if (isOwner || reactSaving) return;
+
+    // Block if they already have a negative reaction — must remove it first
+    if (myNegative) {
+      onConflictToast();
+      return;
+    }
+
+    setReactSaving(true);
+
+    if (myPositive) {
+      // Remove reaction
+      await supabase
+        .from("rec_reactions")
+        .delete()
+        .eq("recommendation_id", rec.id)
+        .eq("user_id", currentResidentId);
+    } else {
+      await supabase
+        .from("rec_reactions")
+        .upsert(
+          {
+            recommendation_id: rec.id,
+            user_id: currentResidentId,
+            reaction_type: positiveType,
+          },
+          { onConflict: "recommendation_id,user_id" }
+        );
+    }
+
+    setReactSaving(false);
+    onReactionChange(rec.id);
+  };
+
+  // ── Negative reaction: open modal for mandatory comment ──
+  const handleNegativeClick = () => {
+    if (isOwner || reactSaving) return;
+    // Block if they already have a positive reaction — must remove it first
+    if (myPositive) {
+      onConflictToast();
+      return;
+    }
+    // If they already reacted negatively, clicking again removes it (no comment needed)
+    if (myNegative) {
+      handleRemoveNegative();
+      return;
+    }
+    setShowNegativeModal(true);
+  };
+
+  const handleRemoveNegative = async () => {
+    setReactSaving(true);
+    // Delete both the reaction and any reports from this resident on this post
+    await Promise.all([
+      supabase
+        .from("rec_reactions")
+        .delete()
+        .eq("recommendation_id", rec.id)
+        .eq("user_id", currentResidentId),
+      supabase
+        .from("rec_reports")
+        .delete()
+        .eq("recommendation_id", rec.id)
+        .eq("reporter_id", currentResidentId),
+    ]);
+    setReactSaving(false);
+    onReactionChange(rec.id);
+  };
+
+  const handleNegativeSaved = () => {
+    setShowNegativeModal(false);
+    onReactionChange(rec.id);
+  };
+
   return (
-    <div
-      className={`rounded-2xl border shadow-sm hover:shadow-md transition-shadow bg-white overflow-hidden flex flex-col ${
-        isAvoid ? "border-red-200" : "border-[#C9922A]/30"
-      }`}
-    >
-      {/* Type banner */}
+    <>
       <div
-        className={`px-4 py-1.5 flex items-center justify-between text-xs font-semibold ${
-          isAvoid
-            ? "bg-red-50 text-red-700"
-            : "bg-amber-50 text-amber-800"
+        className={`rounded-2xl border shadow-sm hover:shadow-md transition-shadow bg-white overflow-hidden flex flex-col ${
+          isAvoid ? "border-red-200" : "border-[#C9922A]/30"
         }`}
       >
-        <span>{isAvoid ? "⚠️ Steer Clear" : "⭐ Recommendation"}</span>
-        {rec.pending_review && isAdmin && (
-          <span className="bg-red-500 text-white px-2 py-0.5 rounded-full text-[10px]">
-            Pending Review
-          </span>
-        )}
-      </div>
-
-      <div className="p-4 flex-1 flex flex-col gap-3">
-        {/* Category breadcrumb */}
-        {categoryName && (
-          <div className="flex items-center gap-1 text-xs text-gray-400">
-            <span>{categoryName}</span>
-            {subcategoryName && (
-              <>
-                <span>›</span>
-                <span>{subcategoryName}</span>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Title */}
-        <h3 className="font-bold text-gray-800 text-base leading-snug font-['Playfair_Display']">
-          {rec.title}
-        </h3>
-
-        {/* Description */}
-        {rec.description && (
-          <p className="text-sm text-gray-600 leading-relaxed">
-            {truncate(rec.description)}
-          </p>
-        )}
-
-        {/* Contact details */}
-        {(rec.contact_phone || rec.contact_email || rec.external_url) && (
-          <div className="flex flex-wrap gap-3 text-xs text-gray-500">
-            {rec.contact_phone && (
-              <a
-                href={`tel:${rec.contact_phone}`}
-                className="flex items-center gap-1 hover:text-[#2C5F8A] transition"
-              >
-                📞 {rec.contact_phone}
-              </a>
-            )}
-            {rec.contact_email && (
-              <a
-                href={`mailto:${rec.contact_email}`}
-                className="flex items-center gap-1 hover:text-[#2C5F8A] transition"
-              >
-                ✉️ {rec.contact_email}
-              </a>
-            )}
-            {rec.external_url && (
-              <a
-                href={rec.external_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1 hover:text-[#2C5F8A] transition"
-              >
-                🔗 Website
-              </a>
-            )}
-          </div>
-        )}
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Footer row */}
-        <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-          {/* Recommender + date */}
-          <div className="text-xs text-gray-400">
-            <span className="text-gray-600 font-medium">{recommenderName}</span>
-            <span className="mx-1">·</span>
-            {formatDate(rec.created_at)}
-          </div>
-
-          {/* Reaction placeholders */}
-          <div className="flex items-center gap-2">
-            <button
-              disabled
-              title={`${positiveReactions.length} ${isAvoid ? "agree" : "hearts"} — reactions coming soon`}
-              className="flex items-center gap-1 text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full cursor-default"
-            >
-              {positiveEmoji} <span>{positiveReactions.length}</span>
-            </button>
-            <button
-              disabled
-              title={`${negativeReactions.length} ${isAvoid ? "not my experience" : "thumbsdowns"} — reactions coming soon`}
-              className="flex items-center gap-1 text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded-full cursor-default"
-            >
-              {negativeEmoji} <span>{negativeReactions.length}</span>
-            </button>
-          </div>
+        {/* Type banner */}
+        <div
+          className={`px-4 py-1.5 flex items-center justify-between text-xs font-semibold ${
+            isAvoid ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800"
+          }`}
+        >
+          <span>{isAvoid ? "⚠️ Steer Clear" : "⭐ Recommendation"}</span>
+          {rec.pending_review && isAdmin && (
+            <span className="bg-red-500 text-white px-2 py-0.5 rounded-full text-[10px]">
+              Pending Review
+            </span>
+          )}
         </div>
 
-        {/* Admin controls */}
-        {isAdmin && (
-          <div className="flex gap-2 pt-2 border-t border-gray-100">
-            <button
-              onClick={() => onRemove(rec)}
-              className="text-xs text-red-500 hover:text-red-700 transition"
-            >
-              Remove post
-            </button>
+        <div className="p-4 flex-1 flex flex-col gap-3">
+          {/* Category breadcrumb */}
+          {categoryName && (
+            <div className="flex items-center gap-1 text-xs text-gray-400">
+              <span>{categoryName}</span>
+              {subcategoryName && (
+                <>
+                  <span>›</span>
+                  <span>{subcategoryName}</span>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Title */}
+          <h3 className="font-bold text-gray-800 text-base leading-snug font-['Playfair_Display']">
+            {rec.title}
+          </h3>
+
+          {/* Description */}
+          {rec.description && (
+            <p className="text-sm text-gray-600 leading-relaxed">
+              {truncate(rec.description)}
+            </p>
+          )}
+
+          {/* Contact details */}
+          {(rec.contact_phone || rec.contact_email || rec.external_url) && (
+            <div className="flex flex-wrap gap-3 text-xs text-gray-500">
+              {rec.contact_phone && (
+                <a
+                  href={`tel:${rec.contact_phone}`}
+                  className="flex items-center gap-1 hover:text-[#2C5F8A] transition"
+                >
+                  📞 {rec.contact_phone}
+                </a>
+              )}
+              {rec.contact_email && (
+                <a
+                  href={`mailto:${rec.contact_email}`}
+                  className="flex items-center gap-1 hover:text-[#2C5F8A] transition"
+                >
+                  ✉️ {rec.contact_email}
+                </a>
+              )}
+              {rec.external_url && (
+                <a
+                  href={rec.external_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 hover:text-[#2C5F8A] transition"
+                >
+                  🔗 Website
+                </a>
+              )}
+            </div>
+          )}
+
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Footer row */}
+          <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+            {/* Recommender + date */}
+            <div className="text-xs text-gray-400">
+              <span className="text-gray-600 font-medium">{recommenderName}</span>
+              <span className="mx-1">·</span>
+              {formatDate(rec.created_at)}
+            </div>
+
+            {/* Reaction buttons */}
+            <div className="flex items-center gap-2">
+              {/* Positive reaction */}
+              <button
+                onClick={handlePositiveClick}
+                disabled={isOwner || reactSaving}
+                title={
+                  isOwner
+                    ? "You can't react to your own post"
+                    : myPositive
+                    ? `Remove your ${positiveType}`
+                    : `${positiveType === "heart" ? "Love it" : "I agree"}`
+                }
+                className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full transition
+                  ${isOwner ? "cursor-default opacity-40 bg-gray-100 text-gray-400" : ""}
+                  ${!isOwner && myPositive
+                    ? isAvoid
+                      ? "bg-blue-100 text-blue-700 font-semibold"
+                      : "bg-rose-100 text-rose-600 font-semibold"
+                    : !isOwner
+                    ? "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                    : ""
+                  }`}
+              >
+                {positiveEmoji} <span>{positiveReactions.length}</span>
+              </button>
+
+              {/* Negative reaction button — only for non-owners */}
+              {!isOwner && (
+                <button
+                  onClick={handleNegativeClick}
+                  disabled={reactSaving}
+                  title={myNegative ? "Remove your reaction" : isAvoid ? "Not my experience" : "Thumbs down"}
+                  className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full transition
+                    ${myNegative
+                      ? "bg-orange-100 text-orange-700 font-semibold"
+                      : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                    }`}
+                >
+                  {negativeEmoji} <span>{negativeReactions.length}</span>
+                </button>
+              )}
+
+              {/* Negative count (display only) for post owner */}
+              {isOwner && (
+                <span className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-400">
+                  {negativeEmoji} <span>{negativeReactions.length}</span>
+                </span>
+              )}
+
+              {/* View public comments link — visible to everyone when public comments exist */}
+              {hasPublicComments && (
+                <button
+                  onClick={() => setShowPublicComments(true)}
+                  className="text-xs text-[#2C5F8A] underline underline-offset-2 hover:text-[#1A3F5C] transition"
+                  title="View neighbour comments"
+                >
+                  View comments
+                </button>
+              )}
+            </div>
           </div>
-        )}
+
+          {/* Admin controls */}
+          {isAdmin && (
+            <div className="flex gap-2 pt-2 border-t border-gray-100">
+              <button
+                onClick={() => onRemove(rec)}
+                className="text-xs text-red-500 hover:text-red-700 transition"
+              >
+                Remove post
+              </button>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+
+      {/* Negative reaction modal (z-index above card grid, below nav) */}
+      {showNegativeModal && (
+        <NegativeReactionModal
+          rec={rec}
+          reactionType={negativeType}
+          residentId={currentResidentId}
+          onClose={() => setShowNegativeModal(false)}
+          onSaved={handleNegativeSaved}
+        />
+      )}
+
+      {/* Public comments modal */}
+      {showPublicComments && (
+        <PublicCommentsModal
+          rec={rec}
+          onClose={() => setShowPublicComments(false)}
+        />
+      )}
+    </>
   );
 }
 
@@ -528,6 +925,8 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
   // Toast
   const [toast, setToast] = useState(null);
   const showToast = (message, type = "success") => setToast({ message, type });
+  const showConflictToast = () =>
+    showToast("You can't react both positively and negatively — remove your existing reaction first.", "error");
 
   // ── Fetch categories ──
   useEffect(() => {
@@ -543,6 +942,7 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
   }, []);
 
   // ── Fetch recommendations ──
+  // Includes rec_reactions AND rec_reports (public only) for card display
   const fetchRecs = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
@@ -552,7 +952,8 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
         profiles!created_by (resident_id, names, surname),
         rec_categories!category_id (id, name),
         rec_subcategories!subcategory_id (id, name),
-        rec_reactions (id, reaction_type, user_id)`
+        rec_reactions (id, reaction_type, user_id),
+        rec_reports!recommendation_id (id, comment_public)`
       )
       .eq("removed", false)
       .eq("type", activeTab)
@@ -574,6 +975,29 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
   useEffect(() => {
     setFilterSubcategory("");
   }, [filterCategory]);
+
+  // ── Refresh a single rec's reactions after a reaction change ──
+  // Avoids full reload — fetches updated reactions + reports for just that card
+  const handleReactionChange = useCallback(async (recId) => {
+    const { data } = await supabase
+      .from("recommendations")
+      .select(
+        `rec_reactions (id, reaction_type, user_id),
+         rec_reports!recommendation_id (id, comment_public)`
+      )
+      .eq("id", recId)
+      .single();
+
+    if (data) {
+      setRecs((prev) =>
+        prev.map((r) =>
+          r.id === recId
+            ? { ...r, rec_reactions: data.rec_reactions, rec_reports: data.rec_reports }
+            : r
+        )
+      );
+    }
+  }, []);
 
   // ── Filtered + sorted list ──
   const filteredRecs = recs
@@ -661,7 +1085,6 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
             }`}
           >
             ⭐ Recommendations
-            {activeTab !== "recommend" && recs.length === 0 ? "" : ""}
           </button>
           <button
             onClick={() => {
@@ -782,6 +1205,8 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
               isAdmin={isAdmin}
               currentResidentId={residentId}
               onRemove={(r) => setRemoveTarget(r)}
+              onReactionChange={handleReactionChange}
+              onConflictToast={showConflictToast}
             />
           ))}
         </div>

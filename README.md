@@ -289,9 +289,9 @@ Open http://localhost:5173
 | Session | Scope | Status |
 |---|---|---|
 | 1 | Schema SQL + RLS + seed categories | ✅ Complete |
-| 2 | Recommendations UI (list, cards, add post, filters) | 🔲 Next |
-| 3 | Reactions, reports flow, Steer Clear review | 🔲 Planned |
-| 4 | Admin panel updates + homepage widget + photo upload hook | 🔲 Planned |
+| 2 | Recommendations UI (list, cards, add post, filters) | ✅ Complete |
+| 3 | Reactions, reports flow, public comments modal | ✅ Complete |
+| 4 | Admin panel updates + homepage widget + photo upload hook | 🔲 Next |
 | 5 | Help page update + retrofit photos into Blog and Profile | 🔲 Planned |
 
 ---
