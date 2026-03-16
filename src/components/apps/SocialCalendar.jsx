@@ -191,6 +191,11 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
                 placeholder="e.g. Clubhouse, Pool deck…"
                 maxLength={100}
               />
+              {form.location.trim() && (
+                <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+                  ⚠️ Adding a location here does not book or reserve it — please make a separate reservation for the Clubhouse or Pickleball Court if required.
+                </p>
+              )}
             </div>
 
             {/* Description */}
@@ -244,7 +249,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
 
 // ─── Event Detail Modal ──────────────────────────────────────────────────────
 
-function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, onClose, onEdit, onRemove, onReport, onRsvp, userRsvp }) {
+function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, onClose, onEdit, onRemove, onReport, onRsvp, onRepeat, userRsvp }) {
   const cat = categories.find(c => c.id === event.category_id)
   const canModify = isCalendarAdmin || event.created_by === currentUserId
   const upcoming = isFutureOrToday(event.event_date)
@@ -388,7 +393,7 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, o
 
           {/* Actions */}
           <div className="flex items-center justify-between mt-6 pt-4 border-t border-brand-100">
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               {canModify && (
                 <>
                   <button
@@ -404,6 +409,15 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, o
                     Remove
                   </button>
                 </>
+              )}
+              {canModify && onRepeat && (
+                <button
+                  onClick={() => { onRepeat(event); onClose() }}
+                  className="text-xs px-3 py-1.5 rounded-lg border border-brand-200 text-brand-600 hover:bg-brand-50 transition-colors"
+                  title="Create a copy of this event on a new date"
+                >
+                  🔁 Next occurrence
+                </button>
               )}
               {!canModify && (
                 <button
@@ -614,6 +628,118 @@ function ReportModal({ event, currentUserId, onClose, onSubmitted, toast }) {
   )
 }
 
+// ─── Repeat Modal ────────────────────────────────────────────────────────────
+
+// Given a date string, return the date that is the same weekday occurrence
+// in the following calendar month (e.g. 2nd Friday → 2nd Friday next month).
+function nextMonthSameOccurrence(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00')
+  const dayOfWeek = d.getDay()                        // 0=Sun … 6=Sat
+  const occurrence = Math.ceil(d.getDate() / 7)       // 1st, 2nd, 3rd, 4th, (5th)
+
+  // First day of next month
+  const nextMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1)
+  const firstDow = nextMonth.getDay()
+
+  // How many days until the target weekday first appears in next month?
+  let offset = dayOfWeek - firstDow
+  if (offset < 0) offset += 7
+  // First occurrence of that weekday in next month
+  let target = new Date(nextMonth)
+  target.setDate(1 + offset + (occurrence - 1) * 7)
+
+  // If we've overshot into the following month (e.g. there's no 5th Friday),
+  // step back one week to land on the 4th occurrence instead.
+  if (target.getMonth() !== nextMonth.getMonth()) {
+    target.setDate(target.getDate() - 7)
+  }
+
+  return target.toISOString().split('T')[0]
+}
+
+function RepeatModal({ event, onClose, onConfirm }) {
+  const [mode, setMode] = useState('weeks_1')  // 'weeks_1' | 'weeks_2' | 'month_same'
+
+  const previewDate = (() => {
+    const base = event.event_date
+    let newDate
+    if (mode === 'weeks_1') {
+      const d = new Date(base + 'T00:00:00'); d.setDate(d.getDate() + 7); newDate = d.toISOString().split('T')[0]
+    } else if (mode === 'weeks_2') {
+      const d = new Date(base + 'T00:00:00'); d.setDate(d.getDate() + 14); newDate = d.toISOString().split('T')[0]
+    } else {
+      newDate = nextMonthSameOccurrence(base)
+    }
+    return new Date(newDate + 'T00:00:00').toLocaleDateString('en-US', {
+      weekday: 'short', month: 'short', day: 'numeric', year: 'numeric'
+    })
+  })()
+
+  // Describe the monthly option label dynamically
+  const monthLabel = (() => {
+    const d = new Date(event.event_date + 'T00:00:00')
+    const occurrence = Math.ceil(d.getDate() / 7)
+    const ordinals = ['', '1st', '2nd', '3rd', '4th', '5th']
+    const dayName = d.toLocaleDateString('en-US', { weekday: 'long' })
+    return `Next month (${ordinals[occurrence]} ${dayName})`
+  })()
+
+  const [saving, setSaving] = useState(false)
+
+  async function handleConfirm() {
+    setSaving(true)
+    await onConfirm(mode)
+    setSaving(false)
+  }
+
+  const options = [
+    { value: 'weeks_1', label: '1 week later' },
+    { value: 'weeks_2', label: '2 weeks later' },
+    { value: 'month_same', label: monthLabel },
+  ]
+
+  return (
+    <div className="fixed inset-0 z-[1500] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+        <h2 className="font-display text-xl text-brand-800 mb-1">Create Next Occurrence</h2>
+        <p className="text-sm text-brand-500 mb-5">
+          A copy of <strong className="text-brand-700">"{event.title}"</strong> will be created on the new date. You can edit any details afterwards.
+        </p>
+
+        <div className="space-y-3 mb-5">
+          {options.map(opt => (
+            <label key={opt.value} className="flex items-center gap-3 cursor-pointer p-3 rounded-lg border border-brand-100 hover:bg-brand-50 transition-colors">
+              <input
+                type="radio"
+                name="repeat_mode"
+                value={opt.value}
+                checked={mode === opt.value}
+                onChange={() => setMode(opt.value)}
+                className="accent-brand-700"
+              />
+              <span className="text-sm text-brand-700 font-medium">{opt.label}</span>
+            </label>
+          ))}
+        </div>
+
+        <div className="bg-brand-50 rounded-lg px-4 py-2 text-sm text-brand-600 mb-5">
+          📅 New date: <strong>{previewDate}</strong>
+        </div>
+
+        <div className="flex gap-3">
+          <button onClick={onClose} className="flex-1 px-4 py-2 rounded-lg border border-brand-200 text-brand-600 text-sm hover:bg-brand-50">
+            Cancel
+          </button>
+          <button onClick={handleConfirm} disabled={saving} className="flex-1 px-4 py-2 rounded-lg bg-brand-700 text-white text-sm hover:bg-brand-600 disabled:opacity-50">
+            {saving ? 'Creating…' : 'Create'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export default function SocialCalendar() {
@@ -646,6 +772,7 @@ export default function SocialCalendar() {
   const [editEvent, setEditEvent] = useState(null)
   const [selectedEvent, setSelectedEvent] = useState(null)
   const [reportEvent, setReportEvent] = useState(null)
+  const [repeatEvent, setRepeatEvent] = useState(null)
 
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -802,6 +929,36 @@ export default function SocialCalendar() {
     } else {
       toast.success('Event removed')
       setSelectedEvent(null)
+      fetchEvents()
+    }
+  }
+
+  // ── Repeat event (create next occurrence) ────────────────────────────────
+  async function handleRepeat(event, mode) {
+    let newDate
+    if (mode === 'weeks_1') {
+      const d = new Date(event.event_date + 'T00:00:00'); d.setDate(d.getDate() + 7); newDate = d.toISOString().split('T')[0]
+    } else if (mode === 'weeks_2') {
+      const d = new Date(event.event_date + 'T00:00:00'); d.setDate(d.getDate() + 14); newDate = d.toISOString().split('T')[0]
+    } else {
+      newDate = nextMonthSameOccurrence(event.event_date)
+    }
+    const payload = {
+      title: event.title,
+      description: event.description,
+      location: event.location,
+      event_date: newDate,
+      event_time: event.event_time || null,
+      category_id: event.category_id,
+      external_url: event.external_url || null,
+      created_by: user.id,
+    }
+    const { error } = await supabase.from('calendar_events').insert(payload)
+    if (error) {
+      toast.error('Failed to create next occurrence')
+    } else {
+      toast.success('Next occurrence created!')
+      setRepeatEvent(null)
       fetchEvents()
     }
   }
@@ -971,6 +1128,7 @@ export default function SocialCalendar() {
           onRemove={ev => handleRemove(ev)}
           onReport={ev => { setReportEvent(ev); setSelectedEvent(null) }}
           onRsvp={handleRsvp}
+          onRepeat={ev => { setRepeatEvent(ev); setSelectedEvent(null) }}
           userRsvp={userRsvps.has(selectedEvent.id)}
         />
       )}
@@ -982,6 +1140,14 @@ export default function SocialCalendar() {
           toast={toast}
           onClose={() => setReportEvent(null)}
           onSubmitted={fetchEvents}
+        />
+      )}
+
+      {repeatEvent && (
+        <RepeatModal
+          event={repeatEvent}
+          onClose={() => setRepeatEvent(null)}
+          onConfirm={(mode) => handleRepeat(repeatEvent, mode)}
         />
       )}
     </div>

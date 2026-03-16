@@ -75,9 +75,16 @@ export default function HelpPage() {
       {/* Header */}
       <div className="mb-8">
         <h1 className="font-display text-3xl text-brand-800 mb-2">Help & Guide</h1>
-        <p className="text-brand-500">
+        <p className="text-brand-500 mb-3">
           Welcome to Vintage @ Hamilton! Everything you need to get started and make the most of the portal.
         </p>
+        <div className="bg-brand-50 border border-brand-100 rounded-lg px-4 py-3 text-sm text-brand-600">
+          The directory lists all residents of Vintage @ Hamilton who have chosen to be listed. You can search
+          by name, browse by address, and find contact details for your neighbours. This information is intended
+          to be used only by residents of the community for Vintage @ Hamilton purposes and not for business
+          solicitations. If you use this information for unintended purposes, the administrator reserves the
+          right to block you from future use of the portal.
+        </div>
       </div>
 
       {/* Tabs */}
