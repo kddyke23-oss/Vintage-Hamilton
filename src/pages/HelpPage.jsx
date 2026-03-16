@@ -29,37 +29,15 @@ export default function HelpPage() {
 
   async function fetchAppAdmins() {
     try {
-      // Step 1: get all app-level admin rows (excluding super-admins)
-      const { data: accessRows, error: accessError } = await supabase
-        .from('app_access')
-        .select('app_id, user_id')
-        .eq('role', 'admin')
-        .neq('app_id', 'admin')
+      const { data, error } = await supabase.rpc('get_app_admins')
+      if (error) throw error
 
-      if (accessError) throw accessError
-      if (!accessRows?.length) return
-
-      // Step 2: look up profile names for each user_id
-      const userIds = [...new Set(accessRows.map(r => r.user_id))]
-      const { data: profiles, error: profilesError } = await supabase
-        .rpc('get_admin_display_names', { user_ids: userIds })
-
-        console.log('RPC result:', profiles, profilesError)
-
-      if (profilesError) throw profilesError
-      // Step 3: build a map of user_id → display name
-      const nameMap = {}
-      for (const p of profiles) {
-        nameMap[p.id] = p.display_name.trim()
-      }
-
-      // Step 4: group by app_id
       const grouped = {}
-      for (const row of accessRows) {
-        const name = nameMap[row.user_id]
-        if (!name) continue
+      for (const row of data) {
         if (!grouped[row.app_id]) grouped[row.app_id] = []
-        if (!grouped[row.app_id].includes(name)) grouped[row.app_id].push(name)
+        if (!grouped[row.app_id].includes(row.display_name)) {
+          grouped[row.app_id].push(row.display_name)
+        }
       }
       setAppAdmins(grouped)
     } catch (e) {
