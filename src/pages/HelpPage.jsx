@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 
-const TABS = ['Getting Started', 'Navigating the App', 'Directory', 'Social Calendar', 'Blog', 'Lotto Syndicate', 'Contact & Help']
+const TABS = ['Getting Started', 'Navigating the App', 'Directory', 'Social Calendar', 'Blog', 'Recommendations', 'Lotto Syndicate', 'Contact & Help']
 
 // Configurable general help contact
 const GENERAL_HELP_CONTACT = 'Keith Dyke'
@@ -166,6 +166,7 @@ export default function HelpPage() {
               <NavItem icon="📅" label="Calendar" description="Community events and social activities — see what's coming up and RSVP." />
               <NavItem icon="🎱" label="Lotto Syndicate" description="Track the community Powerball syndicate — draws, winnings, payments, and member details." />
               <NavItem icon="📝" label="Blog" description="Community news, announcements, and posts from residents. React, comment, and share your own stories." />
+              <NavItem icon="⭐" label="Recommendations" description="Share trusted recommendations for local services, contractors, and businesses — and warn neighbours about bad experiences." />
             </div>
 
             <Section title="The top bar">
@@ -339,8 +340,98 @@ export default function HelpPage() {
           </div>
         )}
 
-        {/* ── Lotto Syndicate ── */}
+        {/* ── Recommendations ── */}
         {activeTab === 5 && (
+          <div className="space-y-6">
+            <Section title="Residents' Recommendations ⭐">
+              <p className="text-brand-600">
+                The Recommendations board is where neighbours share trusted tips and warn each other about
+                bad experiences. There are two types of post — <strong>Recommendations</strong> for things
+                worth trying, and <strong>Steer Clear</strong> warnings for things to avoid.
+              </p>
+            </Section>
+
+            <Section title="Browsing recommendations">
+              <Steps steps={[
+                { n: 1, text: <>Click <strong>Recommendations</strong> in the sidebar.</> },
+                { n: 2, text: <>Use the <strong>⭐ Recommendations</strong> and <strong>⚠️ Steer Clear</strong> tabs to switch between post types.</> },
+                { n: 3, text: <>Filter by category (e.g. Contractors, Services, Leisure) and then subcategory to narrow down results.</> },
+                { n: 4, text: <>Click any card to open the full post — description, contact details, photo, and neighbour reactions.</> },
+              ]} />
+            </Section>
+
+            <Section title="Sharing a recommendation">
+              <Steps steps={[
+                { n: 1, text: <>Click the <strong>"+ Add Post"</strong> button at the top right.</> },
+                { n: 2, text: <>Choose <strong>⭐ Recommendation</strong> or <strong>⚠️ Steer Clear</strong> at the top of the form.</> },
+                { n: 3, text: <>Give your post a title, choose a category and subcategory, and write a description.</> },
+                { n: 4, text: <>Optionally add a website link, contact phone/email, and a photo.</> },
+                { n: 5, text: <>Click <strong>"Post Recommendation"</strong> (or "Post Warning" for Steer Clear).</> },
+              ]} />
+            </Section>
+
+            <Section title="Editing your post">
+              <p className="text-brand-600">
+                You can edit a post you've written at any time — click the post to open it and use the <strong>✏️ Edit post</strong> button.
+                You can update the title, description, contact details, and photo. Note that if your post has already received
+                reactions from other residents, the post type (Recommendation vs Steer Clear) cannot be changed — you would
+                need to remove and repost instead.
+              </p>
+            </Section>
+
+            <Section title="Reacting to posts">
+              <div className="space-y-3">
+                <div className="p-3 rounded-lg bg-brand-50 border border-brand-100">
+                  <p className="font-semibold text-brand-800 text-sm mb-1">⭐ Recommendations</p>
+                  <p className="text-brand-500 text-sm">Click <strong>❤️</strong> to show you agree with a recommendation. Click <strong>👎</strong> to disagree — you'll be asked to explain why. Your comment goes to an administrator for review.</p>
+                </div>
+                <div className="p-3 rounded-lg bg-brand-50 border border-brand-100">
+                  <p className="font-semibold text-brand-800 text-sm mb-1">⚠️ Steer Clear warnings</p>
+                  <p className="text-brand-500 text-sm">Click <strong>👍</strong> if you've had the same bad experience. Click <strong>🤔</strong> if your experience was different — you'll be asked to share your perspective. Your comment goes to an administrator for review.</p>
+                </div>
+              </div>
+            </Section>
+
+            <Section title="Steer Clear warnings — what happens after posting">
+              <p className="text-brand-600">
+                Steer Clear warnings are posted immediately so neighbours can see them straight away.
+                They are also flagged for an administrator to review, who will check the post is appropriate
+                and either acknowledge it or remove it if necessary.
+              </p>
+            </Section>
+
+            <Section title="Categories">
+              <p className="text-brand-600 mb-3">Posts are organised into five main categories:</p>
+              <div className="space-y-2">
+                {[
+                  { icon: '🔨', name: 'Contractors', desc: 'Cleaners, handypersons, builders, electricians, plumbers, landscapers, painters' },
+                  { icon: '🏡', name: 'Home & Garden', desc: 'Tools & equipment, gadgets, furniture, plants & seeds' },
+                  { icon: '🩺', name: 'Services', desc: 'Medical, financial, legal, pet care, childcare' },
+                  { icon: '🎭', name: 'Leisure', desc: 'Clubs & teams, classes, restaurants, days out' },
+                  { icon: '🛍️', name: 'Shopping', desc: 'Online and local stores' },
+                ].map(({ icon, name, desc }) => (
+                  <div key={name} className="flex gap-3 p-3 rounded-lg bg-brand-50 border border-brand-100">
+                    <span className="text-xl flex-shrink-0">{icon}</span>
+                    <div>
+                      <p className="font-semibold text-brand-800 text-sm">{name}</p>
+                      <p className="text-brand-500 text-sm">{desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Section>
+
+            <Callout>
+              💡 <strong>Remember:</strong> All posts represent personal opinions and experiences. Always do your
+              own research before hiring a contractor or making a purchase based on a recommendation.
+            </Callout>
+
+            <AdminContact appId="recommendations" admins={appAdmins} loading={loadingAdmins} />
+          </div>
+        )}
+
+        {/* ── Lotto Syndicate ── */}
+        {activeTab === 6 && (
           <div className="space-y-6">
             <Section title="The Lotto Syndicate 🎱">
               <p className="text-brand-600">
@@ -374,7 +465,7 @@ export default function HelpPage() {
         )}
 
         {/* ── Contact & Help ── */}
-        {activeTab === 6 && (
+        {activeTab === 7 && (
           <div className="space-y-6">
             <Section title="Need help? We've got you covered 😊">
               <p className="text-brand-600">
@@ -392,10 +483,10 @@ export default function HelpPage() {
                 <p className="text-brand-400 text-sm">Loading...</p>
               ) : (
                 <div className="space-y-4">
-                  {['directory', 'calendar', 'blog', 'lotto'].map(appId => (
+                  {['directory', 'calendar', 'blog', 'recommendations', 'lotto'].map(appId => (
                     <div key={appId}>
                       <p className="text-sm font-semibold text-brand-700 mb-2 capitalize">
-                        {appId === 'lotto' ? 'Lotto Syndicate' : appId === 'calendar' ? 'Social Calendar' : appId === 'blog' ? 'Community Blog' : 'Resident Directory'}
+                        {appId === 'lotto' ? 'Lotto Syndicate' : appId === 'calendar' ? 'Social Calendar' : appId === 'blog' ? 'Community Blog' : appId === 'recommendations' ? 'Recommendations' : 'Resident Directory'}
                       </p>
                       {appAdmins[appId]?.length > 0 ? (
                         <div className="space-y-2">
