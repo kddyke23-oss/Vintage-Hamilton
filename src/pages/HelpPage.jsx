@@ -42,11 +42,14 @@ export default function HelpPage() {
       // Step 2: look up profile names for each user_id
       const userIds = [...new Set(accessRows.map(r => r.user_id))]
       const { data: profiles, error: profilesError } = await supabase
-        .from('profiles')
-        .select('id, names, surname')
-        .in('id', userIds)
+  .rpc('get_admin_display_names', { user_ids: userIds })
 
-      if (profilesError) throw profilesError
+if (profilesError) throw profilesError
+
+const nameMap = {}
+for (const p of profiles) {
+  nameMap[p.id] = p.display_name.trim()
+}
 
       // Step 3: build a map of user_id → display name
       const nameMap = {}
