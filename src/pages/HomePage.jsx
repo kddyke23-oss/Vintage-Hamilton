@@ -1,7 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
-import { useAppAccess } from '@/hooks/useAppAccess'
 import { supabase } from '@/lib/supabase'
 import AdminReportsWidget from '@/components/apps/AdminReportsWidget'
 
@@ -126,8 +125,7 @@ function UpcomingEvents() {
 }
 
 export default function HomePage() {
-  const { user, isAdmin } = useAuth()
-  const { hasAccess, loading } = useAppAccess()
+  const { user, isAdmin, hasAppAccess, loading } = useAuth()
   const [firstName, setFirstName] = useState('Neighbor')
 
   // Fetch profile to get names field for personalised greeting
@@ -152,7 +150,7 @@ export default function HomePage() {
     fetchProfile()
   }, [user])
 
-  const visibleApps = ALL_APPS.filter(app => hasAccess(app.id))
+  const visibleApps = useMemo(() => ALL_APPS.filter(app => hasAppAccess(app.id)), [hasAppAccess])
 
   return (
     <div className="space-y-8">

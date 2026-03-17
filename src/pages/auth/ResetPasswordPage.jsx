@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
+import { REDIRECT_DELAY_MS } from '@/config/constants'
 
 export default function ResetPasswordPage() {
   const navigate = useNavigate()
@@ -50,7 +51,9 @@ export default function ResetPasswordPage() {
 
     setLoading(false)
     setDone(true)
-    setTimeout(() => window.location.href = '/', 3000)
+    setTimeout(() => {
+      if (window.location.pathname !== '/') window.location.href = '/'
+    }, REDIRECT_DELAY_MS)
   }
 
   return (

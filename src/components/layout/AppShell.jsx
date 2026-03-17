@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
-import { supabase } from '@/lib/supabase'
+import { APP_ADMIN_IDS } from '@/config/constants'
 
 const navItems = [
   { label: 'Home',            path: '/' },
@@ -20,27 +20,17 @@ const textSizes = {
 }
 
 export default function AppShell({ children }) {
-  const { user, signOut, isAdmin } = useAuth()
+  const { user, signOut, isAdmin, appAccess } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [textSize, setTextSize] = useState('normal')
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [isAppAdmin, setIsAppAdmin] = useState(false)
 
-  // Check if user has app-level admin access (reports panel)
-  // Includes super admins and any calendar/blog/directory/recommendations admin
-  useEffect(() => {
-    if (!user) { setIsAppAdmin(false); return }
-    if (isAdmin) { setIsAppAdmin(true); return } // super admins always get it
-    const APP_ADMIN_IDS = ['calendar', 'blog', 'directory', 'recommendations']
-    supabase
-      .from('app_access')
-      .select('app_id, role')
-      .eq('user_id', user.id)
-      .eq('role', 'admin')
-      .in('app_id', APP_ADMIN_IDS)
-      .then(({ data }) => setIsAppAdmin(!!(data?.length)))
-  }, [user, isAdmin])
+  // Derive app-admin status from AuthContext (no extra query needed)
+  const isAppAdmin = useMemo(() => {
+    if (isAdmin) return true
+    return appAccess.some(a => a.role === 'admin' && APP_ADMIN_IDS.includes(a.app_id))
+  }, [isAdmin, appAccess])
 
   // Close sidebar on mobile when route changes
   useEffect(() => {

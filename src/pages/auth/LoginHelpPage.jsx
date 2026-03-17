@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { GENERAL_HELP_CONTACT } from '@/config/constants'
 
 export default function LoginHelpPage() {
   return (
@@ -63,7 +64,7 @@ export default function LoginHelpPage() {
             <div className="bg-brand-50 border border-brand-100 rounded-lg px-4 py-3 flex items-center gap-3">
               <span className="text-xl">👤</span>
               <div>
-                <p className="text-sm font-semibold text-brand-800">Keith Dyke</p>
+                <p className="text-sm font-semibold text-brand-800">{GENERAL_HELP_CONTACT}</p>
                 <p className="text-xs text-brand-500">Community Administrator</p>
               </div>
             </div>

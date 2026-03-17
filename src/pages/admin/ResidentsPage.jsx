@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
+import { deleteStoragePhoto } from '@/lib/storage'
 import { useToast } from '@/components/ui/Toast'
 import { useImageUpload } from '@/hooks/useImageUpload'
 
@@ -9,17 +10,6 @@ function getInitials(surname, names) {
   const first = names?.trim().split(' ')[0]?.[0] || ''
   const last  = surname?.trim()[0] || ''
   return (first + last).toUpperCase() || '?'
-}
-
-// Delete a file from Supabase Storage by its public URL
-async function deleteStoragePhoto(photoUrl, bucket) {
-  if (!photoUrl) return
-  try {
-    const marker = `/object/public/${bucket}/`
-    const idx = photoUrl.indexOf(marker)
-    if (idx === -1) return
-    await supabase.storage.from(bucket).remove([photoUrl.slice(idx + marker.length)])
-  } catch {}
 }
 
 const EMPTY_FORM = {

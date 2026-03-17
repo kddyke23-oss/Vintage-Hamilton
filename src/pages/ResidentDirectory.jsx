@@ -1,25 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
+import { deleteStoragePhoto } from "@/lib/storage";
 import { useImageUpload } from "@/hooks/useImageUpload";
-
-// Delete a file from Supabase Storage by its public URL
-async function deleteStoragePhoto(photoUrl, bucket) {
-  if (!photoUrl) return
-  try {
-    const marker = `/object/public/${bucket}/`
-    const idx = photoUrl.indexOf(marker)
-    if (idx === -1) return
-    await supabase.storage.from(bucket).remove([photoUrl.slice(idx + marker.length)])
-  } catch {}
-}
-
-// ─── Streets ──────────────────────────────────────────────────────────────────
-const STREETS = [
-  "Kay Chiarello Way",
-  "Sportsman Boulevard",
-  "Englewood Boulevard",
-  "Isabella Court",
-];
+import { STREETS } from "@/config/constants";
 
 // Parse "12 Kay Chiarello Way" → { houseNumber: 12, street: "Kay Chiarello Way" }
 function parseAddress(address) {

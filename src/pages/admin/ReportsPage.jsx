@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
+import { deleteStoragePhoto } from '@/lib/storage'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/components/ui/Toast'
 
@@ -12,18 +13,6 @@ const fmtDate = (ts) => {
 }
 
 const TARGET_LABELS = { event: '📅 Calendar Event', post: '📝 Blog Post', comment: '💬 Blog Comment' }
-
-// Extract storage path from a Supabase public URL and delete the file
-async function deleteStoragePhoto(photoUrl, bucket) {
-  if (!photoUrl) return;
-  try {
-    const marker = `/object/public/${bucket}/`;
-    const idx = photoUrl.indexOf(marker);
-    if (idx === -1) return;
-    const storagePath = photoUrl.slice(idx + marker.length);
-    await supabase.storage.from(bucket).remove([storagePath]);
-  } catch {}
-}
 
 const CATEGORY_COLORS = [
   { label: 'Ocean Blue',   value: '#2C5F8A' },
@@ -70,22 +59,34 @@ function ReportsTab() {
       }
     }
 
-    // Fetch content previews
-    const enriched = await Promise.all(data.map(async (report) => {
-      let preview = '(content unavailable)'
-      try {
-        if (report.target_type === 'event') {
-          const { data: ev } = await supabase.from('calendar_events').select('title').eq('id', report.target_id).single()
-          if (ev) preview = ev.title
-        } else if (report.target_type === 'post') {
-          const { data: post } = await supabase.from('blog_posts').select('title').eq('id', report.target_id).single()
-          if (post) preview = post.title
-        } else if (report.target_type === 'comment') {
-          const { data: comment } = await supabase.from('blog_comments').select('body').eq('id', report.target_id).single()
-          if (comment) preview = comment.body.slice(0, 80) + (comment.body.length > 80 ? '…' : '')
-        }
-      } catch {}
-      return { ...report, preview, reporter_name: nameMap[report.reported_by] || 'Unknown' }
+    // Batch-fetch content previews by type (avoids N+1 queries)
+    const eventIds = [...new Set(data.filter(r => r.target_type === 'event').map(r => r.target_id))]
+    const postIds = [...new Set(data.filter(r => r.target_type === 'post').map(r => r.target_id))]
+    const commentIds = [...new Set(data.filter(r => r.target_type === 'comment').map(r => r.target_id))]
+
+    const [eventsRes, postsRes, commentsRes] = await Promise.all([
+      eventIds.length > 0
+        ? supabase.from('calendar_events').select('id, title').in('id', eventIds)
+        : { data: [] },
+      postIds.length > 0
+        ? supabase.from('blog_posts').select('id, title').in('id', postIds)
+        : { data: [] },
+      commentIds.length > 0
+        ? supabase.from('blog_comments').select('id, body').in('id', commentIds)
+        : { data: [] },
+    ])
+
+    const previewMap = {}
+    ;(eventsRes.data || []).forEach(ev => { previewMap[`event-${ev.id}`] = ev.title })
+    ;(postsRes.data || []).forEach(p => { previewMap[`post-${p.id}`] = p.title })
+    ;(commentsRes.data || []).forEach(c => {
+      previewMap[`comment-${c.id}`] = c.body.slice(0, 80) + (c.body.length > 80 ? '…' : '')
+    })
+
+    const enriched = data.map(report => ({
+      ...report,
+      preview: previewMap[`${report.target_type}-${report.target_id}`] || '(content unavailable)',
+      reporter_name: nameMap[report.reported_by] || 'Unknown',
     }))
 
     setReports(enriched)

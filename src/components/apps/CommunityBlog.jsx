@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
+import { deleteStoragePhoto } from '@/lib/storage'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/components/ui/Toast'
 import { useImageUpload } from '@/hooks/useImageUpload'
@@ -25,17 +26,6 @@ const fmt = (ts) => {
 const fmtDate = (ts) => {
   if (!ts) return ''
   return new Date(ts).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
-}
-
-// Delete a file from Supabase Storage by its public URL
-async function deleteStoragePhoto(photoUrl, bucket) {
-  if (!photoUrl) return
-  try {
-    const marker = `/object/public/${bucket}/`
-    const idx = photoUrl.indexOf(marker)
-    if (idx === -1) return
-    await supabase.storage.from(bucket).remove([photoUrl.slice(idx + marker.length)])
-  } catch {}
 }
 
 // ─── ReactionBar ────────────────────────────────────────────────────────────
@@ -76,7 +66,7 @@ function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, o
       {/* Photo thumbnail */}
       {post.photo_url && (
         <div className="w-full h-40 overflow-hidden rounded-lg mb-4 cursor-pointer" onClick={() => onOpen(post)}>
-          <img src={post.photo_url} alt={post.title} className="w-full h-full object-cover" />
+          <img src={post.photo_url} alt={post.title} loading="lazy" className="w-full h-full object-cover" />
         </div>
       )}
       {/* Header */}
@@ -396,7 +386,7 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
                         </div>
                         <p className="text-sm text-gray-800 whitespace-pre-wrap">{comment.body}</p>
                         {comment.photo_url && (
-                          <img src={comment.photo_url} alt="" className="mt-2 rounded-lg max-h-48 object-cover w-full" />
+                          <img src={comment.photo_url} alt="Comment attachment" loading="lazy" className="mt-2 rounded-lg max-h-48 object-cover w-full" />
                         )}
                       </div>
                       <div className="flex items-center gap-3 mt-1.5 pl-1">

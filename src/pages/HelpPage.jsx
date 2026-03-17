@@ -1,11 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
+import { GENERAL_HELP_CONTACT } from '@/config/constants'
 
 const TABS = ['Getting Started', 'Navigating the App', 'Directory', 'Social Calendar', 'Blog', 'Recommendations', 'Lotto Syndicate', 'Contact & Help']
-
-// Configurable general help contact
-const GENERAL_HELP_CONTACT = 'Keith Dyke'
 
 export default function HelpPage() {
   const [activeTab, setActiveTab] = useState(0)

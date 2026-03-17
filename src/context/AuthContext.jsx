@@ -49,7 +49,8 @@ export function AuthProvider({ children }) {
       loadUserData(session?.user?.id).finally(() => setLoading(false))
 
       // When Supabase fires PASSWORD_RECOVERY, redirect to reset page
-      if (event === 'PASSWORD_RECOVERY') {
+      // Guard against infinite redirect if already on that page
+      if (event === 'PASSWORD_RECOVERY' && window.location.pathname !== '/reset-password') {
         window.location.href = '/reset-password'
       }
     })

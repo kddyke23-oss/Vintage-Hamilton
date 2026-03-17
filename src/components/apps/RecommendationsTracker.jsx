@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
+import { deleteStoragePhoto } from "@/lib/storage";
 import { useImageUpload } from "@/hooks/useImageUpload";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -17,20 +18,6 @@ function formatDate(ts) {
 function truncate(text, max = 160) {
   if (!text) return "";
   return text.length > max ? text.slice(0, max).trimEnd() + "…" : text;
-}
-
-// Extract storage path from a Supabase public URL and delete the file
-// e.g. https://xyz.supabase.co/storage/v1/object/public/recommendations/cards/file.jpg
-// → deletes 'cards/file.jpg' from the 'recommendations' bucket
-async function deleteStoragePhoto(photoUrl, bucket) {
-  if (!photoUrl) return;
-  try {
-    const marker = `/object/public/${bucket}/`;
-    const idx = photoUrl.indexOf(marker);
-    if (idx === -1) return;
-    const storagePath = photoUrl.slice(idx + marker.length);
-    await supabase.storage.from(bucket).remove([storagePath]);
-  } catch {}
 }
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
