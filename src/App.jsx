@@ -7,19 +7,15 @@ import AppShell from '@/components/layout/AppShell'
 import AdminShell from '@/components/layout/AdminShell'
 
 import LoginPage from '@/pages/auth/LoginPage'
-import LoginHelpPage from '@/pages/auth/LoginHelpPage'
+import ResetPasswordPage from '@/pages/auth/ResetPasswordPage'
 import HomePage from '@/pages/HomePage'
 import DirectoryPage from '@/pages/apps/DirectoryPage'
 import CalendarPage from '@/pages/apps/CalendarPage'
 import LottoPage from '@/pages/apps/LottoPage'
 import BlogPage from '@/pages/apps/BlogPage'
 import RecommendationsPage from '@/pages/apps/RecommendationsPage'
-import HelpPage from '@/pages/HelpPage'
-import AdminDashboard from '@/pages/admin/AdminDashboard'
-import ResidentsPage from '@/pages/admin/ResidentsPage'
 import AccessPage from '@/pages/admin/AccessPage'
 import ReportsPage from '@/pages/admin/ReportsPage'
-import ResetPasswordPage from '@/pages/auth/ResetPasswordPage'
 
 function ResidentShell({ children }) {
   return (
@@ -46,7 +42,6 @@ export default function App() {
             <Routes>
               {/* Public */}
               <Route path="/login" element={<LoginPage />} />
-              <Route path="/login-help" element={<LoginHelpPage />} />
               <Route path="/reset-password" element={<ResetPasswordPage />} />
 
               {/* Resident routes */}
@@ -56,11 +51,9 @@ export default function App() {
               <Route path="/apps/lotto" element={<ResidentShell><LottoPage /></ResidentShell>} />
               <Route path="/apps/blog" element={<ResidentShell><BlogPage /></ResidentShell>} />
               <Route path="/apps/recommendations" element={<ResidentShell><RecommendationsPage /></ResidentShell>} />
-              <Route path="/help" element={<ResidentShell><HelpPage /></ResidentShell>} />
 
               {/* Admin routes */}
-              <Route path="/admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
-              <Route path="/admin/residents" element={<AdminRoute><ResidentsPage /></AdminRoute>} />
+              <Route path="/admin" element={<AdminRoute><AccessPage /></AdminRoute>} />
               <Route path="/admin/access" element={<AdminRoute><AccessPage /></AdminRoute>} />
               <Route path="/admin/reports" element={<AdminRoute><ReportsPage /></AdminRoute>} />
 

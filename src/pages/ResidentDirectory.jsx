@@ -46,8 +46,9 @@ function Toast({ message }) {
 }
 
 // ─── Resident Card ────────────────────────────────────────────────────────────
-function ResidentCard({ entry, canEdit, onEdit, onDelete, selectMode, selected, onToggleSelect }) {
+function ResidentCard({ entry, canEdit, onEdit, onDelete, onSendInvite, canAdminister, selectMode, selected, onToggleSelect }) {
   const isHidden = entry.directory_visible === false;
+  const noAccount = canAdminister && !entry.id; // only visible to admins
   return (
     <div
       onClick={() => selectMode && onToggleSelect()}
@@ -116,9 +117,14 @@ function ResidentCard({ entry, canEdit, onEdit, onDelete, selectMode, selected, 
             </div>
           )}
           {canEdit && !selectMode && (
-            <div style={{ display: "flex", gap: "0.4rem", marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid #f0f0f0" }}>
+            <div style={{ display: "flex", gap: "0.4rem", marginTop: "0.75rem", paddingTop: "0.75rem", borderTop: "1px solid #f0f0f0", flexWrap: "wrap" }}>
               <button onClick={onEdit} style={btnOutlineStyle}><IconEdit /> Edit</button>
               {onDelete && <button onClick={onDelete} style={btnDangerStyle}><IconTrash /> Remove</button>}
+              {noAccount && onSendInvite && (
+                <button onClick={onSendInvite} style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", padding: "0.3rem 0.65rem", background: "#c9922a", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontSize: "0.8rem" }}>
+                  ✉️ Send Invite
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -898,6 +904,18 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
     else { showToast("Resident removed"); await fetchResidents(showHidden); }
   }
 
+  async function handleSendInvite(entry) {
+    const email = entry.emails?.[0];
+    if (!email) { showToast("No email address on file for this resident"); return; }
+    if (!confirm(`Send invitation email to ${email}?`)) return;
+    try {
+      await callEdgeFunction({ mode: "invite", email });
+      showToast(`✅ Invitation sent to ${email}`);
+    } catch (e) {
+      showToast(`❌ Invite failed: ${e.message}`);
+    }
+  }
+
   const toggleSelect     = (rid) => setSelectedIds(prev => { const s = new Set(prev); s.has(rid) ? s.delete(rid) : s.add(rid); return s; });
   const selectAll        = ()    => setSelectedIds(new Set(filteredResidents.map(r => r.resident_id)));
   const selectNone       = ()    => setSelectedIds(new Set());
@@ -1080,6 +1098,8 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
                   canEdit={canEdit(entry)}
                   onEdit={() => setEditingEntry({ ...entry, _isOwnRecord: canAdminister || entry.emails?.some(em => em.toLowerCase() === user?.email?.toLowerCase()) })}
                   onDelete={canAdminister ? () => handleDelete(entry.resident_id) : null}
+                  onSendInvite={canAdminister ? () => handleSendInvite(entry) : null}
+                  canAdminister={canAdminister}
                   selectMode={selectMode}
                   selected={selectedIds.has(entry.resident_id)}
                   onToggleSelect={() => toggleSelect(entry.resident_id)}
