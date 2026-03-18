@@ -5,7 +5,7 @@ import ErrorBoundary from '@/components/ui/ErrorBoundary'
 import ProtectedRoute from '@/components/ui/ProtectedRoute'
 import AppShell from '@/components/layout/AppShell'
 import AdminShell from '@/components/layout/AdminShell'
-
+import HelpPage from '@/pages/HelpPage'
 import LoginPage from '@/pages/auth/LoginPage'
 import ResetPasswordPage from '@/pages/auth/ResetPasswordPage'
 import HomePage from '@/pages/HomePage'
@@ -51,7 +51,7 @@ export default function App() {
               <Route path="/apps/lotto" element={<ResidentShell><LottoPage /></ResidentShell>} />
               <Route path="/apps/blog" element={<ResidentShell><BlogPage /></ResidentShell>} />
               <Route path="/apps/recommendations" element={<ResidentShell><RecommendationsPage /></ResidentShell>} />
-
+              <Route path="/help" element={<ResidentShell><HelpPage /></ResidentShell>} />
               {/* Admin routes */}
               <Route path="/admin" element={<AdminRoute><AccessPage /></AdminRoute>} />
               <Route path="/admin/access" element={<AdminRoute><AccessPage /></AdminRoute>} />
