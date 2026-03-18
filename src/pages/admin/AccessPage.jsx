@@ -6,38 +6,38 @@ import { useImageUpload } from '@/hooks/useImageUpload'
 import { STREETS } from '@/config/constants'
 
 const APPS = [
-  { id: 'directory',       label: 'Directory',       icon: '👥' },
-  { id: 'calendar',        label: 'Calendar',         icon: '📅' },
-  { id: 'lotto',           label: 'Lotto',            icon: '🎟️' },
-  { id: 'blog',            label: 'Blog',             icon: '📝' },
-  { id: 'recommendations', label: 'Recommendations',  icon: '⭐' },
+  { id: 'directory', label: 'Directory', icon: '👥' },
+  { id: 'calendar', label: 'Calendar', icon: '📅' },
+  { id: 'lotto', label: 'Lotto', icon: '🎟️' },
+  { id: 'blog', label: 'Blog', icon: '📝' },
+  { id: 'recommendations', label: 'Recommendations', icon: '⭐' },
 ]
 
 // Cycle: none → user → admin → none (regular apps only)
 const NEXT_STATE = { none: 'user', user: 'admin', admin: 'none' }
 
 const STATE_DISPLAY = {
-  none:  { icon: '○',  label: 'No Access', className: 'bg-brand-100 text-brand-400 hover:bg-blue-50 hover:text-blue-500' },
-  user:  { icon: '✅', label: 'User',      className: 'bg-green-100 text-green-700 hover:bg-gold-100 hover:text-gold-700' },
-  admin: { icon: '⭐', label: 'Admin',     className: 'bg-yellow-100 text-yellow-700 hover:bg-red-50 hover:text-red-500' },
+  none: { icon: '○', label: 'No Access', className: 'bg-brand-100 text-brand-400 hover:bg-blue-50 hover:text-blue-500' },
+  user: { icon: '✅', label: 'User', className: 'bg-green-100 text-green-700 hover:bg-gold-100 hover:text-gold-700' },
+  admin: { icon: '⭐', label: 'Admin', className: 'bg-yellow-100 text-yellow-700 hover:bg-red-50 hover:text-red-500' },
 }
 
 const COLUMN_FILTER_OPTIONS = [
-  { value: 'all',   label: 'All' },
-  { value: 'user',  label: '✅ User' },
+  { value: 'all', label: 'All' },
+  { value: 'user', label: '✅ User' },
   { value: 'admin', label: '⭐ Admin' },
-  { value: 'any',   label: '✅⭐ Any Access' },
-  { value: 'none',  label: '○ No Access' },
+  { value: 'any', label: '✅⭐ Any Access' },
+  { value: 'none', label: '○ No Access' },
 ]
 
 // ─── SVG Icons (for resident card modal) ─────────────────────────────────────
-const IconPin   = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
-const IconPhone = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.68A2 2 0 012 1h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.91 8.9a16 16 0 006.19 6.19l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
-const IconMail  = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-const IconEdit  = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-const IconX     = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-const IconPlus  = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-const IconMinus = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+const IconPin = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg>
+const IconPhone = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.68A2 2 0 012 1h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.91 8.9a16 16 0 006.19 6.19l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" /></svg>
+const IconMail = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" /></svg>
+const IconEdit = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+const IconX = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+const IconPlus = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+const IconMinus = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /></svg>
 
 // ─── Inline styles for the resident card modal ────────────────────────────────
 const inputStyle = {
@@ -112,17 +112,15 @@ function ColumnFilterDropdown({ appId, value, onChange }) {
       <button
         onClick={() => setOpen(o => !o)}
         title={isActive ? `Filtered: ${COLUMN_FILTER_OPTIONS.find(o => o.value === value)?.label}` : 'Filter this column'}
-        className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs transition-all ${
-          isActive ? 'bg-brand-700 text-white' : 'bg-brand-100 text-brand-400 hover:bg-brand-200 hover:text-brand-600'
-        }`}
+        className={`inline-flex items-center justify-center w-5 h-5 rounded text-xs transition-all ${isActive ? 'bg-brand-700 text-white' : 'bg-brand-100 text-brand-400 hover:bg-brand-200 hover:text-brand-600'
+          }`}
       >▾</button>
       {open && (
         <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 bg-white border border-brand-200 rounded-lg shadow-lg z-50 min-w-[145px] py-1 text-left">
           {COLUMN_FILTER_OPTIONS.map(opt => (
             <button key={opt.value} onClick={() => { onChange(appId, opt.value); setOpen(false) }}
-              className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${
-                value === opt.value ? 'bg-brand-700 text-white font-medium' : 'text-brand-700 hover:bg-brand-50'
-              }`}
+              className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${value === opt.value ? 'bg-brand-700 text-white font-medium' : 'text-brand-700 hover:bg-brand-50'
+                }`}
             >{opt.label}</button>
           ))}
         </div>
@@ -135,36 +133,42 @@ function ColumnFilterDropdown({ appId, value, onChange }) {
 // Defined OUTSIDE the parent component to prevent focus loss on re-render
 function EditResidentModal({ entry, onSave, onClose, isSaving }) {
   const parsed = parseAddress(entry.address)
-  const knownStreet  = STREETS.includes(parsed.street) ? parsed.street : ''
+  const knownStreet = STREETS.includes(parsed.street) ? parsed.street : ''
   const customStreet = STREETS.includes(parsed.street) ? '' : parsed.street
 
   const [form, setForm] = useState({
-    surname:          entry.surname || '',
-    names:            entry.names || '',
-    houseNumber:      parsed.houseNumber ? String(parsed.houseNumber) : '',
-    street:           knownStreet || STREETS[0],
-    customStreet:     customStreet,
-    phones:           entry.phones?.length ? entry.phones : [''],
-    emails:           entry.emails?.length ? entry.emails : [''],
-    tags:             entry.tags || [],
-    notify_calendar:  entry.notify_calendar ?? false,
-    notify_blog:      entry.notify_blog ?? false,
+    surname: entry.surname || '',
+    names: entry.names || '',
+    houseNumber: parsed.houseNumber ? String(parsed.houseNumber) : '',
+    street: knownStreet || STREETS[0],
+    customStreet: customStreet,
+    phones: entry.phones?.length ? entry.phones : [''],
+    emails: entry.emails?.length ? entry.emails : [''],
+    tags: entry.tags || [],
+    notify_calendar: entry.notify_calendar ?? false,
+    notify_blog: entry.notify_blog ?? false,
     directory_visible: entry.directory_visible ?? true,
   })
   const [newTag, setNewTag] = useState('')
+  const [availableTags, setAvailableTags] = useState([])
 
-  const [photoFile, setPhotoFile]       = useState(null)
+  useEffect(() => {
+    supabase.from('directory_tags').select('label').order('label')
+      .then(({ data }) => setAvailableTags(data?.map(t => t.label) || []))
+  }, [])
+
+  const [photoFile, setPhotoFile] = useState(null)
   const [photoPreview, setPhotoPreview] = useState(entry.photo_url || null)
-  const existingPhotoUrl                = entry.photo_url || null
-  const photoInputRef                   = useRef(null)
+  const existingPhotoUrl = entry.photo_url || null
+  const photoInputRef = useRef(null)
   const { uploading: photoUploading, error: photoUploadError, uploadImage } = useImageUpload({ bucket: 'avatars', maxDimension: 400 })
 
-  const upd      = (f, v) => setForm(p => ({ ...p, [f]: v }))
-  const updArr   = (f, i, v) => { const a = [...form[f]]; a[i] = v; setForm(p => ({ ...p, [f]: a })) }
-  const addArr   = (f)    => setForm(p => ({ ...p, [f]: [...p[f], ''] }))
-  const remArr   = (f, i) => { const a = form[f].filter((_, idx) => idx !== i); setForm(p => ({ ...p, [f]: a.length ? a : [''] })) }
-  const addTag   = ()     => { if (newTag.trim() && !form.tags.includes(newTag.trim())) { setForm(p => ({ ...p, tags: [...p.tags, newTag.trim()] })); setNewTag('') } }
-  const remTag   = (t)    => setForm(p => ({ ...p, tags: p.tags.filter(x => x !== t) }))
+  const upd = (f, v) => setForm(p => ({ ...p, [f]: v }))
+  const updArr = (f, i, v) => { const a = [...form[f]]; a[i] = v; setForm(p => ({ ...p, [f]: a })) }
+  const addArr = (f) => setForm(p => ({ ...p, [f]: [...p[f], ''] }))
+  const remArr = (f, i) => { const a = form[f].filter((_, idx) => idx !== i); setForm(p => ({ ...p, [f]: a.length ? a : [''] })) }
+  const addTag = () => { if (newTag.trim() && !form.tags.includes(newTag.trim())) { setForm(p => ({ ...p, tags: [...p.tags, newTag.trim()] })); setNewTag('') } }
+  const remTag = (t) => setForm(p => ({ ...p, tags: p.tags.filter(x => x !== t) }))
 
   const handleSubmit = async () => {
     if (!form.surname.trim()) { alert('Surname is required.'); return }
@@ -218,8 +222,8 @@ function EditResidentModal({ entry, onSave, onClose, isSaving }) {
                 {photoPreview
                   ? <img src={photoPreview} alt="Avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   : <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', fontWeight: '700', color: '#1e4976' }}>
-                      {((form.names?.[0] || '') + (form.surname?.[0] || '')).toUpperCase() || '?'}
-                    </span>
+                    {((form.names?.[0] || '') + (form.surname?.[0] || '')).toUpperCase() || '?'}
+                  </span>
                 }
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
@@ -278,10 +282,22 @@ function EditResidentModal({ entry, onSave, onClose, isSaving }) {
           </ModalField>
           <ModalField label="Tags / Roles">
             <div style={{ display: 'flex', gap: '0.4rem' }}>
-              <input value={newTag} onChange={e => setNewTag(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addTag())}
-                style={{ ...inputStyle, flex: 1, width: 'auto' }} placeholder="e.g. Social Committee" />
-              <button type="button" onClick={addTag} style={addMoreBtn}><IconPlus /> Add</button>
+              <select
+                value=""
+                onChange={e => {
+                  const val = e.target.value
+                  if (val && !form.tags.includes(val)) {
+                    setForm(p => ({ ...p, tags: [...p.tags, val] }))
+                  }
+                }}
+                style={{ ...inputStyle, flex: 1, width: 'auto' }}
+              >
+                <option value="">— Select a tag to add —</option>
+                {availableTags
+                  .filter(t => !form.tags.includes(t))
+                  .map(t => <option key={t} value={t}>{t}</option>)
+                }
+              </select>
             </div>
             {form.tags.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginTop: '0.5rem' }}>
@@ -312,7 +328,7 @@ function EditResidentModal({ entry, onSave, onClose, isSaving }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               {[
                 { key: 'notify_calendar', label: 'Social Calendar', desc: 'New events and updates' },
-                { key: 'notify_blog',     label: 'Community Blog',  desc: 'New posts and comments' },
+                { key: 'notify_blog', label: 'Community Blog', desc: 'New posts and comments' },
               ].map(({ key, label, desc }) => (
                 <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer', padding: '0.5rem 0.75rem', borderRadius: '6px', background: '#f9fafb', border: '1px solid #e5e7eb' }}>
                   <input type="checkbox" checked={form[key]} onChange={e => upd(key, e.target.checked)}
@@ -388,8 +404,8 @@ function ResidentProfileModal({ entry, authInfo, onEdit, onClose, onInviteSent }
             {entry.photo_url
               ? <img src={entry.photo_url} alt={entry.names} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               : <span style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', fontWeight: '700', color: 'white', opacity: 0.9 }}>
-                  {((entry.names?.[0] || '') + (entry.surname?.[0] || '')).toUpperCase()}
-                </span>
+                {((entry.names?.[0] || '') + (entry.surname?.[0] || '')).toUpperCase()}
+              </span>
             }
           </div>
           <div style={{ flex: 1 }}>
@@ -488,13 +504,13 @@ function ResidentProfileModal({ entry, authInfo, onEdit, onClose, onInviteSent }
 export default function AccessPage() {
   const toast = useToast()
 
-  const [residents,    setResidents]    = useState([])
-  const [access,       setAccess]       = useState({})
-  const [superAdmins,  setSuperAdmins]  = useState({}) // user_id → boolean
-  const [authInfo,     setAuthInfo]     = useState({}) // resident_id → { last_sign_in_at }
-  const [loading,      setLoading]      = useState(true)
-  const [saving,       setSaving]       = useState(null)
-  const [isSaving,     setIsSaving]     = useState(false)
+  const [residents, setResidents] = useState([])
+  const [access, setAccess] = useState({})
+  const [superAdmins, setSuperAdmins] = useState({}) // user_id → boolean
+  const [authInfo, setAuthInfo] = useState({}) // resident_id → { last_sign_in_at }
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(null)
+  const [isSaving, setIsSaving] = useState(false)
 
   // Modal state
   const [viewingEntry, setViewingEntry] = useState(null) // resident object for profile card
@@ -566,14 +582,14 @@ export default function AccessPage() {
     })
   })
 
-  const setColFilter    = (appId, value) => setColFilters(prev => ({ ...prev, [appId]: value }))
+  const setColFilter = (appId, value) => setColFilters(prev => ({ ...prev, [appId]: value }))
   const clearAllFilters = () => setColFilters(Object.fromEntries(APPS.map(a => [a.id, 'all'])))
 
   // ── Access mutations ──────────────────────────────────────────────────────────
   const cycleAccess = async (userId, appId, currentState, name) => {
     if (!userId) return
     const nextState = NEXT_STATE[currentState]
-    const appLabel  = APPS.find(a => a.id === appId)?.label
+    const appLabel = APPS.find(a => a.id === appId)?.label
     setSaving(`${userId}-${appId}`)
     try {
       if (nextState === 'none') {
@@ -687,7 +703,7 @@ export default function AccessPage() {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
-  const displayName  = (r) => [r.surname, r.names].filter(Boolean).join(', ') || '—'
+  const displayName = (r) => [r.surname, r.names].filter(Boolean).join(', ') || '—'
   const displayEmail = (r) => r.emails?.[0] || '—'
 
   const formatLastAccess = (residentId) => {
@@ -828,8 +844,8 @@ export default function AccessPage() {
 
                     {/* App toggles */}
                     {APPS.map(app => {
-                      const state   = hasAccount ? (access[r.id]?.[app.id] ?? 'none') : 'none'
-                      const key     = `${r.id}-${app.id}`
+                      const state = hasAccount ? (access[r.id]?.[app.id] ?? 'none') : 'none'
+                      const key = `${r.id}-${app.id}`
                       const display = STATE_DISPLAY[state]
                       const isFiltered = colFilters[app.id] !== 'all'
                       return (
@@ -840,11 +856,10 @@ export default function AccessPage() {
                               : toast.info(`${name} hasn't logged in yet — access will unlock after their first login`)
                             }
                             disabled={saving === key}
-                            className={`w-8 h-8 rounded-full text-base transition-all ${
-                              !hasAccount   ? 'bg-gray-100 text-gray-300 cursor-not-allowed' :
+                            className={`w-8 h-8 rounded-full text-base transition-all ${!hasAccount ? 'bg-gray-100 text-gray-300 cursor-not-allowed' :
                               saving === key ? 'opacity-50 cursor-wait' :
-                              display.className
-                            }`}
+                                display.className
+                              }`}
                             title={!hasAccount ? 'Awaiting first login' : `${name}: ${display.label} — click to change`}
                           >
                             {saving === key ? '…' : hasAccount ? display.icon : '🔒'}
@@ -871,11 +886,10 @@ export default function AccessPage() {
                         <button
                           onClick={() => toggleSuperAdmin(r.id, name, !!superAdmins[r.id])}
                           title={superAdmins[r.id] ? `Remove super admin from ${name}` : `Grant super admin to ${name}`}
-                          className={`w-8 h-8 rounded-full text-base transition-all ${
-                            superAdmins[r.id]
-                              ? 'bg-amber-100 text-amber-700 hover:bg-red-50 hover:text-red-600'
-                              : 'bg-brand-100 text-brand-400 hover:bg-amber-50 hover:text-amber-600'
-                          }`}
+                          className={`w-8 h-8 rounded-full text-base transition-all ${superAdmins[r.id]
+                            ? 'bg-amber-100 text-amber-700 hover:bg-red-50 hover:text-red-600'
+                            : 'bg-brand-100 text-brand-400 hover:bg-amber-50 hover:text-amber-600'
+                            }`}
                         >
                           {superAdmins[r.id] ? '🛡️' : '○'}
                         </button>

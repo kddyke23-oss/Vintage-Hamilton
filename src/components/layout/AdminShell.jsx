@@ -1,16 +1,9 @@
-import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
-
-const adminNav = [
-  { label: 'Dashboard', path: '/admin' },
-  { label: 'Residents', path: '/admin/residents' },
-  { label: 'App Access', path: '/admin/access' },
-]
 
 export default function AdminShell({ children }) {
   const { user, signOut } = useAuth()
   const navigate = useNavigate()
-  const location = useLocation()
 
   const handleSignOut = async () => {
     await signOut()
@@ -43,29 +36,10 @@ export default function AdminShell({ children }) {
             </button>
           </div>
         </div>
-
-        {/* Admin nav */}
-        <nav className="bg-brand-800 border-t border-brand-700">
-          <div className="px-4 flex gap-1">
-            {adminNav.map(item => (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={`px-4 py-2.5 text-sm font-medium transition-colors ${
-                  location.pathname === item.path
-                    ? 'text-gold-300 border-b-2 border-gold-400'
-                    : 'text-brand-300 hover:text-white'
-                }`}
-              >
-                {item.label}
-              </Link>
-            ))}
-          </div>
-        </nav>
       </header>
 
       {/* Content */}
-      <main className="pt-24 max-w-6xl mx-auto px-6 py-8">
+      <main className="pt-16 max-w-6xl mx-auto px-6 py-8">
         {children}
       </main>
 

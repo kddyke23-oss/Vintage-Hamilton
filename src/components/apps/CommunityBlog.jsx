@@ -333,7 +333,7 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
                 🚩 Report
               </button>
             )}
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none ml-1">✕</button>
+            <button onClick={onClose} aria-label="Close post" className="text-gray-400 hover:text-gray-700 text-xl leading-none ml-1">✕</button>
           </div>
         </div>
 
@@ -426,10 +426,10 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
                 onChange={e => setNewComment(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleAddComment() }}
                 placeholder="Add a comment…"
+                aria-label="Add a comment"
                 rows={2}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-300"
               />
-
               {/* Comment photo preview */}
               {commentPhotoPreview && (
                 <div className="relative mt-2 rounded-lg overflow-hidden border border-gray-200 w-32">
@@ -449,6 +449,8 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
                     type="button"
                     onClick={() => commentPhotoRef.current?.click()}
                     className="text-xs text-gray-400 hover:text-gray-600 transition"
+                    title="Add photo"
+                    aria-label="Add photo"
                     title="Add photo"
                   >📷</button>
                   <input
@@ -486,6 +488,7 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
               value={reportReason}
               onChange={e => setReportReason(e.target.value)}
               placeholder="Reason…"
+              aria-label="Report reason"
               rows={3}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-300 mb-4"
             />
@@ -557,8 +560,10 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
     if (isEditMode) {
       const { error } = await supabase
         .from('blog_posts')
-        .update({ title: title.trim(), body: body.trim(), photo_url,
-          calendar_event_id: linkedEventId ? parseInt(linkedEventId) : null })
+        .update({
+          title: title.trim(), body: body.trim(), photo_url,
+          calendar_event_id: linkedEventId ? parseInt(linkedEventId) : null
+        })
         .eq('id', editPost.id)
       setSaving(false)
       if (error) { toast.error('Could not update post.'); return }
@@ -595,7 +600,7 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
         <div className="flex items-center justify-between p-6 border-b border-gray-100">
           <h2 className="text-xl font-bold text-gray-900">{isEditMode ? 'Edit Post' : 'New Post'}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl">✕</button>
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700 text-xl">✕</button>
         </div>
         <div className="p-6 space-y-4">
           <div>
@@ -862,7 +867,8 @@ export default function CommunityBlog() {
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search posts…"
-              className="w-full pl-8 pr-4 py-2 border border-gray-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-gray-50"
+              aria-label="Search posts"
+              className="..."
             />
           </div>
           <button

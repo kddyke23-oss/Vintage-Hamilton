@@ -15,14 +15,14 @@ const fmtDate = (ts) => {
 const TARGET_LABELS = { event: '📅 Calendar Event', post: '📝 Blog Post', comment: '💬 Blog Comment' }
 
 const CATEGORY_COLORS = [
-  { label: 'Ocean Blue',   value: '#2C5F8A' },
-  { label: 'Deep Navy',    value: '#1A3F5C' },
-  { label: 'Warm Gold',    value: '#C9922A' },
+  { label: 'Ocean Blue', value: '#2C5F8A' },
+  { label: 'Deep Navy', value: '#1A3F5C' },
+  { label: 'Warm Gold', value: '#C9922A' },
   { label: 'Forest Green', value: '#2E7D32' },
-  { label: 'Purple',       value: '#7B3F9E' },
-  { label: 'Teal',         value: '#00796B' },
-  { label: 'Rose',         value: '#C62828' },
-  { label: 'Slate',        value: '#546E7A' },
+  { label: 'Purple', value: '#7B3F9E' },
+  { label: 'Teal', value: '#00796B' },
+  { label: 'Rose', value: '#C62828' },
+  { label: 'Slate', value: '#546E7A' },
 ]
 
 // ─── Tab: Reports ─────────────────────────────────────────────────────────────
@@ -77,11 +77,11 @@ function ReportsTab() {
     ])
 
     const previewMap = {}
-    ;(eventsRes.data || []).forEach(ev => { previewMap[`event-${ev.id}`] = ev.title })
-    ;(postsRes.data || []).forEach(p => { previewMap[`post-${p.id}`] = p.title })
-    ;(commentsRes.data || []).forEach(c => {
-      previewMap[`comment-${c.id}`] = c.body.slice(0, 80) + (c.body.length > 80 ? '…' : '')
-    })
+      ; (eventsRes.data || []).forEach(ev => { previewMap[`event-${ev.id}`] = ev.title })
+      ; (postsRes.data || []).forEach(p => { previewMap[`post-${p.id}`] = p.title })
+      ; (commentsRes.data || []).forEach(c => {
+        previewMap[`comment-${c.id}`] = c.body.slice(0, 80) + (c.body.length > 80 ? '…' : '')
+      })
 
     const enriched = data.map(report => ({
       ...report,
@@ -488,11 +488,10 @@ function RecommendationsTab({ onCountChange }) {
           </div>
           <button
             onClick={() => setShowResolvedReports(v => !v)}
-            className={`text-sm px-4 py-2 rounded-lg border transition-colors ${
-              showResolvedReports
+            className={`text-sm px-4 py-2 rounded-lg border transition-colors ${showResolvedReports
                 ? 'bg-gray-100 border-gray-300 text-gray-700'
                 : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
-            }`}
+              }`}
           >
             {showResolvedReports ? 'Show Unresolved' : 'Show Resolved'}
           </button>
@@ -625,6 +624,7 @@ function CategoriesTagsTab() {
   }, [])
 
   useEffect(() => { fetchRecCats() }, [fetchRecCats])
+  const [tags, setTags] = useState([])
   const [tagLoading, setTagLoading] = useState(true)
   const [newTagLabel, setNewTagLabel] = useState('')
   const [editingTag, setEditingTag] = useState(null)
@@ -676,9 +676,9 @@ function CategoriesTagsTab() {
     }
     let error
     if (editingCat === 'new') {
-      ;({ error } = await supabase.from('calendar_categories').insert(payload))
+      ; ({ error } = await supabase.from('calendar_categories').insert(payload))
     } else {
-      ;({ error } = await supabase.from('calendar_categories').update(payload).eq('id', editingCat.id))
+      ; ({ error } = await supabase.from('calendar_categories').update(payload).eq('id', editingCat.id))
     }
     if (error) { toast.error('Could not save category.'); return }
     toast.success(editingCat === 'new' ? 'Category created.' : 'Category updated.')
@@ -701,9 +701,9 @@ function CategoriesTagsTab() {
     setRecCatSaving(true)
     let error
     if (editingRecCat === 'new') {
-      ;({ error } = await supabase.from('rec_categories').insert({ name: recCatForm.name.trim() }))
+      ; ({ error } = await supabase.from('rec_categories').insert({ name: recCatForm.name.trim() }))
     } else {
-      ;({ error } = await supabase.from('rec_categories').update({ name: recCatForm.name.trim() }).eq('id', editingRecCat.id))
+      ; ({ error } = await supabase.from('rec_categories').update({ name: recCatForm.name.trim() }).eq('id', editingRecCat.id))
     }
     setRecCatSaving(false)
     if (error) { toast.error('Could not save category.'); return }
@@ -1152,11 +1152,10 @@ export default function ReportsPage() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === tab.id
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === tab.id
                   ? 'bg-white text-gray-900 shadow-sm'
                   : 'text-gray-500 hover:text-gray-700'
-              }`}
+                }`}
             >
               {tab.label}
               {count > 0 && (

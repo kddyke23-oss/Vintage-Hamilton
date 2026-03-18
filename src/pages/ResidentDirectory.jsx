@@ -15,18 +15,18 @@ function parseAddress(address) {
 }
 
 // ─── icons ────────────────────────────────────────────────────────────────────
-const IconPin     = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg>;
-const IconPhone   = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.68A2 2 0 012 1h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.91 8.9a16 16 0 006.19 6.19l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" /></svg>;
-const IconMail    = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" /></svg>;
-const IconEdit    = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>;
-const IconTrash   = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" /><path d="M10 11v6M14 11v6" /><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" /></svg>;
-const IconSearch  = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>;
-const IconPrint   = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9" /><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2" /><rect x="6" y="14" width="12" height="8" /></svg>;
-const IconSelect  = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" /></svg>;
-const IconX       = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>;
-const IconPlus    = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>;
-const IconMinus   = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /></svg>;
-const IconMap     = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" /><line x1="8" y1="2" x2="8" y2="18" /><line x1="16" y1="6" x2="16" y2="22" /></svg>;
+const IconPin = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg>;
+const IconPhone = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.68A2 2 0 012 1h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.91 8.9a16 16 0 006.19 6.19l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" /></svg>;
+const IconMail = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" /></svg>;
+const IconEdit = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>;
+const IconTrash = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" /><path d="M10 11v6M14 11v6" /><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" /></svg>;
+const IconSearch = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>;
+const IconPrint = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9" /><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2" /><rect x="6" y="14" width="12" height="8" /></svg>;
+const IconSelect = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" /></svg>;
+const IconX = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>;
+const IconPlus = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>;
+const IconMinus = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12" /></svg>;
+const IconMap = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" /><line x1="8" y1="2" x2="8" y2="18" /><line x1="16" y1="6" x2="16" y2="22" /></svg>;
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 function Toast({ message }) {
@@ -139,8 +139,8 @@ function ResidentCard({ entry, canEdit, onEdit, onDelete, onSendInvite, canAdmin
           {entry.photo_url
             ? <img src={entry.photo_url} alt={entry.names} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
             : <span style={{ fontFamily: "var(--font-display)", fontSize: "1.8rem", fontWeight: "700", color: "var(--color-primary)", opacity: 0.6 }}>
-                {((entry.names?.[0] || "") + (entry.surname?.[0] || "")).toUpperCase()}
-              </span>
+              {((entry.names?.[0] || "") + (entry.surname?.[0] || "")).toUpperCase()}
+            </span>
           }
         </div>
       </div>
@@ -282,7 +282,12 @@ function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAd
     directory_visible: entry.directory_visible ?? true,
   });
   const [newTag, setNewTag] = useState("");
+  const [availableTags, setAvailableTags] = useState([]);
 
+  useEffect(() => {
+    supabase.from("directory_tags").select("label").order("label")
+      .then(({ data }) => setAvailableTags(data?.map(t => t.label) || []))
+  }, [])
   // Photo upload
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(entry.photo_url || null);
@@ -294,11 +299,11 @@ function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAd
   });
 
   const updateField = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
-  const updateArr   = (field, i, val) => { const a = [...form[field]]; a[i] = val; setForm(prev => ({ ...prev, [field]: a })); };
-  const addArr      = (field) => setForm(prev => ({ ...prev, [field]: [...prev[field], ""] }));
-  const removeArr   = (field, i) => { const a = form[field].filter((_, idx) => idx !== i); setForm(prev => ({ ...prev, [field]: a.length ? a : [""] })); };
-  const addTag      = () => { if (newTag.trim() && !form.tags.includes(newTag.trim())) { setForm(prev => ({ ...prev, tags: [...prev.tags, newTag.trim()] })); setNewTag(""); } };
-  const removeTag   = (tag) => setForm(prev => ({ ...prev, tags: prev.tags.filter(t => t !== tag) }));
+  const updateArr = (field, i, val) => { const a = [...form[field]]; a[i] = val; setForm(prev => ({ ...prev, [field]: a })); };
+  const addArr = (field) => setForm(prev => ({ ...prev, [field]: [...prev[field], ""] }));
+  const removeArr = (field, i) => { const a = form[field].filter((_, idx) => idx !== i); setForm(prev => ({ ...prev, [field]: a.length ? a : [""] })); };
+  const addTag = () => { if (newTag.trim() && !form.tags.includes(newTag.trim())) { setForm(prev => ({ ...prev, tags: [...prev.tags, newTag.trim()] })); setNewTag(""); } };
+  const removeTag = (tag) => setForm(prev => ({ ...prev, tags: prev.tags.filter(t => t !== tag) }));
 
   const handleSubmit = async () => {
     if (!form.surname.trim()) { alert("Surname is required."); return; }
@@ -359,8 +364,8 @@ function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAd
                 {photoPreview
                   ? <img src={photoPreview} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   : <span style={{ fontFamily: "var(--font-display)", fontSize: "1.2rem", fontWeight: "700", color: "var(--color-primary)" }}>
-                      {((form.names?.[0] || "") + (form.surname?.[0] || "")).toUpperCase() || "?"}
-                    </span>
+                    {((form.names?.[0] || "") + (form.surname?.[0] || "")).toUpperCase() || "?"}
+                  </span>
                 }
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
@@ -462,10 +467,22 @@ function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAd
           </ModalField>
           <ModalField label="Tags / Roles">
             <div style={{ display: "flex", gap: "0.4rem" }}>
-              <input value={newTag} onChange={e => setNewTag(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && (e.preventDefault(), addTag())}
-                style={{ ...inputStyle, flex: 1 }} placeholder="e.g. Social Committee" />
-              <button type="button" onClick={addTag} style={addMoreBtnStyle}><IconPlus /> Add</button>
+              <select
+                value=""
+                onChange={e => {
+                  const val = e.target.value
+                  if (val && !form.tags.includes(val)) {
+                    setForm(prev => ({ ...prev, tags: [...prev.tags, val] }))
+                  }
+                }}
+                style={{ ...inputStyle, flex: 1 }}
+              >
+                <option value="">— Select a tag to add —</option>
+                {availableTags
+                  .filter(t => !form.tags.includes(t))
+                  .map(t => <option key={t} value={t}>{t}</option>)
+                }
+              </select>
             </div>
             {form.tags.length > 0 && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginTop: "0.5rem", marginBottom: "0.5rem" }}>
@@ -507,7 +524,7 @@ function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAd
               <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
                 {[
                   { key: "notify_calendar", label: "Social Calendar", desc: "New events and updates" },
-                  { key: "notify_blog",     label: "Community Blog",  desc: "New posts and comments" },
+                  { key: "notify_blog", label: "Community Blog", desc: "New posts and comments" },
                 ].map(({ key, label, desc }) => (
                   <label key={key} style={{ display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer", padding: "0.5rem 0.75rem", borderRadius: "6px", background: "#f9fafb", border: "1px solid #e5e7eb" }}>
                     <input
@@ -573,12 +590,18 @@ function AddResidentModal({ onSaved, onClose }) {
     phones: [""], emails: [""],
     tags: [], directory_visible: true, sendInvite: true,
   });
-  const [newTag, setNewTag]   = useState("");
-  const [saving, setSaving]   = useState(false);
-  const [error, setError]     = useState(null);
+  const [newTag, setNewTag] = useState("");
+  const [availableTags, setAvailableTags] = useState([]);
+
+  useEffect(() => {
+    supabase.from("directory_tags").select("label").order("label")
+      .then(({ data }) => setAvailableTags(data?.map(t => t.label) || []))
+  }, [])
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
-  const upd    = (f, v) => setForm(p => ({ ...p, [f]: v }));
+  const upd = (f, v) => setForm(p => ({ ...p, [f]: v }));
   const updArr = (f, i, v) => { const a = [...form[f]]; a[i] = v; setForm(p => ({ ...p, [f]: a })); };
   const addArr = (f) => setForm(p => ({ ...p, [f]: [...p[f], ""] }));
   const remArr = (f, i) => { const a = form[f].filter((_, idx) => idx !== i); setForm(p => ({ ...p, [f]: a.length ? a : [""] })); };
@@ -587,7 +610,7 @@ function AddResidentModal({ onSaved, onClose }) {
 
   const handleSubmit = async () => {
     if (!form.surname.trim()) { setError("Surname is required"); return; }
-    if (!form.names.trim())   { setError("First name(s) are required"); return; }
+    if (!form.names.trim()) { setError("First name(s) are required"); return; }
     const emails = form.emails.filter(e => e.trim());
     if (form.sendInvite && !emails.length) { setError("Email is required to send an invitation"); return; }
 
@@ -690,10 +713,22 @@ function AddResidentModal({ onSaved, onClose }) {
           </ModalField>
           <ModalField label="Tags / Roles">
             <div style={{ display: "flex", gap: "0.4rem" }}>
-              <input value={newTag} onChange={e => setNewTag(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && (e.preventDefault(), addTag())}
-                style={{ ...inputStyle, flex: 1 }} placeholder="e.g. Social Committee" />
-              <button type="button" onClick={addTag} style={addMoreBtnStyle}><IconPlus /> Add</button>
+              <select
+                value=""
+                onChange={e => {
+                  const val = e.target.value
+                  if (val && !form.tags.includes(val)) {
+                    setForm(p => ({ ...p, tags: [...p.tags, val] }))
+                  }
+                }}
+                style={{ ...inputStyle, flex: 1 }}
+              >
+                <option value="">— Select a tag to add —</option>
+                {availableTags
+                  .filter(t => !form.tags.includes(t))
+                  .map(t => <option key={t} value={t}>{t}</option>)
+                }
+              </select>
             </div>
             {form.tags.length > 0 && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem", marginTop: "0.5rem" }}>
@@ -814,20 +849,20 @@ function openPrintWindow(data) {
 export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
   const canAdminister = isAdmin || isDirectoryAdmin;
 
-  const [residents, setResidents]           = useState([]);
-  const [loading, setLoading]               = useState(true);
-  const [search, setSearch]                 = useState("");
-  const [searchField, setSearchField]       = useState("all");
-  const [tagFilter, setTagFilter]           = useState("");
-  const [editingEntry, setEditingEntry]     = useState(null);
-  const [showAddModal, setShowAddModal]     = useState(false);
-  const [toast, setToast]                   = useState(null);
-  const [isSaving, setIsSaving]             = useState(false);
-  const [selectMode, setSelectMode]         = useState(false);
-  const [selectedIds, setSelectedIds]       = useState(new Set());
+  const [residents, setResidents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [searchField, setSearchField] = useState("all");
+  const [tagFilter, setTagFilter] = useState("");
+  const [editingEntry, setEditingEntry] = useState(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
   const [showPrintModal, setShowPrintModal] = useState(false);
-  const [streetFilter, setStreetFilter]     = useState(""); // "" = normal grid view
-  const [showHidden, setShowHidden]         = useState(false);
+  const [streetFilter, setStreetFilter] = useState(""); // "" = normal grid view
+  const [showHidden, setShowHidden] = useState(false);
 
   useEffect(() => { fetchResidents(showHidden); }, [showHidden]);
 
@@ -862,9 +897,9 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter(r => {
-        if (searchField === "name"    || searchField === "all") { if ((r.surname + " " + r.names).toLowerCase().includes(q)) return true; }
+        if (searchField === "name" || searchField === "all") { if ((r.surname + " " + r.names).toLowerCase().includes(q)) return true; }
         if (searchField === "address" || searchField === "all") { if (r.address?.toLowerCase().includes(q)) return true; }
-        if (searchField === "tag"     || searchField === "all") { if (r.tags?.some(t => t.toLowerCase().includes(q))) return true; }
+        if (searchField === "tag" || searchField === "all") { if (r.tags?.some(t => t.toLowerCase().includes(q))) return true; }
         return false;
       });
     }
@@ -916,10 +951,10 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
     }
   }
 
-  const toggleSelect     = (rid) => setSelectedIds(prev => { const s = new Set(prev); s.has(rid) ? s.delete(rid) : s.add(rid); return s; });
-  const selectAll        = ()    => setSelectedIds(new Set(filteredResidents.map(r => r.resident_id)));
-  const selectNone       = ()    => setSelectedIds(new Set());
-  const toggleSelectMode = ()    => { setSelectMode(s => !s); setSelectedIds(new Set()); };
+  const toggleSelect = (rid) => setSelectedIds(prev => { const s = new Set(prev); s.has(rid) ? s.delete(rid) : s.add(rid); return s; });
+  const selectAll = () => setSelectedIds(new Set(filteredResidents.map(r => r.resident_id)));
+  const selectNone = () => setSelectedIds(new Set());
+  const toggleSelectMode = () => { setSelectMode(s => !s); setSelectedIds(new Set()); };
 
   const handleEmailSelected = () => {
     const emails = residents.filter(r => selectedIds.has(r.resident_id)).flatMap(r => r.emails || []).filter(Boolean);
@@ -1077,12 +1112,12 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
           {selectMode && (
             <div className="no-print" style={{ background: "var(--color-primary)", color: "white", borderRadius: "8px", padding: "0.65rem 1rem", marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
               <span style={{ fontWeight: "600", fontSize: "0.9rem", marginRight: "auto" }}>{selectedIds.size} selected</span>
-              <button onClick={selectAll}          style={selectBarBtnStyle}>Select All</button>
-              <button onClick={selectNone}          style={selectBarBtnStyle}>Clear</button>
+              <button onClick={selectAll} style={selectBarBtnStyle}>Select All</button>
+              <button onClick={selectNone} style={selectBarBtnStyle}>Clear</button>
               <button onClick={handleEmailSelected} disabled={!selectedIds.size} style={selectBarBtnStyle}>✉ Email</button>
-              <button onClick={handleCopyEmails}    disabled={!selectedIds.size} style={selectBarBtnStyle}>📋 Copy Emails</button>
-              <button onClick={handleCopyPhones}    disabled={!selectedIds.size} style={selectBarBtnStyle}>📞 Copy Phones</button>
-              <button onClick={toggleSelectMode}    style={{ ...selectBarBtnStyle, opacity: 0.7 }}>Done</button>
+              <button onClick={handleCopyEmails} disabled={!selectedIds.size} style={selectBarBtnStyle}>📋 Copy Emails</button>
+              <button onClick={handleCopyPhones} disabled={!selectedIds.size} style={selectBarBtnStyle}>📞 Copy Phones</button>
+              <button onClick={toggleSelectMode} style={{ ...selectBarBtnStyle, opacity: 0.7 }}>Done</button>
             </div>
           )}
 
@@ -1136,7 +1171,7 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
             <p style={{ fontSize: "0.875rem", color: "#6b7280", marginBottom: "1.5rem" }}>Choose what to print:</p>
             {[
               { label: "Full Directory", desc: `All ${residents.length} households`, icon: "📋", mode: "all" },
-              { label: "Current View",   desc: `${filteredResidents.length} household${filteredResidents.length !== 1 ? "s" : ""} (filtered)`, icon: "🔍", mode: "filtered" },
+              { label: "Current View", desc: `${filteredResidents.length} household${filteredResidents.length !== 1 ? "s" : ""} (filtered)`, icon: "🔍", mode: "filtered" },
             ].map(opt => (
               <div key={opt.mode} onClick={() => handlePrint(opt.mode)}
                 style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.875rem 1rem", border: "2px solid #e5e7eb", borderRadius: "8px", cursor: "pointer", marginBottom: "0.5rem", textAlign: "left" }}

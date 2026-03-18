@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import { supabase } from '@/lib/supabase'
 import SocialCalendar from '@/components/apps/SocialCalendar'
+import LoadingSpinner from '@/components/LoadingSpinner'
 
 export default function CalendarPage() {
   const { user } = useAuth()
@@ -21,16 +22,12 @@ export default function CalendarPage() {
   }, [user])
 
   if (hasAccess === null) {
-    return (
-      <div className="flex items-center justify-center py-24 text-brand-400 text-sm">
-        Checking access…
-      </div>
-    )
+    return <LoadingSpinner label="Checking access…" />
   }
 
   if (!hasAccess) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 text-center">
+      <div className="flex flex-col items-center justify-center py-24 text-center px-4">
         <div className="text-5xl mb-4">🔒</div>
         <h2 className="font-display text-2xl text-brand-800 mb-2">Authorisation Required</h2>
         <p className="text-brand-500 text-sm max-w-sm">

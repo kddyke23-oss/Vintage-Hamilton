@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
 import CommunityBlog from '@/components/apps/CommunityBlog'
+import LoadingSpinner from '@/components/LoadingSpinner'
 
 export default function BlogPage() {
   const { user } = useAuth()
@@ -20,26 +21,17 @@ export default function BlogPage() {
   }, [user])
 
   if (hasAccess === null) {
-    return (
-      <div className="flex items-center justify-center h-64 text-gray-400">
-        <div className="text-center">
-          <div className="text-3xl mb-2">⏳</div>
-          <p>Checking access…</p>
-        </div>
-      </div>
-    )
+    return <LoadingSpinner label="Checking access…" />
   }
 
   if (!hasAccess) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center p-8 bg-white rounded-2xl shadow-sm border border-gray-100 max-w-sm">
-          <div className="text-5xl mb-4">🔒</div>
-          <h2 className="text-xl font-bold text-gray-800 mb-2">Authorisation Required</h2>
-          <p className="text-gray-500 text-sm">
-            You don't have access to the Community Blog yet. Please contact an administrator.
-          </p>
-        </div>
+      <div className="flex flex-col items-center justify-center py-24 text-center px-4">
+        <div className="text-5xl mb-4">🔒</div>
+        <h2 className="font-display text-2xl text-brand-800 mb-2">Authorisation Required</h2>
+        <p className="text-brand-500 text-sm max-w-sm">
+          You don't have access to the Community Blog yet. Please contact an administrator.
+        </p>
       </div>
     )
   }

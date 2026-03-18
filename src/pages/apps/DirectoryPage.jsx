@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import ResidentDirectory from "@/pages/ResidentDirectory";
+import LoadingSpinner from "@/components/LoadingSpinner";
 
 export default function DirectoryPage() {
   const { user, isAdmin } = useAuth();
@@ -38,25 +39,20 @@ export default function DirectoryPage() {
   }
 
   if (access === null) {
-    return (
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "50vh" }}>
-        <div style={{ width: 36, height: 36, border: "3px solid #e5e7eb", borderTopColor: "#1e4976", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      </div>
-    );
+    return <LoadingSpinner label="Checking access…" />;
   }
 
   if (access === false) {
     return (
-      <div style={{ maxWidth: 480, margin: "4rem auto", textAlign: "center", padding: "0 1rem", fontFamily: "'Lato', sans-serif" }}>
-        <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🔒</div>
-        <h2 style={{ fontFamily: "'Playfair Display', serif", color: "#1e4976", marginBottom: "0.5rem" }}>Access Required</h2>
-        <p style={{ color: "#6b7280", marginBottom: "1.5rem" }}>
+      <div className="flex flex-col items-center justify-center py-24 text-center px-4">
+        <div className="text-5xl mb-4">🔒</div>
+        <h2 className="font-display text-2xl text-brand-800 mb-2">Access Required</h2>
+        <p className="text-brand-500 text-sm max-w-sm mb-6">
           You don't have access to the Resident Directory. Please contact an administrator.
         </p>
         <button
           onClick={() => navigate("/")}
-          style={{ padding: "0.6rem 1.5rem", background: "#1e4976", color: "white", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "0.9rem" }}
+          className="px-5 py-2 bg-brand-700 text-white rounded-lg text-sm hover:bg-brand-800 transition"
         >
           ← Back to Dashboard
         </button>

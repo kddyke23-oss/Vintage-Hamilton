@@ -34,7 +34,7 @@ function Toast({ message, type, onClose }) {
       className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[2000] px-5 py-3 rounded-xl text-white text-sm shadow-xl ${bg} flex items-center gap-3`}
     >
       <span>{message}</span>
-      <button onClick={onClose} className="opacity-70 hover:opacity-100 text-lg leading-none">
+      <button onClick={onClose} aria-label="Dismiss" className="opacity-70 hover:opacity-100 text-lg leading-none">
         ×
       </button>
     </div>
@@ -48,11 +48,11 @@ function AddPostModal({ categories, subcategories, residentId, onClose, onSaved,
 
   const [postType, setPostType] = useState(editRec?.type ?? "recommend");
   const [form, setForm] = useState({
-    title:         editRec?.title ?? "",
-    description:   editRec?.description ?? "",
-    category_id:   editRec?.category_id ? String(editRec.category_id) : "",
+    title: editRec?.title ?? "",
+    description: editRec?.description ?? "",
+    category_id: editRec?.category_id ? String(editRec.category_id) : "",
     subcategory_id: editRec?.subcategory_id ? String(editRec.subcategory_id) : "",
-    external_url:  editRec?.external_url ?? "",
+    external_url: editRec?.external_url ?? "",
     contact_phone: editRec?.contact_phone ?? "",
     contact_email: editRec?.contact_email ?? "",
   });
@@ -138,9 +138,9 @@ function AddPostModal({ categories, subcategories, residentId, onClose, onSaved,
 
     let error;
     if (isEditMode) {
-      ;({ error } = await supabase.from("recommendations").update(payload).eq("id", editRec.id));
+      ; ({ error } = await supabase.from("recommendations").update(payload).eq("id", editRec.id));
     } else {
-      ;({ error } = await supabase.from("recommendations").insert({
+      ; ({ error } = await supabase.from("recommendations").insert({
         ...payload,
         created_by: residentId,
         removed: false,
@@ -173,9 +173,8 @@ function AddPostModal({ categories, subcategories, residentId, onClose, onSaved,
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
         {/* Header */}
         <div
-          className={`px-6 py-4 rounded-t-2xl flex items-center justify-between ${
-            isAvoid ? "bg-red-50 border-b border-red-100" : "bg-[#EAF0F7] border-b border-blue-100"
-          }`}
+          className={`px-6 py-4 rounded-t-2xl flex items-center justify-between ${isAvoid ? "bg-red-50 border-b border-red-100" : "bg-[#EAF0F7] border-b border-blue-100"
+            }`}
         >
           <div>
             <h2 className={`font-bold text-lg font-['Playfair_Display'] ${labelColor}`}>
@@ -187,11 +186,11 @@ function AddPostModal({ categories, subcategories, residentId, onClose, onSaved,
               {isEditMode
                 ? "Update your post details below"
                 : isAvoid
-                ? "Warn your neighbours about a bad experience"
-                : "Recommend a business, service, or product to your neighbours"}
+                  ? "Warn your neighbours about a bad experience"
+                  : "Recommend a business, service, or product to your neighbours"}
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
         </div>
 
         {/* Type toggle */}
@@ -200,22 +199,20 @@ function AddPostModal({ categories, subcategories, residentId, onClose, onSaved,
             <button
               onClick={() => { if (!hasReactions) setPostType("recommend"); }}
               disabled={hasReactions}
-              className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition ${
-                postType === "recommend"
+              className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition ${postType === "recommend"
                   ? "bg-[#2C5F8A] text-white border-[#2C5F8A]"
                   : "bg-white text-gray-500 border-gray-200 hover:border-[#2C5F8A]"
-              } ${hasReactions ? "opacity-60 cursor-not-allowed" : ""}`}
+                } ${hasReactions ? "opacity-60 cursor-not-allowed" : ""}`}
             >
               ⭐ Recommendation
             </button>
             <button
               onClick={() => { if (!hasReactions) setPostType("avoid"); }}
               disabled={hasReactions}
-              className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition ${
-                postType === "avoid"
+              className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition ${postType === "avoid"
                   ? "bg-red-600 text-white border-red-600"
                   : "bg-white text-gray-500 border-gray-200 hover:border-red-400"
-              } ${hasReactions ? "opacity-60 cursor-not-allowed" : ""}`}
+                } ${hasReactions ? "opacity-60 cursor-not-allowed" : ""}`}
             >
               ⚠️ Steer Clear
             </button>
@@ -419,12 +416,12 @@ function AddPostModal({ categories, subcategories, residentId, onClose, onSaved,
             {photoUploading
               ? "Uploading photo…"
               : saving
-              ? "Saving…"
-              : isEditMode
-              ? "Save Changes"
-              : isAvoid
-              ? "Post Warning"
-              : "Post Recommendation"}
+                ? "Saving…"
+                : isEditMode
+                  ? "Save Changes"
+                  : isAvoid
+                    ? "Post Warning"
+                    : "Post Recommendation"}
           </button>
         </div>
       </div>
@@ -796,9 +793,8 @@ function RecDetailModal({
 
           {/* Type banner */}
           <div
-            className={`px-5 py-2 flex items-center justify-between text-xs font-semibold shrink-0 ${
-              isAvoid ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800"
-            }`}
+            className={`px-5 py-2 flex items-center justify-between text-xs font-semibold shrink-0 ${isAvoid ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800"
+              }`}
           >
             <span>{isAvoid ? "⚠️ Steer Clear" : "⭐ Recommendation"}</span>
             {rec.pending_review && isAdmin && (
@@ -1114,9 +1110,8 @@ function RecommendationCard({
     <>
       <div
         onClick={() => setShowDetail(true)}
-        className={`rounded-2xl border shadow-sm hover:shadow-md transition-shadow bg-white overflow-hidden flex flex-col cursor-pointer ${
-          isAvoid ? "border-red-200" : "border-[#C9922A]/30"
-        }`}
+        className={`rounded-2xl border shadow-sm hover:shadow-md transition-shadow bg-white overflow-hidden flex flex-col cursor-pointer ${isAvoid ? "border-red-200" : "border-[#C9922A]/30"
+          }`}
       >
         {/* Photo thumbnail */}
         {rec.photo_url && (
@@ -1131,9 +1126,8 @@ function RecommendationCard({
 
         {/* Type banner */}
         <div
-          className={`px-4 py-1.5 flex items-center justify-between text-xs font-semibold ${
-            isAvoid ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800"
-          }`}
+          className={`px-4 py-1.5 flex items-center justify-between text-xs font-semibold ${isAvoid ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800"
+            }`}
         >
           <span>{isAvoid ? "⚠️ Steer Clear" : "⭐ Recommendation"}</span>
           {rec.pending_review && isAdmin && (
@@ -1223,8 +1217,8 @@ function RecommendationCard({
                   isOwner
                     ? "You can't react to your own post"
                     : myPositive
-                    ? `Remove your ${positiveType}`
-                    : `${positiveType === "heart" ? "Love it" : "I agree"}`
+                      ? `Remove your ${positiveType}`
+                      : `${positiveType === "heart" ? "Love it" : "I agree"}`
                 }
                 className={`flex items-center gap-1 text-xs px-2 py-1 rounded-full transition
                   ${isOwner ? "cursor-default opacity-40 bg-gray-100 text-gray-400" : ""}
@@ -1233,8 +1227,8 @@ function RecommendationCard({
                       ? "bg-blue-100 text-blue-700 font-semibold"
                       : "bg-rose-100 text-rose-600 font-semibold"
                     : !isOwner
-                    ? "bg-gray-100 text-gray-500 hover:bg-gray-200"
-                    : ""
+                      ? "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                      : ""
                   }`}
               >
                 {positiveEmoji} <span>{positiveReactions.length}</span>
@@ -1528,8 +1522,8 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
       wasEdit
         ? "Post updated successfully!"
         : postType === "avoid"
-        ? "Steer Clear warning posted and flagged for admin review."
-        : "Recommendation posted successfully!"
+          ? "Steer Clear warning posted and flagged for admin review."
+          : "Recommendation posted successfully!"
     );
     fetchRecs();
   };
@@ -1594,11 +1588,10 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
               setFilterCategory("");
               setFilterSubcategory("");
             }}
-            className={`px-5 py-2 rounded-lg text-sm font-semibold transition ${
-              activeTab === "recommend"
+            className={`px-5 py-2 rounded-lg text-sm font-semibold transition ${activeTab === "recommend"
                 ? "bg-white text-[#2C5F8A] shadow-sm"
                 : "text-gray-500 hover:text-gray-700"
-            }`}
+              }`}
           >
             ⭐ Recommendations
           </button>
@@ -1608,11 +1601,10 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
               setFilterCategory("");
               setFilterSubcategory("");
             }}
-            className={`px-5 py-2 rounded-lg text-sm font-semibold transition ${
-              activeTab === "avoid"
+            className={`px-5 py-2 rounded-lg text-sm font-semibold transition ${activeTab === "avoid"
                 ? "bg-white text-red-700 shadow-sm"
                 : "text-gray-500 hover:text-gray-700"
-            }`}
+              }`}
           >
             ⚠️ Steer Clear
           </button>
@@ -1634,6 +1626,7 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
         <select
           value={filterCategory}
           onChange={(e) => setFilterCategory(e.target.value)}
+          aria-label="Filter by category"
           className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#2C5F8A] min-w-[160px]"
         >
           <option value="">All categories</option>
@@ -1649,6 +1642,7 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
           <select
             value={filterSubcategory}
             onChange={(e) => setFilterSubcategory(e.target.value)}
+            aria-label="Filter by subcategory"
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#2C5F8A] min-w-[160px]"
           >
             <option value="">All subcategories</option>
@@ -1665,21 +1659,19 @@ export default function RecommendationsTracker({ currentUserId, residentId, isAd
           <span className="text-xs text-gray-400">Sort:</span>
           <button
             onClick={() => setSortBy("newest")}
-            className={`text-xs px-3 py-1.5 rounded-lg border transition ${
-              sortBy === "newest"
+            className={`text-xs px-3 py-1.5 rounded-lg border transition ${sortBy === "newest"
                 ? "bg-[#2C5F8A] text-white border-[#2C5F8A]"
                 : "border-gray-200 text-gray-500 hover:border-[#2C5F8A]"
-            }`}
+              }`}
           >
             Newest
           </button>
           <button
             onClick={() => setSortBy("popular")}
-            className={`text-xs px-3 py-1.5 rounded-lg border transition ${
-              sortBy === "popular"
+            className={`text-xs px-3 py-1.5 rounded-lg border transition ${sortBy === "popular"
                 ? "bg-[#2C5F8A] text-white border-[#2C5F8A]"
                 : "border-gray-200 text-gray-500 hover:border-[#2C5F8A]"
-            }`}
+              }`}
           >
             Most Popular
           </button>
