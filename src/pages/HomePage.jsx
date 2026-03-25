@@ -222,22 +222,22 @@ export default function HomePage() {
         <div className="text-5xl hidden sm:block">🏡</div>
       </div>
 
-      {/* Admin shortcut */}
-      {isAdmin && (
-        <div className="bg-gold-50 border-2 border-gold-300 rounded-2xl px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">🔑</span>
-            <div>
-              <div className="font-semibold text-brand-800">Admin Portal</div>
-              <div className="text-sm text-brand-500">Manage residents, access, and settings</div>
-            </div>
-          </div>
-          <Link to="/admin"
-            className="bg-brand-700 hover:bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-            Open Admin
+      {/* Useful Links — section hides itself when empty */}
+      <UsefulLinks />
+
+      {/* Admin reports widget */}
+      <AdminReportsWidget />
+
+      {/* Upcoming Events */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-display text-xl text-brand-800">Upcoming Events</h2>
+          <Link to="/apps/calendar" className="text-sm text-brand-500 hover:text-brand-700 transition-colors">
+            Full calendar →
           </Link>
         </div>
-      )}
+        <UpcomingEvents />
+      </div>
 
       {/* Community Apps */}
       <div>
@@ -261,23 +261,6 @@ export default function HomePage() {
           </div>
         )}
       </div>
-
-      {/* Upcoming Events */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-display text-xl text-brand-800">Upcoming Events</h2>
-          <Link to="/apps/calendar" className="text-sm text-brand-500 hover:text-brand-700 transition-colors">
-            Full calendar →
-          </Link>
-        </div>
-        <UpcomingEvents />
-      </div>
-
-      {/* Useful Links — section hides itself when empty */}
-      <UsefulLinks />
-
-      {/* Admin reports widget */}
-      <AdminReportsWidget />
     </div>
   )
 }
