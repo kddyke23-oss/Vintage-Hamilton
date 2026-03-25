@@ -4,6 +4,65 @@ import { useAuth } from '@/context/AuthContext'
 import { supabase } from '@/lib/supabase'
 import AdminReportsWidget from '@/components/apps/AdminReportsWidget'
 
+function UsefulLinks() {
+  const [links, setLinks] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetchLinks() {
+      try {
+        const { data, error } = await supabase
+          .from('useful_links')
+          .select('id, name, url, description')
+          .order('name')
+        if (error) throw error
+        setLinks(data || [])
+      } catch (e) {
+        console.error('Failed to load useful links', e)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchLinks()
+  }, [])
+
+  if (loading) return null // Silent load — no flash if table is empty or doesn't exist yet
+
+  if (links.length === 0) return null // Don't show the section if there are no links
+
+  return (
+    <div>
+      <h2 className="font-display text-xl text-brand-800 mb-4">Useful Links</h2>
+      <div className="bg-white rounded-2xl border border-brand-100 divide-y divide-brand-50">
+      {links.map(link => (
+        <a
+          key={link.id}
+          href={link.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-start gap-4 px-5 py-4 hover:bg-brand-50 transition-colors group"
+        >
+          <div
+            className="w-8 h-8 flex-shrink-0 rounded-lg bg-brand-100 text-brand-600 flex items-center justify-center text-sm font-bold mt-0.5 group-hover:bg-brand-200 transition-colors"
+          >
+            🔗
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-brand-800 text-sm group-hover:text-brand-600 transition-colors">
+              {link.name}
+              <span className="inline-block ml-1.5 text-brand-400 text-xs font-normal">↗</span>
+            </p>
+            {link.description && (
+              <p className="text-brand-500 text-xs mt-0.5">{link.description}</p>
+            )}
+          </div>
+        </a>
+      ))}
+      </div>
+    </div>
+  )
+}
+
 const ALL_APPS = [
   { id: 'directory',       label: 'Resident Directory',         description: 'Find and connect with your neighbors',   icon: '👥', path: '/apps/directory' },
   { id: 'calendar',        label: 'Social Calendar',            description: 'Community events and activities',         icon: '📅', path: '/apps/calendar' },
@@ -213,6 +272,9 @@ export default function HomePage() {
         </div>
         <UpcomingEvents />
       </div>
+
+      {/* Useful Links — section hides itself when empty */}
+      <UsefulLinks />
 
       {/* Admin reports widget */}
       <AdminReportsWidget />

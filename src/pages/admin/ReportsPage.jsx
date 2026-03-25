@@ -1070,12 +1070,209 @@ function CategoriesTagsTab() {
   )
 }
 
+// ─── Tab: Useful Links ────────────────────────────────────────────────────────
+
+function UsefulLinksTab() {
+  const toast = useToast()
+  const [links, setLinks] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [editing, setEditing] = useState(null) // null | 'new' | link object
+  const [form, setForm] = useState({ name: '', url: '', description: '' })
+  const [saving, setSaving] = useState(false)
+
+  const fetchLinks = useCallback(async () => {
+    setLoading(true)
+    const { data } = await supabase
+      .from('useful_links')
+      .select('id, name, url, description, created_at')
+      .order('name')
+    setLinks(data || [])
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { fetchLinks() }, [fetchLinks])
+
+  const openNew = () => {
+    setEditing('new')
+    setForm({ name: '', url: '', description: '' })
+  }
+
+  const openEdit = (link) => {
+    setEditing(link)
+    setForm({ name: link.name, url: link.url, description: link.description || '' })
+  }
+
+  const cancelEdit = () => {
+    setEditing(null)
+    setForm({ name: '', url: '', description: '' })
+  }
+
+  const saveLink = async () => {
+    if (!form.name.trim() || !form.url.trim()) {
+      toast.error('Name and URL are required.')
+      return
+    }
+    // Basic URL validation — prepend https:// if no protocol
+    let url = form.url.trim()
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url
+
+    setSaving(true)
+    const payload = {
+      name: form.name.trim(),
+      url,
+      description: form.description.trim() || null,
+    }
+    let error
+    if (editing === 'new') {
+      ; ({ error } = await supabase.from('useful_links').insert(payload))
+    } else {
+      ; ({ error } = await supabase.from('useful_links').update(payload).eq('id', editing.id))
+    }
+    setSaving(false)
+    if (error) { toast.error('Could not save link.'); return }
+    toast.success(editing === 'new' ? 'Link added.' : 'Link updated.')
+    cancelEdit()
+    fetchLinks()
+  }
+
+  const deleteLink = async (link) => {
+    if (!window.confirm(`Delete "${link.name}"?`)) return
+    const { error } = await supabase.from('useful_links').delete().eq('id', link.id)
+    if (error) { toast.error('Could not delete link.'); return }
+    toast.success('Link deleted.')
+    fetchLinks()
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Useful Links</h2>
+          <p className="text-sm text-gray-500 mt-0.5">Links displayed on the homepage for all signed-in residents.</p>
+        </div>
+        <button
+          onClick={openNew}
+          className="bg-brand-700 hover:bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+        >
+          + Add Link
+        </button>
+      </div>
+
+      {/* Inline add/edit form */}
+      {editing !== null && (
+        <div className="bg-brand-50 border border-brand-200 rounded-xl p-5 space-y-4">
+          <h3 className="text-sm font-semibold text-brand-800">
+            {editing === 'new' ? 'Add New Link' : 'Edit Link'}
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="e.g. Hamilton Township"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">URL *</label>
+              <input
+                type="text"
+                value={form.url}
+                onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+                placeholder="https://example.com"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Description (optional)</label>
+            <input
+              type="text"
+              value={form.description}
+              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              placeholder="Brief description of the link"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+            />
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={saveLink}
+              disabled={saving}
+              className="bg-brand-700 hover:bg-brand-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : editing === 'new' ? 'Add Link' : 'Save Changes'}
+            </button>
+            <button
+              onClick={cancelEdit}
+              className="text-gray-500 hover:text-gray-700 px-4 py-2 text-sm font-medium transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Links table */}
+      {loading ? (
+        <div className="text-center text-gray-400 py-8 text-sm">Loading links…</div>
+      ) : links.length === 0 ? (
+        <div className="text-center text-gray-400 py-8 text-sm bg-white rounded-xl border border-gray-100">
+          No useful links yet. Click "Add Link" to create the first one.
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-5 py-3">Name</th>
+                <th className="px-5 py-3">URL</th>
+                <th className="px-5 py-3 hidden sm:table-cell">Description</th>
+                <th className="px-5 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {links.map(link => (
+                <tr key={link.id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-5 py-3 font-medium text-gray-900">{link.name}</td>
+                  <td className="px-5 py-3 text-brand-600 max-w-[200px] truncate">
+                    <a href={link.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                      {link.url.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+                    </a>
+                  </td>
+                  <td className="px-5 py-3 text-gray-500 hidden sm:table-cell">{link.description || '—'}</td>
+                  <td className="px-5 py-3 text-right whitespace-nowrap">
+                    <button
+                      onClick={() => openEdit(link)}
+                      className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => deleteLink(link)}
+                      className="text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50"
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 const TABS = [
   { id: 'reports', label: '🚩 Reports' },
   { id: 'recommendations', label: '⭐ Recommendations' },
   { id: 'categories', label: '🗂️ Categories & Tags' },
+  { id: 'links', label: '🔗 Useful Links' },
 ]
 
 export default function ReportsPage() {
@@ -1141,7 +1338,7 @@ export default function ReportsPage() {
         <h1 className="text-2xl font-bold text-gray-900" style={{ fontFamily: "'Playfair Display', serif" }}>
           Admin Panel
         </h1>
-        <p className="text-gray-500 text-sm mt-1">Manage reports, calendar categories, and directory tags.</p>
+        <p className="text-gray-500 text-sm mt-1">Manage reports, categories, directory tags, and useful links.</p>
       </div>
 
       {/* Tabs */}
@@ -1172,6 +1369,7 @@ export default function ReportsPage() {
       {activeTab === 'reports' && <ReportsTab />}
       {activeTab === 'recommendations' && <RecommendationsTab onCountChange={fetchTabCounts} />}
       {activeTab === 'categories' && <CategoriesTagsTab />}
+      {activeTab === 'links' && <UsefulLinksTab />}
     </div>
   )
 }
