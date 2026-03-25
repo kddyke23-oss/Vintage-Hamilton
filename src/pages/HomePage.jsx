@@ -148,13 +148,17 @@ function UpcomingEvents() {
         const category = event.calendar_categories
         const color = category?.color || '#2C5F8A'
         return (
-          <div key={event.id} className="flex items-start gap-4 px-5 py-4">
+          <Link
+            key={event.id}
+            to={`/apps/calendar?openEvent=${event.id}`}
+            className="flex items-start gap-4 px-5 py-4 hover:bg-brand-50 transition-colors group"
+          >
             <div
               className="w-1 flex-shrink-0 rounded-full self-stretch min-h-[40px]"
               style={{ backgroundColor: color }}
             />
             <div className="flex-1 min-w-0">
-              <p className="font-semibold text-brand-800 text-sm truncate">{event.title}</p>
+              <p className="font-semibold text-brand-800 text-sm truncate group-hover:text-brand-600 transition-colors">{event.title}</p>
               <p className="text-brand-500 text-xs mt-0.5">
                 {formatEventDate(event.event_date, event.event_time)}
                 {event.location && <> · {event.location}</>}
@@ -168,7 +172,7 @@ function UpcomingEvents() {
                 </span>
               )}
             </div>
-          </div>
+          </Link>
         )
       })}
       <div className="px-5 py-3">
