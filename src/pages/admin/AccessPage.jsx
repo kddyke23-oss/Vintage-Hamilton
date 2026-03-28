@@ -11,6 +11,7 @@ const APPS = [
   { id: 'lotto', label: 'Lotto', icon: '🎟️' },
   { id: 'blog', label: 'Blog', icon: '📝' },
   { id: 'recommendations', label: 'Recommendations', icon: '⭐' },
+  { id: 'budget', label: 'Budget', icon: '💰' },
 ]
 
 // Cycle: none → user → admin → none (regular apps only)
