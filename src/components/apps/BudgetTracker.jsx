@@ -223,6 +223,7 @@ function EntryModal({ entry, categories, myResidentId, onSave, onClose }) {
     amount:      entry ? String(entry.amount) : "",
     paid_to:     entry?.paid_to || "",
   });
+  const [receiptFile, setReceiptFile] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -252,6 +253,13 @@ function EntryModal({ entry, categories, myResidentId, onSave, onClose }) {
     const amt = parseFloat(form.amount);
     if (!amt || amt <= 0) return setError("Amount must be greater than zero.");
 
+    // Validate receipt file if provided
+    if (receiptFile) {
+      const allowed = ["image/jpeg", "image/png", "application/pdf"];
+      if (!allowed.includes(receiptFile.type)) return setError("Receipt must be JPEG, PNG, or PDF.");
+      if (receiptFile.size > 5 * 1024 * 1024) return setError("Receipt must be under 5 MB.");
+    }
+
     setSaving(true);
     try {
       const payload = {
@@ -263,6 +271,8 @@ function EntryModal({ entry, categories, myResidentId, onSave, onClose }) {
         paid_to:     form.paid_to.trim() || null,
       };
 
+      let savedId = entry?.id;
+
       if (isEdit) {
         payload.updated_by = myResidentId;
         payload.updated_at = new Date().toISOString();
@@ -273,11 +283,33 @@ function EntryModal({ entry, categories, myResidentId, onSave, onClose }) {
         if (err) throw err;
       } else {
         payload.created_by = myResidentId;
-        const { error: err } = await supabase
+        const { data: inserted, error: err } = await supabase
           .from("budget_entries")
-          .insert(payload);
+          .insert(payload)
+          .select("id")
+          .single();
         if (err) throw err;
+        savedId = inserted.id;
       }
+
+      // Upload receipt if provided
+      if (receiptFile && savedId) {
+        const ext = receiptFile.name.split(".").pop();
+        const storagePath = `${savedId}/${Date.now()}.${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from("budget-receipts")
+          .upload(storagePath, receiptFile, { contentType: receiptFile.type, upsert: true });
+        if (upErr) throw upErr;
+
+        const { data: urlData } = supabase.storage
+          .from("budget-receipts")
+          .getPublicUrl(storagePath);
+
+        await supabase.from("budget_entries")
+          .update({ receipt_url: urlData.publicUrl, receipt_filename: receiptFile.name })
+          .eq("id", savedId);
+      }
+
       onSave();
     } catch (err) {
       console.error("Save error:", err);
@@ -390,6 +422,32 @@ function EntryModal({ entry, categories, myResidentId, onSave, onClose }) {
               placeholder="0.00"
               className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm text-brand-800 focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
             />
+          </div>
+
+          {/* Receipt (optional) */}
+          <div>
+            <label className="block text-xs font-semibold text-brand-600 mb-1.5">
+              Receipt <span className="font-normal text-brand-400">(optional, JPEG/PNG/PDF, max 5 MB)</span>
+            </label>
+            {entry?.receipt_url && !receiptFile && (
+              <div className="flex items-center gap-2 mb-2 text-xs text-brand-500">
+                <Ic path={ICONS.receipt} size={14} />
+                <a href={entry.receipt_url} target="_blank" rel="noopener noreferrer" className="underline hover:text-brand-700">
+                  {entry.receipt_filename || "View current receipt"}
+                </a>
+              </div>
+            )}
+            <input
+              type="file"
+              accept=".jpg,.jpeg,.png,.pdf"
+              onChange={e => setReceiptFile(e.target.files?.[0] || null)}
+              className="w-full text-sm text-brand-600 file:mr-3 file:py-1.5 file:px-3 file:border-0 file:rounded-lg file:text-xs file:font-medium file:bg-brand-100 file:text-brand-700 hover:file:bg-brand-200 file:cursor-pointer"
+            />
+            {receiptFile && (
+              <p className="text-xs text-brand-400 mt-1">
+                {receiptFile.name} ({(receiptFile.size / 1024).toFixed(0)} KB)
+              </p>
+            )}
           </div>
 
           {/* Error */}
@@ -1244,6 +1302,348 @@ function TargetsTab({ entries, categories, targets, categoryMap, settings }) {
 
 
 // ══════════════════════════════════════════════════════════════════════════════
+//  CSV IMPORT SECTION (used inside Admin tab)
+// ══════════════════════════════════════════════════════════════════════════════
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return { headers: [], rows: [] };
+  // Handle quoted fields
+  function splitRow(line) {
+    const fields = [];
+    let current = "", inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQuotes = !inQuotes; continue; }
+      if (ch === "," && !inQuotes) { fields.push(current.trim()); current = ""; continue; }
+      current += ch;
+    }
+    fields.push(current.trim());
+    return fields;
+  }
+  const headers = splitRow(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9_]/g, "_"));
+  const rows = lines.slice(1).map(l => {
+    const vals = splitRow(l);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = vals[i] || ""; });
+    return obj;
+  });
+  return { headers, rows };
+}
+
+const IMPORT_FIELD_MAP = [
+  { target: "entry_date",   label: "Date",        required: true },
+  { target: "entry_type",   label: "Type",        required: true, hint: "income or expense" },
+  { target: "category",     label: "Category",    required: true, hint: "must match existing category name" },
+  { target: "description",  label: "Description", required: true },
+  { target: "amount",       label: "Amount",      required: true },
+  { target: "paid_to",      label: "Paid To",     required: false },
+];
+
+function ImportSection({ categories, myResidentId, onRefresh, showToast }) {
+  const [file, setFile] = useState(null);
+  const [parsed, setParsed] = useState(null); // { headers, rows }
+  const [mapping, setMapping] = useState({}); // target -> csv header
+  const [preview, setPreview] = useState(null); // processed rows ready to insert
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState(null); // { success, failed, errors }
+
+  // Category name -> id lookup
+  const catNameMap = useMemo(() => {
+    const map = {};
+    categories.forEach(c => { map[c.name.toLowerCase()] = c.id; });
+    return map;
+  }, [categories]);
+
+  function handleFileChange(e) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f);
+    setParsed(null);
+    setPreview(null);
+    setResult(null);
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const { headers, rows } = parseCSV(ev.target.result);
+      setParsed({ headers, rows });
+
+      // Auto-map columns by name similarity
+      const autoMap = {};
+      IMPORT_FIELD_MAP.forEach(field => {
+        const match = headers.find(h =>
+          h.includes(field.target.replace("_", "")) ||
+          h.includes(field.label.toLowerCase().replace(/\s/g, "_")) ||
+          h.includes(field.label.toLowerCase().replace(/\s/g, ""))
+        );
+        if (match) autoMap[field.target] = match;
+      });
+      setMapping(autoMap);
+    };
+    reader.readAsText(f);
+  }
+
+  function buildPreview() {
+    if (!parsed) return;
+    const rows = [];
+    const errors = [];
+
+    parsed.rows.forEach((row, i) => {
+      const lineNum = i + 2; // 1-indexed, +1 for header
+      const entry = {};
+
+      // Map fields
+      const dateVal = row[mapping.entry_date] || "";
+      const typeVal = (row[mapping.entry_type] || "").toLowerCase().trim();
+      const catVal = (row[mapping.category] || "").trim();
+      const descVal = (row[mapping.description] || "").trim();
+      const amtVal = row[mapping.amount] || "";
+      const paidVal = mapping.paid_to ? (row[mapping.paid_to] || "").trim() : "";
+
+      // Parse date (try multiple formats)
+      let parsedDate = null;
+      if (dateVal) {
+        const d = new Date(dateVal + (dateVal.includes("T") ? "" : "T12:00:00"));
+        if (!isNaN(d.getTime())) parsedDate = d.toISOString().slice(0, 10);
+      }
+      if (!parsedDate) { errors.push(`Row ${lineNum}: Invalid date "${dateVal}"`); return; }
+
+      // Validate type
+      if (typeVal !== "income" && typeVal !== "expense") {
+        errors.push(`Row ${lineNum}: Type must be "income" or "expense", got "${typeVal}"`);
+        return;
+      }
+
+      // Match category
+      const catId = catNameMap[catVal.toLowerCase()];
+      if (!catId) { errors.push(`Row ${lineNum}: Unknown category "${catVal}"`); return; }
+
+      if (!descVal) { errors.push(`Row ${lineNum}: Description is empty`); return; }
+
+      const amt = parseFloat(amtVal.replace(/[,$]/g, ""));
+      if (!amt || amt <= 0) { errors.push(`Row ${lineNum}: Invalid amount "${amtVal}"`); return; }
+
+      rows.push({
+        entry_date: parsedDate,
+        entry_type: typeVal,
+        category_id: catId,
+        description: descVal,
+        amount: amt,
+        paid_to: paidVal || null,
+        created_by: myResidentId,
+        _display: { date: parsedDate, type: typeVal, category: catVal, desc: descVal, amount: amt },
+      });
+    });
+
+    setPreview({ rows, errors });
+  }
+
+  async function doImport() {
+    if (!preview?.rows.length) return;
+    setImporting(true);
+    let success = 0, failed = 0;
+    const importErrors = [];
+
+    // Insert in batches of 50
+    const batches = [];
+    for (let i = 0; i < preview.rows.length; i += 50) {
+      batches.push(preview.rows.slice(i, i + 50));
+    }
+
+    for (const batch of batches) {
+      const payloads = batch.map(r => ({
+        entry_date: r.entry_date,
+        entry_type: r.entry_type,
+        category_id: r.category_id,
+        description: r.description,
+        amount: r.amount,
+        paid_to: r.paid_to,
+        created_by: r.created_by,
+      }));
+      const { error } = await supabase.from("budget_entries").insert(payloads);
+      if (error) {
+        failed += batch.length;
+        importErrors.push(error.message);
+      } else {
+        success += batch.length;
+      }
+    }
+
+    setResult({ success, failed, errors: importErrors });
+    if (success > 0) {
+      showToast(`Imported ${success} entries${failed > 0 ? ` (${failed} failed)` : ""}`);
+      onRefresh();
+    } else {
+      showToast("Import failed", "error");
+    }
+    setImporting(false);
+  }
+
+  function resetImport() {
+    setFile(null);
+    setParsed(null);
+    setPreview(null);
+    setResult(null);
+    setMapping({});
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-brand-200 p-6 shadow-sm">
+      <h2 className="font-display text-lg text-brand-800 mb-2">Import Data</h2>
+      <p className="text-brand-500 text-xs mb-4">
+        Upload a CSV file to bulk-import budget entries. Excel files should be saved as CSV first.
+      </p>
+
+      {/* Step 1: File upload */}
+      {!parsed && (
+        <div>
+          <input type="file" accept=".csv" onChange={handleFileChange}
+            className="text-sm text-brand-600 file:mr-3 file:py-2 file:px-4 file:border-0 file:rounded-lg file:text-sm file:font-medium file:bg-brand-100 file:text-brand-700 hover:file:bg-brand-200 file:cursor-pointer" />
+          <p className="text-brand-400 text-xs mt-3">
+            Expected columns: Date, Type (income/expense), Category, Description, Amount, Paid To (optional)
+          </p>
+        </div>
+      )}
+
+      {/* Step 2: Column mapping */}
+      {parsed && !preview && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-brand-700 font-medium">
+              Found {parsed.rows.length} rows with {parsed.headers.length} columns
+            </p>
+            <button onClick={resetImport} className="text-xs text-brand-500 hover:text-brand-700">Start over</button>
+          </div>
+
+          <div className="space-y-2">
+            {IMPORT_FIELD_MAP.map(field => (
+              <div key={field.target} className="flex items-center gap-3">
+                <span className="text-sm text-brand-700 w-28 flex-shrink-0">
+                  {field.label}{field.required && <span className="text-red-500">*</span>}
+                </span>
+                <select
+                  value={mapping[field.target] || ""}
+                  onChange={e => setMapping(m => ({ ...m, [field.target]: e.target.value }))}
+                  className="flex-1 border border-brand-200 rounded-lg px-2 py-1.5 text-sm text-brand-800 bg-white outline-none focus:ring-2 focus:ring-brand-300"
+                >
+                  <option value="">{field.required ? "Select column\u2026" : "(skip)"}</option>
+                  {parsed.headers.map(h => (
+                    <option key={h} value={h}>{h}</option>
+                  ))}
+                </select>
+                {field.hint && <span className="text-xs text-brand-400 hidden sm:inline">{field.hint}</span>}
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-end">
+            <button onClick={buildPreview}
+              disabled={!IMPORT_FIELD_MAP.filter(f => f.required).every(f => mapping[f.target])}
+              className="px-4 py-2 bg-brand-700 text-white rounded-lg text-sm font-medium hover:bg-brand-800 transition-colors disabled:opacity-50">
+              Preview Import
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Preview */}
+      {preview && !result && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-brand-700 font-medium">
+              {preview.rows.length} valid rows ready to import
+              {preview.errors.length > 0 && (
+                <span className="text-red-600 ml-2">({preview.errors.length} errors)</span>
+              )}
+            </p>
+            <button onClick={resetImport} className="text-xs text-brand-500 hover:text-brand-700">Start over</button>
+          </div>
+
+          {/* Error list */}
+          {preview.errors.length > 0 && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 max-h-32 overflow-y-auto">
+              {preview.errors.slice(0, 20).map((err, i) => (
+                <p key={i} className="text-xs text-red-600">{err}</p>
+              ))}
+              {preview.errors.length > 20 && (
+                <p className="text-xs text-red-500 mt-1">...and {preview.errors.length - 20} more</p>
+              )}
+            </div>
+          )}
+
+          {/* Preview table */}
+          {preview.rows.length > 0 && (
+            <div className="overflow-x-auto max-h-60 overflow-y-auto border border-brand-200 rounded-lg">
+              <table className="w-full text-xs">
+                <thead className="bg-brand-50 sticky top-0">
+                  <tr>
+                    <th className="text-left px-3 py-2 text-brand-600">Date</th>
+                    <th className="text-left px-3 py-2 text-brand-600">Type</th>
+                    <th className="text-left px-3 py-2 text-brand-600">Category</th>
+                    <th className="text-left px-3 py-2 text-brand-600">Description</th>
+                    <th className="text-right px-3 py-2 text-brand-600">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.rows.slice(0, 50).map((r, i) => (
+                    <tr key={i} className="border-t border-brand-100">
+                      <td className="px-3 py-1.5 text-brand-700">{r._display.date}</td>
+                      <td className={`px-3 py-1.5 capitalize ${r._display.type === "income" ? "text-green-700" : "text-red-700"}`}>
+                        {r._display.type}
+                      </td>
+                      <td className="px-3 py-1.5 text-brand-700">{r._display.category}</td>
+                      <td className="px-3 py-1.5 text-brand-700 max-w-[200px] truncate">{r._display.desc}</td>
+                      <td className="px-3 py-1.5 text-right text-brand-800">{fmtMoney(r._display.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {preview.rows.length > 50 && (
+                <p className="text-xs text-brand-400 px-3 py-2">Showing first 50 of {preview.rows.length} rows</p>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-3">
+            <button onClick={() => setPreview(null)} className="text-sm text-brand-600 hover:text-brand-800">
+              Back to Mapping
+            </button>
+            <button onClick={doImport} disabled={importing || !preview.rows.length}
+              className="px-5 py-2 bg-brand-700 text-white rounded-lg text-sm font-medium hover:bg-brand-800 transition-colors disabled:opacity-50">
+              {importing ? "Importing\u2026" : `Import ${preview.rows.length} Entries`}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 4: Result */}
+      {result && (
+        <div className="space-y-3">
+          <div className={`p-4 rounded-lg ${result.failed ? "bg-amber-50 border border-amber-200" : "bg-green-50 border border-green-200"}`}>
+            <p className={`text-sm font-medium ${result.failed ? "text-amber-800" : "text-green-800"}`}>
+              <Ic path={result.failed ? ICONS.warn : ICONS.check} size={16} />{" "}
+              {result.success} entries imported successfully
+              {result.failed > 0 && `, ${result.failed} failed`}
+            </p>
+            {result.errors.length > 0 && (
+              <div className="mt-2">
+                {result.errors.map((err, i) => (
+                  <p key={i} className="text-xs text-amber-700">{err}</p>
+                ))}
+              </div>
+            )}
+          </div>
+          <button onClick={resetImport}
+            className="text-sm text-brand-600 hover:text-brand-800 underline">
+            Import more data
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
 //  TAB: ADMIN
 // ══════════════════════════════════════════════════════════════════════════════
 function AdminTab({ categories, targets, settings, isBudgetAdmin, myResidentId, onRefresh, showToast }) {
@@ -1550,14 +1950,8 @@ function AdminTab({ categories, targets, settings, isBudgetAdmin, myResidentId, 
           )}
         </div>
 
-        {/* ── Import placeholder ──────────────────────────────────────────── */}
-        <div className="bg-white rounded-xl border border-brand-200 p-6 shadow-sm">
-          <h2 className="font-display text-lg text-brand-800 mb-4">Import Data</h2>
-          <p className="text-brand-500 text-sm">
-            Upload an Excel or CSV file to bulk-import historical budget data.
-          </p>
-          <p className="text-brand-400 text-xs mt-2">Coming in Session 5</p>
-        </div>
+        {/* ── CSV Import ────────────────────────────────────────────────── */}
+        <ImportSection categories={categories} myResidentId={myResidentId} onRefresh={onRefresh} showToast={showToast} />
       </div>
     </div>
   );
