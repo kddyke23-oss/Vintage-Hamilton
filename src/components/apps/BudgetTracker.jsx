@@ -1,5 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, Legend,
+} from "recharts";
 
 // ─── CSS Variables (matching VintageHamilton design system) ──────────────────
 const VH_STYLES = `
@@ -194,7 +198,7 @@ export default function BudgetTracker({ user, isAdmin, isBudgetAdmin }) {
             myResidentId={myResidentId} onRefresh={loadData} showToast={showToast}
           />
         )}
-        {activeTab === "summary" && <SummaryTab entries={entries} categoryMap={categoryMap} settings={settings} />}
+        {activeTab === "summary" && <SummaryTab entries={entries} categories={categories} categoryMap={categoryMap} settings={settings} />}
         {activeTab === "targets" && <TargetsTab categories={categories} settings={settings} isBudgetAdmin={isBudgetAdmin} />}
         {activeTab === "admin"   && <AdminTab categories={categories} settings={settings} isBudgetAdmin={isBudgetAdmin} myResidentId={myResidentId} onRefresh={loadData} />}
       </div>
@@ -705,16 +709,309 @@ function LedgerTab({ entries, categories, categoryMap, profileMap, isBudgetAdmin
 // ══════════════════════════════════════════════════════════════════════════════
 //  TAB: SUMMARY
 // ══════════════════════════════════════════════════════════════════════════════
-function SummaryTab({ entries, categoryMap, settings }) {
+function SummaryTab({ entries, categories, categoryMap, settings }) {
+  // ── Fiscal year helpers ──────────────────────────────────────────────────
+  const fyStart = settings?.fiscal_year_start_month || 1; // 1 = Jan
+
+  // Derive available fiscal years from entries
+  const fiscalYears = useMemo(() => {
+    if (!entries.length) return [];
+    const years = new Set();
+    entries.forEach(e => {
+      const d = new Date(e.entry_date + "T12:00:00");
+      const m = d.getMonth() + 1; // 1-based
+      const y = d.getFullYear();
+      // If fiscal year starts in April (4), then Jan-Mar belong to prior FY
+      const fy = m < fyStart ? y - 1 : y;
+      years.add(fy);
+    });
+    return [...years].sort((a, b) => b - a);
+  }, [entries, fyStart]);
+
+  const [selectedFY, setSelectedFY] = useState(() => fiscalYears[0] || new Date().getFullYear());
+
+  // Update selection when fiscal years change
+  useEffect(() => {
+    if (fiscalYears.length && !fiscalYears.includes(selectedFY)) {
+      setSelectedFY(fiscalYears[0]);
+    }
+  }, [fiscalYears]);
+
+  // Fiscal year date range
+  const fyRange = useMemo(() => {
+    const start = new Date(selectedFY, fyStart - 1, 1);
+    const end = new Date(selectedFY + 1, fyStart - 1, 0); // last day of prior month next year
+    return { start, end };
+  }, [selectedFY, fyStart]);
+
+  // Label for the fiscal period
+  const fyLabel = useMemo(() => {
+    const startMonth = new Date(2000, fyStart - 1, 1).toLocaleDateString("en-US", { month: "long" });
+    const endMonth = new Date(2000, (fyStart + 10) % 12, 1).toLocaleDateString("en-US", { month: "long" });
+    if (fyStart === 1) return `${selectedFY}`;
+    return `${startMonth} ${selectedFY} \u2013 ${endMonth} ${selectedFY + 1}`;
+  }, [selectedFY, fyStart]);
+
+  // Filter entries to selected fiscal year
+  const fyEntries = useMemo(() => {
+    return entries.filter(e => {
+      const d = new Date(e.entry_date + "T12:00:00");
+      return d >= fyRange.start && d <= fyRange.end;
+    });
+  }, [entries, fyRange]);
+
+  // ── Monthly breakdown ────────────────────────────────────────────────────
+  const monthlyData = useMemo(() => {
+    const months = [];
+    for (let i = 0; i < 12; i++) {
+      const mIdx = (fyStart - 1 + i) % 12; // 0-based month index
+      const yr = fyStart - 1 + i >= 12 ? selectedFY + 1 : selectedFY;
+      months.push({
+        monthIdx: mIdx,
+        year: yr,
+        label: new Date(yr, mIdx, 1).toLocaleDateString("en-US", { month: "short", year: "2-digit" }),
+        fullLabel: new Date(yr, mIdx, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" }),
+        income: 0,
+        expense: 0,
+        net: 0,
+      });
+    }
+
+    fyEntries.forEach(e => {
+      const d = new Date(e.entry_date + "T12:00:00");
+      const m = d.getMonth();
+      const y = d.getFullYear();
+      const slot = months.find(s => s.monthIdx === m && s.year === y);
+      if (slot) {
+        if (e.entry_type === "income") slot.income += Number(e.amount);
+        else slot.expense += Number(e.amount);
+      }
+    });
+
+    // Calculate net and running total
+    let running = 0;
+    months.forEach(m => {
+      m.net = m.income - m.expense;
+      running += m.net;
+      m.runningTotal = running;
+    });
+
+    return months;
+  }, [fyEntries, fyStart, selectedFY]);
+
+  // ── Category breakdown ───────────────────────────────────────────────────
+  const categoryData = useMemo(() => {
+    const map = {};
+    fyEntries.forEach(e => {
+      const key = `${e.category_id}-${e.entry_type}`;
+      if (!map[key]) {
+        map[key] = {
+          category_id: e.category_id,
+          name: categoryMap[e.category_id]?.name || "Unknown",
+          type: e.entry_type,
+          total: 0,
+          count: 0,
+        };
+      }
+      map[key].total += Number(e.amount);
+      map[key].count++;
+    });
+    return Object.values(map).sort((a, b) => b.total - a.total);
+  }, [fyEntries, categoryMap]);
+
+  const incomeCategories = categoryData.filter(c => c.type === "income");
+  const expenseCategories = categoryData.filter(c => c.type === "expense");
+
+  // ── Totals ──────────────────────────────────────────────────────────────
+  const totals = useMemo(() => {
+    const inc = fyEntries.filter(e => e.entry_type === "income").reduce((s, e) => s + Number(e.amount), 0);
+    const exp = fyEntries.filter(e => e.entry_type === "expense").reduce((s, e) => s + Number(e.amount), 0);
+    return { income: inc, expense: exp, net: inc - exp };
+  }, [fyEntries]);
+
+  // ── Chart data (only months that have data or all if few entries) ──────
+  const chartData = useMemo(() => monthlyData.map(m => ({
+    name: m.label,
+    Income: Math.round(m.income * 100) / 100,
+    Expenses: Math.round(m.expense * 100) / 100,
+  })), [monthlyData]);
+
+  // ── No entries state ──────────────────────────────────────────────────
+  if (!entries.length) {
+    return (
+      <div style={{ animation: "slideUp 0.3s ease" }}>
+        <div className="bg-white rounded-xl border border-brand-200 p-8 text-center shadow-sm">
+          <Ic path={ICONS.summary} size={48} />
+          <h2 className="font-display text-xl text-brand-800 mt-4 mb-2">Summary</h2>
+          <p className="text-brand-500 text-sm">
+            Add some entries in the Ledger tab to see your budget summary here.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ animation: "slideUp 0.3s ease" }}>
-      <div className="bg-white rounded-xl border border-brand-200 p-8 text-center shadow-sm">
-        <Ic path={ICONS.summary} size={48} />
-        <h2 className="font-display text-xl text-brand-800 mt-4 mb-2">Summary</h2>
-        <p className="text-brand-500 text-sm">
-          Monthly and category breakdowns with charts will appear here once entries are added.
-        </p>
-        <p className="text-brand-400 text-xs mt-2">Coming in Session 3</p>
+    <div style={{ animation: "slideUp 0.3s ease" }} className="space-y-5">
+      {/* Fiscal year selector */}
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-lg text-brand-800">
+          Fiscal Year: {fyLabel}
+        </h2>
+        {fiscalYears.length > 1 && (
+          <select
+            value={selectedFY}
+            onChange={e => setSelectedFY(Number(e.target.value))}
+            className="border border-brand-200 rounded-lg px-3 py-1.5 text-sm text-brand-700 bg-white focus:ring-2 focus:ring-brand-300 outline-none"
+          >
+            {fiscalYears.map(fy => (
+              <option key={fy} value={fy}>
+                {fyStart === 1 ? fy : `${fy}/${String(fy + 1).slice(2)}`}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {/* Overview cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-white rounded-xl border border-brand-200 p-5 shadow-sm">
+          <p className="text-brand-500 text-xs font-medium uppercase tracking-wide mb-1">Total Income</p>
+          <p className="text-2xl font-bold text-green-700">{fmtMoney(totals.income)}</p>
+        </div>
+        <div className="bg-white rounded-xl border border-brand-200 p-5 shadow-sm">
+          <p className="text-brand-500 text-xs font-medium uppercase tracking-wide mb-1">Total Expenses</p>
+          <p className="text-2xl font-bold text-red-700">{fmtMoney(totals.expense)}</p>
+        </div>
+        <div className="bg-white rounded-xl border border-brand-200 p-5 shadow-sm">
+          <p className="text-brand-500 text-xs font-medium uppercase tracking-wide mb-1">Net Balance</p>
+          <p className={`text-2xl font-bold ${totals.net >= 0 ? "text-brand-800" : "text-red-700"}`}>
+            {fmtMoney(totals.net)}
+          </p>
+        </div>
+      </div>
+
+      {/* Chart: Monthly Income vs Expenses */}
+      <div className="bg-white rounded-xl border border-brand-200 p-5 shadow-sm">
+        <h3 className="font-display text-base text-brand-800 mb-4">Monthly Income vs Expenses</h3>
+        <div className="w-full" style={{ height: 280 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2ddd5" />
+              <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#6b5e50" }} />
+              <YAxis tick={{ fontSize: 11, fill: "#6b5e50" }} tickFormatter={v => `$${v.toLocaleString()}`} />
+              <Tooltip
+                formatter={(value) => fmtMoney(value)}
+                contentStyle={{ borderRadius: 8, border: "1px solid #d4cec6", fontSize: 13 }}
+              />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="Income" fill="#2E7D32" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Expenses" fill="#C62828" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Monthly breakdown table */}
+      <div className="bg-white rounded-xl border border-brand-200 shadow-sm overflow-hidden">
+        <h3 className="font-display text-base text-brand-800 px-5 pt-5 pb-3">Monthly Breakdown</h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-brand-50 border-b border-brand-200">
+                <th className="text-left px-4 py-2.5 font-semibold text-brand-700">Month</th>
+                <th className="text-right px-4 py-2.5 font-semibold text-green-700">Income</th>
+                <th className="text-right px-4 py-2.5 font-semibold text-red-700">Expenses</th>
+                <th className="text-right px-4 py-2.5 font-semibold text-brand-700">Net</th>
+                <th className="text-right px-4 py-2.5 font-semibold text-brand-700">Running Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {monthlyData.map((m, i) => {
+                const hasData = m.income > 0 || m.expense > 0;
+                return (
+                  <tr key={i} className={`border-b border-brand-100 ${hasData ? "" : "opacity-40"}`}>
+                    <td className="px-4 py-2.5 text-brand-700">{m.fullLabel}</td>
+                    <td className="px-4 py-2.5 text-right text-green-700">{hasData ? fmtMoney(m.income) : "\u2014"}</td>
+                    <td className="px-4 py-2.5 text-right text-red-700">{hasData ? fmtMoney(m.expense) : "\u2014"}</td>
+                    <td className={`px-4 py-2.5 text-right font-medium ${m.net >= 0 ? "text-brand-800" : "text-red-700"}`}>
+                      {hasData ? fmtMoney(m.net) : "\u2014"}
+                    </td>
+                    <td className={`px-4 py-2.5 text-right font-medium ${m.runningTotal >= 0 ? "text-brand-800" : "text-red-700"}`}>
+                      {hasData || m.runningTotal !== 0 ? fmtMoney(m.runningTotal) : "\u2014"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="bg-brand-50 border-t-2 border-brand-300">
+                <td className="px-4 py-2.5 font-semibold text-brand-700">Totals</td>
+                <td className="px-4 py-2.5 text-right font-bold text-green-700">{fmtMoney(totals.income)}</td>
+                <td className="px-4 py-2.5 text-right font-bold text-red-700">{fmtMoney(totals.expense)}</td>
+                <td className={`px-4 py-2.5 text-right font-bold ${totals.net >= 0 ? "text-brand-800" : "text-red-700"}`}>
+                  {fmtMoney(totals.net)}
+                </td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      {/* Category breakdown */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        {/* Income categories */}
+        <div className="bg-white rounded-xl border border-brand-200 p-5 shadow-sm">
+          <h3 className="font-display text-base text-brand-800 mb-3">Income by Category</h3>
+          {incomeCategories.length === 0 ? (
+            <p className="text-brand-400 text-sm">No income entries this period.</p>
+          ) : (
+            <div className="space-y-3">
+              {incomeCategories.map(c => (
+                <div key={c.category_id}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm text-brand-700">{c.name}</span>
+                    <span className="text-sm font-medium text-green-700">{fmtMoney(c.total)}</span>
+                  </div>
+                  <div className="w-full bg-green-100 rounded-full h-2">
+                    <div
+                      className="bg-green-600 rounded-full h-2 transition-all"
+                      style={{ width: `${Math.min(100, (c.total / totals.income) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-brand-400 mt-0.5">{c.count} {c.count === 1 ? "entry" : "entries"}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Expense categories */}
+        <div className="bg-white rounded-xl border border-brand-200 p-5 shadow-sm">
+          <h3 className="font-display text-base text-brand-800 mb-3">Expenses by Category</h3>
+          {expenseCategories.length === 0 ? (
+            <p className="text-brand-400 text-sm">No expense entries this period.</p>
+          ) : (
+            <div className="space-y-3">
+              {expenseCategories.map(c => (
+                <div key={c.category_id}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm text-brand-700">{c.name}</span>
+                    <span className="text-sm font-medium text-red-700">{fmtMoney(c.total)}</span>
+                  </div>
+                  <div className="w-full bg-red-100 rounded-full h-2">
+                    <div
+                      className="bg-red-600 rounded-full h-2 transition-all"
+                      style={{ width: `${Math.min(100, (c.total / totals.expense) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-brand-400 mt-0.5">{c.count} {c.count === 1 ? "entry" : "entries"}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
