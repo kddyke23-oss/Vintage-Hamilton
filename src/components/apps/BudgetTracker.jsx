@@ -81,6 +81,7 @@ export default function BudgetTracker({ user, isAdmin, isBudgetAdmin }) {
   const [activeTab, setActiveTab] = useState("ledger");
   const [categories, setCategories] = useState([]);
   const [entries, setEntries] = useState([]);
+  const [targets, setTargets] = useState([]);
   const [profileMap, setProfileMap] = useState({}); // resident_id -> display name
   const [settings, setSettings] = useState({ fiscal_year_start_month: 1 });
   const [loading, setLoading] = useState(true);
@@ -99,14 +100,16 @@ export default function BudgetTracker({ user, isAdmin, isBudgetAdmin }) {
   async function loadData() {
     setLoading(true);
     try {
-      const [catRes, entryRes, settingsRes, profileRes] = await Promise.all([
+      const [catRes, entryRes, settingsRes, profileRes, targetRes] = await Promise.all([
         supabase.from("budget_categories").select("*").order("sort_order"),
         supabase.from("budget_entries").select("*").order("entry_date", { ascending: false }),
         supabase.from("budget_settings").select("*").eq("id", 1).maybeSingle(),
         supabase.from("profiles").select("resident_id").eq("id", user.id).maybeSingle(),
+        supabase.from("budget_targets").select("*"),
       ]);
       if (catRes.data) setCategories(catRes.data);
       if (settingsRes.data) setSettings(settingsRes.data);
+      if (targetRes.data) setTargets(targetRes.data);
       if (profileRes.data) setMyResidentId(profileRes.data.resident_id);
 
       // Load entries and then fetch profile names for all creators
@@ -199,8 +202,8 @@ export default function BudgetTracker({ user, isAdmin, isBudgetAdmin }) {
           />
         )}
         {activeTab === "summary" && <SummaryTab entries={entries} categories={categories} categoryMap={categoryMap} settings={settings} />}
-        {activeTab === "targets" && <TargetsTab categories={categories} settings={settings} isBudgetAdmin={isBudgetAdmin} />}
-        {activeTab === "admin"   && <AdminTab categories={categories} settings={settings} isBudgetAdmin={isBudgetAdmin} myResidentId={myResidentId} onRefresh={loadData} />}
+        {activeTab === "targets" && <TargetsTab entries={entries} categories={categories} targets={targets} categoryMap={categoryMap} settings={settings} />}
+        {activeTab === "admin"   && <AdminTab categories={categories} targets={targets} settings={settings} isBudgetAdmin={isBudgetAdmin} myResidentId={myResidentId} onRefresh={loadData} showToast={showToast} />}
       </div>
     </>
   );
@@ -1021,16 +1024,219 @@ function SummaryTab({ entries, categories, categoryMap, settings }) {
 // ══════════════════════════════════════════════════════════════════════════════
 //  TAB: BUDGET vs ACTUAL
 // ══════════════════════════════════════════════════════════════════════════════
-function TargetsTab({ categories, settings, isBudgetAdmin }) {
+function TargetsTab({ entries, categories, targets, categoryMap, settings }) {
+  const fyStart = settings?.fiscal_year_start_month || 1;
+
+  // Derive fiscal years that have targets
+  const targetFYs = useMemo(() => {
+    const years = [...new Set(targets.map(t => t.fiscal_year))].sort((a, b) => b - a);
+    return years;
+  }, [targets]);
+
+  const [selectedFY, setSelectedFY] = useState(() => targetFYs[0] || new Date().getFullYear());
+
+  useEffect(() => {
+    if (targetFYs.length && !targetFYs.includes(selectedFY)) {
+      setSelectedFY(targetFYs[0]);
+    }
+  }, [targetFYs]);
+
+  // Fiscal year date range
+  const fyRange = useMemo(() => {
+    const start = new Date(selectedFY, fyStart - 1, 1);
+    const end = new Date(selectedFY + 1, fyStart - 1, 0);
+    return { start, end };
+  }, [selectedFY, fyStart]);
+
+  // Label
+  const fyLabel = useMemo(() => {
+    if (fyStart === 1) return `${selectedFY}`;
+    const sm = new Date(2000, fyStart - 1, 1).toLocaleDateString("en-US", { month: "long" });
+    const em = new Date(2000, (fyStart + 10) % 12, 1).toLocaleDateString("en-US", { month: "long" });
+    return `${sm} ${selectedFY} \u2013 ${em} ${selectedFY + 1}`;
+  }, [selectedFY, fyStart]);
+
+  // Targets for selected FY
+  const fyTargets = useMemo(() => targets.filter(t => t.fiscal_year === selectedFY), [targets, selectedFY]);
+
+  // Actual spending per category for the FY
+  const actualByCategory = useMemo(() => {
+    const map = {};
+    entries.forEach(e => {
+      const d = new Date(e.entry_date + "T12:00:00");
+      if (d >= fyRange.start && d <= fyRange.end) {
+        if (!map[e.category_id]) map[e.category_id] = { income: 0, expense: 0 };
+        if (e.entry_type === "income") map[e.category_id].income += Number(e.amount);
+        else map[e.category_id].expense += Number(e.amount);
+      }
+    });
+    return map;
+  }, [entries, fyRange]);
+
+  // Build comparison rows
+  const rows = useMemo(() => {
+    return fyTargets.map(t => {
+      const cat = categoryMap[t.category_id];
+      const catType = cat?.type || "expense";
+      const actual = catType === "income"
+        ? (actualByCategory[t.category_id]?.income || 0)
+        : (actualByCategory[t.category_id]?.expense || 0);
+      const budget = Number(t.target_amount);
+      const remaining = budget - actual;
+      const pct = budget > 0 ? (actual / budget) * 100 : 0;
+      return {
+        category_id: t.category_id,
+        name: cat?.name || "Unknown",
+        type: catType,
+        budget,
+        actual,
+        remaining,
+        pct,
+        notes: t.notes,
+      };
+    }).sort((a, b) => b.budget - a.budget);
+  }, [fyTargets, actualByCategory, categoryMap]);
+
+  // Summary totals
+  const summary = useMemo(() => {
+    const budgeted = rows.reduce((s, r) => s + r.budget, 0);
+    const spent = rows.reduce((s, r) => s + r.actual, 0);
+    return { budgeted, spent, remaining: budgeted - spent, pct: budgeted > 0 ? (spent / budgeted) * 100 : 0 };
+  }, [rows]);
+
+  // Color for progress bar
+  const barColor = (pct) => {
+    if (pct > 100) return "bg-red-500";
+    if (pct >= 80) return "bg-amber-500";
+    return "bg-green-500";
+  };
+  const barBg = (pct) => {
+    if (pct > 100) return "bg-red-100";
+    if (pct >= 80) return "bg-amber-100";
+    return "bg-green-100";
+  };
+
+  // No targets state
+  if (!targetFYs.length) {
+    return (
+      <div style={{ animation: "slideUp 0.3s ease" }}>
+        <div className="bg-white rounded-xl border border-brand-200 p-8 text-center shadow-sm">
+          <Ic path={ICONS.target} size={48} />
+          <h2 className="font-display text-xl text-brand-800 mt-4 mb-2">Budget vs Actual</h2>
+          <p className="text-brand-500 text-sm">
+            No budget targets have been set yet. Use the Admin tab to define targets per category for each fiscal year.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ animation: "slideUp 0.3s ease" }}>
-      <div className="bg-white rounded-xl border border-brand-200 p-8 text-center shadow-sm">
-        <Ic path={ICONS.target} size={48} />
-        <h2 className="font-display text-xl text-brand-800 mt-4 mb-2">Budget vs Actual</h2>
-        <p className="text-brand-500 text-sm">
-          Set budget targets in the Admin tab to see planned vs. actual spending with progress bars.
-        </p>
-        <p className="text-brand-400 text-xs mt-2">Coming in Session 4</p>
+    <div style={{ animation: "slideUp 0.3s ease" }} className="space-y-5">
+      {/* FY selector */}
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-lg text-brand-800">
+          Budget vs Actual: {fyLabel}
+        </h2>
+        {targetFYs.length > 1 && (
+          <select
+            value={selectedFY}
+            onChange={e => setSelectedFY(Number(e.target.value))}
+            className="border border-brand-200 rounded-lg px-3 py-1.5 text-sm text-brand-700 bg-white focus:ring-2 focus:ring-brand-300 outline-none"
+          >
+            {targetFYs.map(fy => (
+              <option key={fy} value={fy}>
+                {fyStart === 1 ? fy : `${fy}/${String(fy + 1).slice(2)}`}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-white rounded-xl border border-brand-200 p-5 shadow-sm">
+          <p className="text-brand-500 text-xs font-medium uppercase tracking-wide mb-1">Total Budgeted</p>
+          <p className="text-2xl font-bold text-brand-800">{fmtMoney(summary.budgeted)}</p>
+        </div>
+        <div className="bg-white rounded-xl border border-brand-200 p-5 shadow-sm">
+          <p className="text-brand-500 text-xs font-medium uppercase tracking-wide mb-1">Total Spent</p>
+          <p className={`text-2xl font-bold ${summary.pct > 100 ? "text-red-700" : "text-brand-800"}`}>{fmtMoney(summary.spent)}</p>
+        </div>
+        <div className="bg-white rounded-xl border border-brand-200 p-5 shadow-sm">
+          <p className="text-brand-500 text-xs font-medium uppercase tracking-wide mb-1">Remaining</p>
+          <p className={`text-2xl font-bold ${summary.remaining >= 0 ? "text-green-700" : "text-red-700"}`}>{fmtMoney(summary.remaining)}</p>
+        </div>
+      </div>
+
+      {/* Overall progress */}
+      <div className="bg-white rounded-xl border border-brand-200 p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-medium text-brand-700">Overall Budget Usage</span>
+          <span className={`text-sm font-bold ${summary.pct > 100 ? "text-red-700" : summary.pct >= 80 ? "text-amber-700" : "text-green-700"}`}>
+            {summary.pct.toFixed(1)}%
+          </span>
+        </div>
+        <div className={`w-full ${barBg(summary.pct)} rounded-full h-3`}>
+          <div
+            className={`${barColor(summary.pct)} rounded-full h-3 transition-all`}
+            style={{ width: `${Math.min(100, summary.pct)}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Category breakdown table */}
+      <div className="bg-white rounded-xl border border-brand-200 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-brand-50 border-b border-brand-200">
+                <th className="text-left px-4 py-2.5 font-semibold text-brand-700">Category</th>
+                <th className="text-right px-4 py-2.5 font-semibold text-brand-700">Budget</th>
+                <th className="text-right px-4 py-2.5 font-semibold text-brand-700">Actual</th>
+                <th className="text-right px-4 py-2.5 font-semibold text-brand-700">Remaining</th>
+                <th className="text-right px-4 py-2.5 font-semibold text-brand-700 w-16">% Used</th>
+                <th className="px-4 py-2.5 font-semibold text-brand-700 w-32">Progress</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.category_id} className="border-b border-brand-100 hover:bg-brand-50 transition-colors">
+                  <td className="px-4 py-3">
+                    <span className="text-brand-800">{r.name}</span>
+                    {r.notes && <span className="text-brand-400 text-xs ml-2" title={r.notes}>({r.notes})</span>}
+                  </td>
+                  <td className="px-4 py-3 text-right text-brand-700 font-medium">{fmtMoney(r.budget)}</td>
+                  <td className={`px-4 py-3 text-right font-medium ${r.pct > 100 ? "text-red-700" : "text-brand-800"}`}>{fmtMoney(r.actual)}</td>
+                  <td className={`px-4 py-3 text-right font-medium ${r.remaining >= 0 ? "text-green-700" : "text-red-700"}`}>{fmtMoney(r.remaining)}</td>
+                  <td className={`px-4 py-3 text-right font-medium ${r.pct > 100 ? "text-red-700" : r.pct >= 80 ? "text-amber-700" : "text-green-700"}`}>
+                    {r.pct.toFixed(0)}%
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className={`w-full ${barBg(r.pct)} rounded-full h-2`}>
+                      <div
+                        className={`${barColor(r.pct)} rounded-full h-2 transition-all`}
+                        style={{ width: `${Math.min(100, r.pct)}%` }}
+                      />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="bg-brand-50 border-t-2 border-brand-300">
+                <td className="px-4 py-2.5 font-semibold text-brand-700">Totals</td>
+                <td className="px-4 py-2.5 text-right font-bold text-brand-800">{fmtMoney(summary.budgeted)}</td>
+                <td className={`px-4 py-2.5 text-right font-bold ${summary.pct > 100 ? "text-red-700" : "text-brand-800"}`}>{fmtMoney(summary.spent)}</td>
+                <td className={`px-4 py-2.5 text-right font-bold ${summary.remaining >= 0 ? "text-green-700" : "text-red-700"}`}>{fmtMoney(summary.remaining)}</td>
+                <td className={`px-4 py-2.5 text-right font-bold ${summary.pct > 100 ? "text-red-700" : summary.pct >= 80 ? "text-amber-700" : "text-green-700"}`}>
+                  {summary.pct.toFixed(0)}%
+                </td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -1040,18 +1246,213 @@ function TargetsTab({ categories, settings, isBudgetAdmin }) {
 // ══════════════════════════════════════════════════════════════════════════════
 //  TAB: ADMIN
 // ══════════════════════════════════════════════════════════════════════════════
-function AdminTab({ categories, settings, isBudgetAdmin, myResidentId, onRefresh }) {
+function AdminTab({ categories, targets, settings, isBudgetAdmin, myResidentId, onRefresh, showToast }) {
   if (!isBudgetAdmin) return null;
+
+  // ── Category management state ────────────────────────────────────────────
+  const [editCat, setEditCat] = useState(null); // category being edited, or { isNew: true }
+  const [catForm, setCatForm] = useState({ name: "", type: "expense", sort_order: "", is_active: true });
+  const [catSaving, setCatSaving] = useState(false);
+
+  function startEditCat(c) {
+    setEditCat(c);
+    setCatForm({ name: c.name, type: c.type, sort_order: String(c.sort_order || ""), is_active: c.is_active });
+  }
+  function startAddCat() {
+    const nextSort = categories.length ? Math.max(...categories.map(c => c.sort_order || 0)) + 1 : 1;
+    setEditCat({ isNew: true });
+    setCatForm({ name: "", type: "expense", sort_order: String(nextSort), is_active: true });
+  }
+  function cancelCatEdit() { setEditCat(null); }
+
+  async function saveCat() {
+    if (!catForm.name.trim()) return;
+    setCatSaving(true);
+    try {
+      const payload = {
+        name: catForm.name.trim(),
+        type: catForm.type,
+        sort_order: parseInt(catForm.sort_order) || 0,
+        is_active: catForm.is_active,
+      };
+      if (editCat.isNew) {
+        const { error } = await supabase.from("budget_categories").insert(payload);
+        if (error) throw error;
+        showToast("Category added");
+      } else {
+        const { error } = await supabase.from("budget_categories").update(payload).eq("id", editCat.id);
+        if (error) throw error;
+        showToast("Category updated");
+      }
+      setEditCat(null);
+      onRefresh();
+    } catch (err) {
+      showToast(err.message || "Failed to save category", "error");
+    } finally {
+      setCatSaving(false);
+    }
+  }
+
+  // ── Budget targets state ──────────────────────────────────────────────────
+  const fyStart = settings?.fiscal_year_start_month || 1;
+  const currentFY = useMemo(() => {
+    const now = new Date();
+    const m = now.getMonth() + 1;
+    return m < fyStart ? now.getFullYear() - 1 : now.getFullYear();
+  }, [fyStart]);
+
+  const [targetFY, setTargetFY] = useState(currentFY);
+  const [targetEdits, setTargetEdits] = useState({}); // category_id -> amount string
+  const [targetNotes, setTargetNotes] = useState({}); // category_id -> notes string
+  const [targetSaving, setTargetSaving] = useState(false);
+
+  // Load existing targets for selected FY into form
+  const fyTargets = useMemo(() => targets.filter(t => t.fiscal_year === targetFY), [targets, targetFY]);
+
+  useEffect(() => {
+    const edits = {};
+    const notes = {};
+    fyTargets.forEach(t => {
+      edits[t.category_id] = String(t.target_amount);
+      notes[t.category_id] = t.notes || "";
+    });
+    setTargetEdits(edits);
+    setTargetNotes(notes);
+  }, [fyTargets]);
+
+  // Only expense categories for targets
+  const expenseCategories = useMemo(
+    () => categories.filter(c => c.is_active && (c.type === "expense" || c.type === "both")),
+    [categories]
+  );
+
+  async function saveTargets() {
+    setTargetSaving(true);
+    try {
+      for (const cat of expenseCategories) {
+        const amt = parseFloat(targetEdits[cat.id]);
+        const existing = fyTargets.find(t => t.category_id === cat.id);
+
+        if (amt > 0) {
+          const payload = {
+            category_id: cat.id,
+            fiscal_year: targetFY,
+            target_amount: amt,
+            notes: (targetNotes[cat.id] || "").trim() || null,
+            created_by: myResidentId,
+          };
+          if (existing) {
+            const { error } = await supabase.from("budget_targets").update(payload).eq("id", existing.id);
+            if (error) throw error;
+          } else {
+            const { error } = await supabase.from("budget_targets").insert(payload);
+            if (error) throw error;
+          }
+        } else if (existing) {
+          // Remove target if amount cleared
+          const { error } = await supabase.from("budget_targets").delete().eq("id", existing.id);
+          if (error) throw error;
+        }
+      }
+      showToast("Budget targets saved");
+      onRefresh();
+    } catch (err) {
+      showToast(err.message || "Failed to save targets", "error");
+    } finally {
+      setTargetSaving(false);
+    }
+  }
+
+  // ── Settings state ─────────────────────────────────────────────────────────
+  const [fyMonth, setFyMonth] = useState(settings?.fiscal_year_start_month || 1);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+
+  async function saveSettings() {
+    setSettingsSaving(true);
+    try {
+      const { error } = await supabase.from("budget_settings").update({ fiscal_year_start_month: fyMonth }).eq("id", 1);
+      if (error) throw error;
+      showToast("Settings saved");
+      onRefresh();
+    } catch (err) {
+      showToast(err.message || "Failed to save settings", "error");
+    } finally {
+      setSettingsSaving(false);
+    }
+  }
+
+  // FY label for targets section
+  const targetFYLabel = useMemo(() => {
+    if (fyStart === 1) return `${targetFY}`;
+    const sm = new Date(2000, fyStart - 1, 1).toLocaleDateString("en-US", { month: "short" });
+    const em = new Date(2000, (fyStart + 10) % 12, 1).toLocaleDateString("en-US", { month: "short" });
+    return `${sm} ${targetFY} \u2013 ${em} ${targetFY + 1}`;
+  }, [targetFY, fyStart]);
+
+  const MONTHS = Array.from({ length: 12 }, (_, i) =>
+    new Date(2000, i, 1).toLocaleDateString("en-US", { month: "long" })
+  );
 
   return (
     <div style={{ animation: "slideUp 0.3s ease" }}>
       <div className="space-y-6">
-        {/* Categories Management */}
+
+        {/* ── Categories Management ───────────────────────────────────────── */}
         <div className="bg-white rounded-xl border border-brand-200 p-6 shadow-sm">
-          <h2 className="font-display text-lg text-brand-800 mb-4">Categories</h2>
-          <div className="space-y-2">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-display text-lg text-brand-800">Categories</h2>
+            <button onClick={startAddCat}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-700 text-white rounded-lg text-xs font-medium hover:bg-brand-800 transition-colors">
+              <Ic path={ICONS.plus} size={14} /> Add Category
+            </button>
+          </div>
+
+          {/* Category edit form */}
+          {editCat && (
+            <div className="mb-4 p-4 bg-brand-50 rounded-lg border border-brand-200 space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-brand-600 mb-1">Name</label>
+                  <input type="text" value={catForm.name} onChange={e => setCatForm(f => ({ ...f, name: e.target.value }))}
+                    className="w-full border border-brand-200 rounded-lg px-3 py-1.5 text-sm text-brand-800 outline-none focus:ring-2 focus:ring-brand-300" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-brand-600 mb-1">Type</label>
+                  <select value={catForm.type} onChange={e => setCatForm(f => ({ ...f, type: e.target.value }))}
+                    className="w-full border border-brand-200 rounded-lg px-3 py-1.5 text-sm text-brand-800 outline-none focus:ring-2 focus:ring-brand-300 bg-white">
+                    <option value="income">Income</option>
+                    <option value="expense">Expense</option>
+                    <option value="both">Both</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-brand-600 mb-1">Sort Order</label>
+                  <input type="number" value={catForm.sort_order} onChange={e => setCatForm(f => ({ ...f, sort_order: e.target.value }))}
+                    className="w-full border border-brand-200 rounded-lg px-3 py-1.5 text-sm text-brand-800 outline-none focus:ring-2 focus:ring-brand-300" />
+                </div>
+              </div>
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 text-sm text-brand-700 cursor-pointer">
+                  <input type="checkbox" checked={catForm.is_active}
+                    onChange={e => setCatForm(f => ({ ...f, is_active: e.target.checked }))}
+                    className="rounded border-brand-300" />
+                  Active
+                </label>
+                <div className="flex items-center gap-2">
+                  <button onClick={cancelCatEdit} className="px-3 py-1.5 text-xs text-brand-600 hover:text-brand-800 transition-colors">Cancel</button>
+                  <button onClick={saveCat} disabled={catSaving}
+                    className="px-4 py-1.5 bg-brand-700 text-white rounded-lg text-xs font-medium hover:bg-brand-800 transition-colors disabled:opacity-50">
+                    {catSaving ? "Saving\u2026" : (editCat.isNew ? "Add" : "Save")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Category list */}
+          <div className="space-y-1">
             {categories.map(c => (
-              <div key={c.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-brand-50">
+              <div key={c.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-brand-50 hover:bg-brand-100 transition-colors">
                 <div className="flex items-center gap-3">
                   <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
                     c.type === "income" ? "bg-green-100 text-green-700" :
@@ -1063,25 +1464,93 @@ function AdminTab({ categories, settings, isBudgetAdmin, myResidentId, onRefresh
                   <span className={`text-sm ${c.is_active ? "text-brand-800" : "text-brand-400 line-through"}`}>
                     {c.name}
                   </span>
+                  {!c.is_active && <span className="text-xs text-brand-400">(inactive)</span>}
                 </div>
-                <span className="text-brand-400 text-xs">#{c.sort_order || "\u2014"}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-brand-400 text-xs">#{c.sort_order || "\u2014"}</span>
+                  <button onClick={() => startEditCat(c)}
+                    className="p-1 text-brand-400 hover:text-brand-700 rounded transition-colors" title="Edit">
+                    <Ic path={ICONS.edit} size={14} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
-          <p className="text-brand-400 text-xs mt-4">Full category management coming in Session 4</p>
         </div>
 
-        {/* Settings */}
+        {/* ── Budget Targets ──────────────────────────────────────────────── */}
+        <div className="bg-white rounded-xl border border-brand-200 p-6 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-display text-lg text-brand-800">Budget Targets</h2>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setTargetFY(y => y - 1)}
+                className="px-2 py-1 text-brand-500 hover:text-brand-700 transition-colors text-sm">&larr;</button>
+              <span className="text-sm font-medium text-brand-700 min-w-[120px] text-center">{targetFYLabel}</span>
+              <button onClick={() => setTargetFY(y => y + 1)}
+                className="px-2 py-1 text-brand-500 hover:text-brand-700 transition-colors text-sm">&rarr;</button>
+            </div>
+          </div>
+          <p className="text-brand-500 text-xs mb-4">
+            Set a budget amount for each expense category. Leave blank for no target.
+          </p>
+
+          <div className="space-y-2">
+            {expenseCategories.map(cat => (
+              <div key={cat.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-brand-50">
+                <span className="text-sm text-brand-800 flex-1 min-w-[120px]">{cat.name}</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-brand-400 text-sm">$</span>
+                  <input
+                    type="number" step="0.01" min="0"
+                    value={targetEdits[cat.id] || ""}
+                    onChange={e => setTargetEdits(prev => ({ ...prev, [cat.id]: e.target.value }))}
+                    placeholder="0.00"
+                    className="w-28 border border-brand-200 rounded-lg px-2 py-1.5 text-sm text-brand-800 outline-none focus:ring-2 focus:ring-brand-300 text-right"
+                  />
+                </div>
+                <input
+                  type="text"
+                  value={targetNotes[cat.id] || ""}
+                  onChange={e => setTargetNotes(prev => ({ ...prev, [cat.id]: e.target.value }))}
+                  placeholder="Notes (optional)"
+                  className="w-40 border border-brand-200 rounded-lg px-2 py-1.5 text-xs text-brand-600 outline-none focus:ring-2 focus:ring-brand-300"
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-end mt-4">
+            <button onClick={saveTargets} disabled={targetSaving}
+              className="px-5 py-2 bg-brand-700 text-white rounded-lg text-sm font-medium hover:bg-brand-800 transition-colors disabled:opacity-50">
+              {targetSaving ? "Saving\u2026" : "Save Targets"}
+            </button>
+          </div>
+        </div>
+
+        {/* ── Settings ────────────────────────────────────────────────────── */}
         <div className="bg-white rounded-xl border border-brand-200 p-6 shadow-sm">
           <h2 className="font-display text-lg text-brand-800 mb-4">Settings</h2>
-          <div className="text-sm text-brand-600">
-            <span className="font-medium">Fiscal year starts:</span>{" "}
-            {new Date(2000, settings.fiscal_year_start_month - 1, 1).toLocaleDateString("en-US", { month: "long" })}
+          <div className="flex items-center gap-4">
+            <label className="text-sm font-medium text-brand-700">Fiscal year starts in:</label>
+            <select value={fyMonth} onChange={e => setFyMonth(Number(e.target.value))}
+              className="border border-brand-200 rounded-lg px-3 py-1.5 text-sm text-brand-800 bg-white outline-none focus:ring-2 focus:ring-brand-300">
+              {MONTHS.map((m, i) => (
+                <option key={i} value={i + 1}>{m}</option>
+              ))}
+            </select>
+            <button onClick={saveSettings} disabled={settingsSaving || fyMonth === settings?.fiscal_year_start_month}
+              className="px-4 py-1.5 bg-brand-700 text-white rounded-lg text-xs font-medium hover:bg-brand-800 transition-colors disabled:opacity-50">
+              {settingsSaving ? "Saving\u2026" : "Save"}
+            </button>
           </div>
-          <p className="text-brand-400 text-xs mt-4">Settings editor coming in Session 4</p>
+          {fyMonth !== (settings?.fiscal_year_start_month || 1) && (
+            <p className="text-amber-600 text-xs mt-2">
+              Changing the fiscal year start will affect how data is grouped across all tabs.
+            </p>
+          )}
         </div>
 
-        {/* Import placeholder */}
+        {/* ── Import placeholder ──────────────────────────────────────────── */}
         <div className="bg-white rounded-xl border border-brand-200 p-6 shadow-sm">
           <h2 className="font-display text-lg text-brand-800 mb-4">Import Data</h2>
           <p className="text-brand-500 text-sm">
