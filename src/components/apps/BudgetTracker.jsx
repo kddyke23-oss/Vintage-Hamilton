@@ -1919,6 +1919,14 @@ function AdminTab({ categories, targets, settings, isBudgetAdmin, myResidentId, 
             ))}
           </div>
 
+          {/* Allocation total */}
+          <div className="mt-4 flex items-center justify-between px-3 py-2.5 rounded-lg bg-brand-100 border border-brand-200">
+            <span className="text-sm font-semibold text-brand-700">Total Allocated</span>
+            <span className="text-lg font-bold text-brand-800">
+              {fmtMoney(expenseCategories.reduce((sum, cat) => sum + (parseFloat(targetEdits[cat.id]) || 0), 0))}
+            </span>
+          </div>
+
           <div className="flex justify-end mt-4">
             <button onClick={saveTargets} disabled={targetSaving}
               className="px-5 py-2 bg-brand-700 text-white rounded-lg text-sm font-medium hover:bg-brand-800 transition-colors disabled:opacity-50">
