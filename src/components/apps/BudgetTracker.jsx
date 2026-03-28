@@ -214,6 +214,7 @@ function EntryModal({ entry, categories, myResidentId, onSave, onClose }) {
     category_id: entry?.category_id || "",
     description: entry?.description || "",
     amount:      entry ? String(entry.amount) : "",
+    paid_to:     entry?.paid_to || "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -252,6 +253,7 @@ function EntryModal({ entry, categories, myResidentId, onSave, onClose }) {
         category_id: Number(form.category_id),
         description: form.description.trim(),
         amount:      amt,
+        paid_to:     form.paid_to.trim() || null,
       };
 
       if (isEdit) {
@@ -354,6 +356,20 @@ function EntryModal({ entry, categories, myResidentId, onSave, onClose }) {
               className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm text-brand-800 focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
             />
           </div>
+
+          {/* Paid To (optional) */}
+          {form.entry_type === "expense" && (
+            <div>
+              <label className="block text-xs font-semibold text-brand-600 mb-1.5">Paid To <span className="font-normal text-brand-400">(optional)</span></label>
+              <input
+                type="text"
+                value={form.paid_to}
+                onChange={e => set("paid_to", e.target.value)}
+                placeholder="Vendor or payee name"
+                className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm text-brand-800 focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+              />
+            </div>
+          )}
 
           {/* Amount */}
           <div>
@@ -595,6 +611,7 @@ function LedgerTab({ entries, categories, categoryMap, profileMap, isBudgetAdmin
               <tr className="bg-brand-50 border-b border-brand-200">
                 <th className="text-left px-4 py-3 font-semibold text-brand-700">Date</th>
                 <th className="text-left px-4 py-3 font-semibold text-brand-700">Description</th>
+                <th className="text-left px-4 py-3 font-semibold text-brand-700">Paid To</th>
                 <th className="text-left px-4 py-3 font-semibold text-brand-700">Category</th>
                 <th className="text-right px-4 py-3 font-semibold text-brand-700">Amount</th>
                 <th className="text-right px-4 py-3 font-semibold text-brand-700">Balance</th>
@@ -605,7 +622,7 @@ function LedgerTab({ entries, categories, categoryMap, profileMap, isBudgetAdmin
             <tbody>
               {withBalance.length === 0 ? (
                 <tr>
-                  <td colSpan={isBudgetAdmin ? 7 : 6} className="text-center py-12 text-brand-400">
+                  <td colSpan={isBudgetAdmin ? 8 : 7} className="text-center py-12 text-brand-400">
                     No entries yet.{isBudgetAdmin ? " Click 'Add Entry' to get started." : ""}
                   </td>
                 </tr>
@@ -624,6 +641,7 @@ function LedgerTab({ entries, categories, categoryMap, profileMap, isBudgetAdmin
                         )}
                       </div>
                     </td>
+                    <td className="px-4 py-3 text-brand-500 text-sm">{e.paid_to || "\u2014"}</td>
                     <td className="px-4 py-3">
                       <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-brand-100 text-brand-700">
                         {categoryMap[e.category_id]?.name || "\u2014"}
@@ -663,10 +681,10 @@ function LedgerTab({ entries, categories, categoryMap, profileMap, isBudgetAdmin
             {withBalance.length > 0 && (
               <tfoot>
                 <tr className="bg-brand-50 border-t-2 border-brand-300">
-                  <td colSpan={3} className="px-4 py-3 font-semibold text-brand-700">Totals</td>
+                  <td colSpan={4} className="px-4 py-3 font-semibold text-brand-700">Totals</td>
                   <td className="px-4 py-3 text-right">
                     <div className="text-green-700 text-xs font-medium">+{fmtMoney(totals.income)}</div>
-                    <div className="text-red-700 text-xs font-medium">\u2212{fmtMoney(totals.expense)}</div>
+                    <div className="text-red-700 text-xs font-medium">{"\u2212"}{fmtMoney(totals.expense)}</div>
                   </td>
                   <td className={`px-4 py-3 text-right font-bold ${totals.net >= 0 ? "text-brand-800" : "text-red-700"}`}>
                     {fmtMoney(totals.net)}
