@@ -14,6 +14,7 @@ import CalendarPage from '@/pages/apps/CalendarPage'
 import LottoPage from '@/pages/apps/LottoPage'
 import BlogPage from '@/pages/apps/BlogPage'
 import RecommendationsPage from '@/pages/apps/RecommendationsPage'
+import BudgetPage from '@/pages/apps/BudgetPage'
 import AccessPage from '@/pages/admin/AccessPage'
 import ReportsPage from '@/pages/admin/ReportsPage'
 
@@ -51,6 +52,7 @@ export default function App() {
               <Route path="/apps/lotto" element={<ResidentShell><LottoPage /></ResidentShell>} />
               <Route path="/apps/blog" element={<ResidentShell><BlogPage /></ResidentShell>} />
               <Route path="/apps/recommendations" element={<ResidentShell><RecommendationsPage /></ResidentShell>} />
+              <Route path="/apps/budget" element={<ResidentShell><BudgetPage /></ResidentShell>} />
               <Route path="/help" element={<ResidentShell><HelpPage /></ResidentShell>} />
               {/* Admin routes */}
               <Route path="/admin" element={<AdminRoute><AccessPage /></AdminRoute>} />
