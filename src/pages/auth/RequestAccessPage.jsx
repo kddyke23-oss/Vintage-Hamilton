@@ -41,6 +41,30 @@ export default function RequestAccessPage() {
     setError(null)
     setSubmitting(true)
 
+    // Check if email(s) are already registered or have a pending request
+    const emailsToCheck = [primary.email.trim().toLowerCase()]
+    if (showSecondary && secondary.email.trim()) {
+      emailsToCheck.push(secondary.email.trim().toLowerCase())
+    }
+
+    for (const email of emailsToCheck) {
+      const { data, error: rpcError } = await supabase.rpc('check_email_available', { lookup_email: email })
+      if (rpcError) {
+        console.error('Email check error:', rpcError)
+        // Don't block submission if the check itself fails — let the insert handle it
+        break
+      }
+      if (data && !data.available) {
+        setSubmitting(false)
+        if (data.reason === 'already_registered') {
+          setError(`The email address ${email} is already registered. If you already have an account, go back to the sign-in page and use "Set / Reset Password" to access it.`)
+        } else if (data.reason === 'pending_request') {
+          setError(`The email address ${email} already has a pending access request. Please wait for an administrator to review it.`)
+        }
+        return
+      }
+    }
+
     const row = {
       address: address.trim(),
       primary_surname: primary.surname.trim().toUpperCase(),
