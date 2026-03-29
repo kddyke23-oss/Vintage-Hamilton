@@ -8,6 +8,7 @@ import AdminShell from '@/components/layout/AdminShell'
 import HelpPage from '@/pages/HelpPage'
 import LoginPage from '@/pages/auth/LoginPage'
 import ResetPasswordPage from '@/pages/auth/ResetPasswordPage'
+import RequestAccessPage from '@/pages/auth/RequestAccessPage'
 import HomePage from '@/pages/HomePage'
 import DirectoryPage from '@/pages/apps/DirectoryPage'
 import CalendarPage from '@/pages/apps/CalendarPage'
@@ -16,6 +17,7 @@ import BlogPage from '@/pages/apps/BlogPage'
 import RecommendationsPage from '@/pages/apps/RecommendationsPage'
 import BudgetPage from '@/pages/apps/BudgetPage'
 import AccessPage from '@/pages/admin/AccessPage'
+import AccessRequestsPage from '@/pages/admin/AccessRequestsPage'
 import ReportsPage from '@/pages/admin/ReportsPage'
 
 function ResidentShell({ children }) {
@@ -44,6 +46,7 @@ export default function App() {
               {/* Public */}
               <Route path="/login" element={<LoginPage />} />
               <Route path="/reset-password" element={<ResetPasswordPage />} />
+              <Route path="/request-access" element={<RequestAccessPage />} />
 
               {/* Resident routes */}
               <Route path="/" element={<ResidentShell><HomePage /></ResidentShell>} />
@@ -57,6 +60,7 @@ export default function App() {
               {/* Admin routes */}
               <Route path="/admin" element={<AdminRoute><AccessPage /></AdminRoute>} />
               <Route path="/admin/access" element={<AdminRoute><AccessPage /></AdminRoute>} />
+              <Route path="/admin/requests" element={<AdminRoute><AccessRequestsPage /></AdminRoute>} />
               <Route path="/admin/reports" element={<AdminRoute><ReportsPage /></AdminRoute>} />
 
               {/* Fallback */}

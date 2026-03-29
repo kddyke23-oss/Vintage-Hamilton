@@ -216,12 +216,13 @@ export default function LoginPage() {
         </div>
 
         {/* Footer links */}
-        <div className="flex justify-center gap-6 mt-6">
-          <p className="text-brand-400 text-xs">
-            Need access? Contact your community administrator.
-          </p>
-        </div>
-        <div className="text-center mt-2">
+        <div className="flex flex-col items-center gap-2 mt-6">
+          <Link
+            to="/request-access"
+            className="text-gold-400 hover:text-gold-300 text-sm font-medium underline transition-colors"
+          >
+            New resident? Request Access
+          </Link>
           <Link
             to="/login-help"
             className="text-brand-300 hover:text-gold-400 text-xs underline transition-colors"

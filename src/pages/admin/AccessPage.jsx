@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import { useToast } from '@/components/ui/Toast'
 import { deleteStoragePhoto } from '@/lib/storage'
@@ -521,6 +522,14 @@ export default function AccessPage() {
     Object.fromEntries(APPS.map(a => [a.id, 'all']))
   )
 
+  // Pending access requests count
+  const [pendingRequestCount, setPendingRequestCount] = useState(0)
+
+  useEffect(() => {
+    supabase.from('access_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending')
+      .then(({ count }) => setPendingRequestCount(count || 0))
+  }, [])
+
   const fetchAll = useCallback(async () => {
     try {
       const [{ data: profiles, error: pError }, { data: accessRows, error: aError }, authData] = await Promise.all([
@@ -730,6 +739,24 @@ export default function AccessPage() {
         <h1 className="font-display text-3xl text-brand-800 mb-1">Admin Portal</h1>
         <p className="text-brand-500">Manage resident app access. Click a resident's name to view their profile.</p>
       </div>
+
+      {/* Pending access requests banner */}
+      {pendingRequestCount > 0 && (
+        <Link to="/admin/requests" className="block bg-yellow-50 border border-yellow-300 rounded-xl px-5 py-3 hover:bg-yellow-100 transition-colors">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">📋</span>
+              <div>
+                <p className="text-sm font-semibold text-yellow-800">
+                  {pendingRequestCount} pending access request{pendingRequestCount !== 1 ? 's' : ''}
+                </p>
+                <p className="text-xs text-yellow-600">New residents are waiting for approval</p>
+              </div>
+            </div>
+            <span className="text-yellow-700 text-sm font-medium">Review →</span>
+          </div>
+        </Link>
+      )}
 
       {/* Legend */}
       <div className="flex items-center gap-4 text-sm text-brand-500 flex-wrap">
