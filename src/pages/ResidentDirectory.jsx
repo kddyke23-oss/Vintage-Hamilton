@@ -568,18 +568,11 @@ function ModalField({ label, children }) {
 
 // ─── Add Resident Modal (directory + optional invite) ─────────────────────────
 async function callEdgeFunction(payload) {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error("No active session");
-  const response = await fetch(
-    `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-user`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${session.access_token}` },
-      body: JSON.stringify(payload),
-    }
-  );
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || "Something went wrong");
+  const { data: result, error: fnError } = await supabase.functions.invoke('create-user', {
+    body: payload,
+  });
+  if (fnError) throw new Error(fnError.message || 'Something went wrong');
+  if (result?.error) throw new Error(result.error);
   return result;
 }
 

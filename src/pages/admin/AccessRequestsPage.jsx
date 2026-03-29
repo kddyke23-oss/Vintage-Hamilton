@@ -53,9 +53,6 @@ export default function AccessRequestsPage() {
   const handleApprove = async (req) => {
     setProcessing(req.id)
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) throw new Error('No active session')
-
       // Build the people array from the request
       const people = [{
         surname: req.primary_surname,
@@ -81,21 +78,16 @@ export default function AccessRequestsPage() {
         })
       }
 
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-user`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
-          body: JSON.stringify({
-            mode: 'approve-request',
-            requestId: req.id,
-            people,
-            reviewerId: myResidentId,
-          }),
-        }
-      )
-      const result = await response.json()
-      if (!response.ok) throw new Error(result.error || 'Something went wrong')
+      const { data: result, error: fnError } = await supabase.functions.invoke('create-user', {
+        body: {
+          mode: 'approve-request',
+          requestId: req.id,
+          people,
+          reviewerId: myResidentId,
+        },
+      })
+      if (fnError) throw new Error(fnError.message || 'Something went wrong')
+      if (result?.error) throw new Error(result.error)
 
       toast.success(`Approved! ${people.length} resident(s) created with temporary password Pa55word.`)
       fetchRequests()
