@@ -147,8 +147,8 @@ function EditResidentModal({ entry, onSave, onClose, isSaving }) {
     phones: entry.phones?.length ? entry.phones : [''],
     emails: entry.emails?.length ? entry.emails : [''],
     tags: entry.tags || [],
-    notify_calendar: entry.notify_calendar ?? false,
-    notify_blog: entry.notify_blog ?? false,
+    notify_calendar: entry.notify_calendar ?? true,
+    notify_blog: entry.notify_blog ?? true,
     directory_visible: entry.directory_visible ?? true,
   })
   const [newTag, setNewTag] = useState('')

@@ -14,8 +14,8 @@ CREATE TABLE IF NOT EXISTS access_requests (
   primary_email             text NOT NULL,
   primary_phone             text,
   primary_directory_visible boolean NOT NULL DEFAULT true,
-  primary_notify_calendar   boolean NOT NULL DEFAULT false,
-  primary_notify_blog       boolean NOT NULL DEFAULT false,
+  primary_notify_calendar   boolean NOT NULL DEFAULT true,
+  primary_notify_blog       boolean NOT NULL DEFAULT true,
 
   -- Secondary person (optional — all nullable)
   secondary_surname           text,
@@ -23,8 +23,8 @@ CREATE TABLE IF NOT EXISTS access_requests (
   secondary_email             text,
   secondary_phone             text,
   secondary_directory_visible boolean DEFAULT true,
-  secondary_notify_calendar   boolean DEFAULT false,
-  secondary_notify_blog       boolean DEFAULT false,
+  secondary_notify_calendar   boolean DEFAULT true,
+  secondary_notify_blog       boolean DEFAULT true,
 
   -- Consent & status
   consent_given   boolean NOT NULL DEFAULT false,

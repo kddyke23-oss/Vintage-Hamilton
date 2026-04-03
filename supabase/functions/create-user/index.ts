@@ -66,8 +66,8 @@ Deno.serve(async (req) => {
               phones: person.phone ? [person.phone] : [],
               is_active: true,
               directory_visible: person.directoryVisible ?? true,
-              notify_calendar: person.notifyCalendar ?? false,
-              notify_blog: person.notifyBlog ?? false,
+              notify_calendar: person.notifyCalendar ?? true,
+              notify_blog: person.notifyBlog ?? true,
               password_set: false,
             })
             .select('resident_id')
