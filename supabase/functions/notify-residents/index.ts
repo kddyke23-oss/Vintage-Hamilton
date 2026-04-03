@@ -135,27 +135,41 @@ serve(async (req) => {
 
     const html = buildEmail(type, title, description);
 
-    // Send one email per recipient (keeps opt-out clean, no BCC leakage)
-    const results = await Promise.allSettled(
-      recipients.map((email) =>
-        fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${RESEND_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            from: FROM_EMAIL,
-            to: email,
-            subject,
-            html,
-          }),
-        })
-      )
-    );
+    // Use Resend Batch API — sends up to 100 emails per request, avoids rate limits
+    const batches: string[][] = [];
+    for (let i = 0; i < recipients.length; i += 100) {
+      batches.push(recipients.slice(i, i + 100));
+    }
 
-    const sent = results.filter((r) => r.status === "fulfilled").length;
-    const failed = results.filter((r) => r.status === "rejected").length;
+    let sent = 0;
+    let failed = 0;
+
+    for (const batch of batches) {
+      const emails = batch.map((email) => ({
+        from: FROM_EMAIL,
+        to: email,
+        subject,
+        html,
+      }));
+
+      const res = await fetch("https://api.resend.com/emails/batch", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${RESEND_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(emails),
+      });
+
+      if (res.ok) {
+        sent += batch.length;
+      } else {
+        const err = await res.text();
+        console.error(`Batch send failed: ${err}`);
+        failed += batch.length;
+      }
+    }
+
     console.log(`Notifications sent: ${sent}, failed: ${failed}`);
 
     return new Response(JSON.stringify({ sent, failed }), {
