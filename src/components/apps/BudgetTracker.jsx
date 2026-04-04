@@ -1399,11 +1399,22 @@ function ImportSection({ categories, myResidentId, onRefresh, showToast }) {
       const amtVal = row[mapping.amount] || "";
       const paidVal = mapping.paid_to ? (row[mapping.paid_to] || "").trim() : "";
 
-      // Parse date (try multiple formats)
+      // Parse date (try multiple formats: YYYY-MM-DD, M/D/YYYY, DD/MM/YYYY etc.)
       let parsedDate = null;
       if (dateVal) {
-        const d = new Date(dateVal + (dateVal.includes("T") ? "" : "T12:00:00"));
-        if (!isNaN(d.getTime())) parsedDate = d.toISOString().slice(0, 10);
+        const slashParts = dateVal.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+        const isoParts = dateVal.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+        if (slashParts) {
+          // M/D/YYYY or MM/DD/YYYY
+          const [, m, d, y] = slashParts;
+          const dt = new Date(+y, +m - 1, +d, 12);
+          if (!isNaN(dt.getTime()) && dt.getMonth() === +m - 1) parsedDate = dt.toISOString().slice(0, 10);
+        } else if (isoParts) {
+          // YYYY-MM-DD
+          const [, y, m, d] = isoParts;
+          const dt = new Date(+y, +m - 1, +d, 12);
+          if (!isNaN(dt.getTime()) && dt.getMonth() === +m - 1) parsedDate = dt.toISOString().slice(0, 10);
+        }
       }
       if (!parsedDate) { errors.push(`Row ${lineNum}: Invalid date "${dateVal}"`); return; }
 
