@@ -849,8 +849,8 @@ function SummaryTab({ entries, categories, categoryMap, settings }) {
       }
     });
 
-    // Calculate net and running total
-    let running = 0;
+    // Calculate net and running total (seeded with opening balance)
+    let running = openingBalance;
     months.forEach(m => {
       m.net = m.income - m.expense;
       running += m.net;
@@ -858,7 +858,7 @@ function SummaryTab({ entries, categories, categoryMap, settings }) {
     });
 
     return months;
-  }, [fyEntries, fyStart, selectedFY]);
+  }, [fyEntries, fyStart, selectedFY, openingBalance]);
 
   // ── Category breakdown ───────────────────────────────────────────────────
   const categoryData = useMemo(() => {
@@ -882,6 +882,13 @@ function SummaryTab({ entries, categories, categoryMap, settings }) {
 
   const incomeCategories = categoryData.filter(c => c.type === "income");
   const expenseCategories = categoryData.filter(c => c.type === "expense");
+
+  // ── Opening balance (carry-over from prior fiscal years) ─────────────
+  const openingBalance = useMemo(() => {
+    return entries
+      .filter(e => new Date(e.entry_date + "T12:00:00") < fyRange.start)
+      .reduce((sum, e) => sum + (e.entry_type === "income" ? Number(e.amount) : -Number(e.amount)), 0);
+  }, [entries, fyRange]);
 
   // ── Totals ──────────────────────────────────────────────────────────────
   const totals = useMemo(() => {
@@ -935,7 +942,13 @@ function SummaryTab({ entries, categories, categoryMap, settings }) {
       </div>
 
       {/* Overview cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className={`grid grid-cols-1 ${openingBalance !== 0 ? "sm:grid-cols-4" : "sm:grid-cols-3"} gap-4`}>
+        {openingBalance !== 0 && (
+          <div className="bg-white rounded-xl border border-brand-200 p-5 shadow-sm">
+            <p className="text-brand-500 text-xs font-medium uppercase tracking-wide mb-1">Opening Balance</p>
+            <p className={`text-2xl font-bold ${openingBalance >= 0 ? "text-brand-800" : "text-red-700"}`}>{fmtMoney(openingBalance)}</p>
+          </div>
+        )}
         <div className="bg-white rounded-xl border border-brand-200 p-5 shadow-sm">
           <p className="text-brand-500 text-xs font-medium uppercase tracking-wide mb-1">Total Income</p>
           <p className="text-2xl font-bold text-green-700">{fmtMoney(totals.income)}</p>
@@ -946,8 +959,8 @@ function SummaryTab({ entries, categories, categoryMap, settings }) {
         </div>
         <div className="bg-white rounded-xl border border-brand-200 p-5 shadow-sm">
           <p className="text-brand-500 text-xs font-medium uppercase tracking-wide mb-1">Net Balance</p>
-          <p className={`text-2xl font-bold ${totals.net >= 0 ? "text-brand-800" : "text-red-700"}`}>
-            {fmtMoney(totals.net)}
+          <p className={`text-2xl font-bold ${(openingBalance + totals.net) >= 0 ? "text-brand-800" : "text-red-700"}`}>
+            {fmtMoney(openingBalance + totals.net)}
           </p>
         </div>
       </div>
@@ -988,6 +1001,17 @@ function SummaryTab({ entries, categories, categoryMap, settings }) {
               </tr>
             </thead>
             <tbody>
+              {openingBalance !== 0 && (
+                <tr className="border-b border-brand-200 bg-brand-50/50">
+                  <td className="px-4 py-2.5 font-medium text-brand-700 italic">Opening Balance</td>
+                  <td className="px-4 py-2.5 text-right">{"\u2014"}</td>
+                  <td className="px-4 py-2.5 text-right">{"\u2014"}</td>
+                  <td className="px-4 py-2.5 text-right">{"\u2014"}</td>
+                  <td className={`px-4 py-2.5 text-right font-medium ${openingBalance >= 0 ? "text-brand-800" : "text-red-700"}`}>
+                    {fmtMoney(openingBalance)}
+                  </td>
+                </tr>
+              )}
               {monthlyData.map((m, i) => {
                 const hasData = m.income > 0 || m.expense > 0;
                 return (
