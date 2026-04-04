@@ -821,6 +821,13 @@ function SummaryTab({ entries, categories, categoryMap, settings }) {
     });
   }, [entries, fyRange]);
 
+  // ── Opening balance (carry-over from prior fiscal years) ─────────────
+  const openingBalance = useMemo(() => {
+    return entries
+      .filter(e => new Date(e.entry_date + "T12:00:00") < fyRange.start)
+      .reduce((sum, e) => sum + (e.entry_type === "income" ? Number(e.amount) : -Number(e.amount)), 0);
+  }, [entries, fyRange]);
+
   // ── Monthly breakdown ────────────────────────────────────────────────────
   const monthlyData = useMemo(() => {
     const months = [];
@@ -882,13 +889,6 @@ function SummaryTab({ entries, categories, categoryMap, settings }) {
 
   const incomeCategories = categoryData.filter(c => c.type === "income");
   const expenseCategories = categoryData.filter(c => c.type === "expense");
-
-  // ── Opening balance (carry-over from prior fiscal years) ─────────────
-  const openingBalance = useMemo(() => {
-    return entries
-      .filter(e => new Date(e.entry_date + "T12:00:00") < fyRange.start)
-      .reduce((sum, e) => sum + (e.entry_type === "income" ? Number(e.amount) : -Number(e.amount)), 0);
-  }, [entries, fyRange]);
 
   // ── Totals ──────────────────────────────────────────────────────────────
   const totals = useMemo(() => {
