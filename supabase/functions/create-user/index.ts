@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
     // Caller must be a super admin.
     } else if (mode === 'approve-request') {
       const { requestId, people, reviewerId } = body
-      // people: array of { surname, names, email, phone, address, directoryVisible, notifyCalendar, notifyBlog }
+      // people: array of { surname, names, email, phone, address, directoryVisible, notifyDigest }
 
       if (!requestId) throw new Error('requestId is required')
       if (!people || people.length === 0) throw new Error('At least one person is required')
@@ -66,8 +66,7 @@ Deno.serve(async (req) => {
               phones: person.phone ? [person.phone] : [],
               is_active: true,
               directory_visible: person.directoryVisible ?? true,
-              notify_calendar: person.notifyCalendar ?? true,
-              notify_blog: person.notifyBlog ?? true,
+              notify_digest: person.notifyDigest ?? true,
               password_set: false,
             })
             .select('resident_id')

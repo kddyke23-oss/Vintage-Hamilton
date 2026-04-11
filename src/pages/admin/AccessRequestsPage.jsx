@@ -61,8 +61,7 @@ export default function AccessRequestsPage() {
         phone: req.primary_phone,
         address: req.address,
         directoryVisible: req.primary_directory_visible,
-        notifyCalendar: req.primary_notify_calendar,
-        notifyBlog: req.primary_notify_blog,
+        notifyDigest: req.primary_notify_digest,
       }]
 
       if (req.secondary_surname && req.secondary_email) {
@@ -73,8 +72,7 @@ export default function AccessRequestsPage() {
           phone: req.secondary_phone,
           address: req.address,
           directoryVisible: req.secondary_directory_visible,
-          notifyCalendar: req.secondary_notify_calendar,
-          notifyBlog: req.secondary_notify_blog,
+          notifyDigest: req.secondary_notify_digest,
         })
       }
 
@@ -274,8 +272,7 @@ function RequestCard({ req, processing, onApprove, onReject }) {
           email: req.primary_email,
           phone: req.primary_phone,
           directoryVisible: req.primary_directory_visible,
-          notifyCalendar: req.primary_notify_calendar,
-          notifyBlog: req.primary_notify_blog,
+          notifyDigest: req.primary_notify_digest,
         }} />
         {hasSecondary && (
           <PersonDetail label="Secondary" person={{
@@ -283,8 +280,7 @@ function RequestCard({ req, processing, onApprove, onReject }) {
             email: req.secondary_email,
             phone: req.secondary_phone,
             directoryVisible: req.secondary_directory_visible,
-            notifyCalendar: req.secondary_notify_calendar,
-            notifyBlog: req.secondary_notify_blog,
+            notifyDigest: req.secondary_notify_digest,
           }} />
         )}
       </div>
@@ -327,8 +323,7 @@ function PersonDetail({ label, person }) {
       {person.phone && <p className="text-brand-500">📱 {person.phone}</p>}
       <div className="flex flex-wrap gap-2 mt-1.5">
         <Chip active={person.directoryVisible}>Directory visible</Chip>
-        <Chip active={person.notifyCalendar}>Calendar notifications</Chip>
-        <Chip active={person.notifyBlog}>Blog notifications</Chip>
+        <Chip active={person.notifyDigest}>Daily Digest</Chip>
       </div>
     </div>
   )

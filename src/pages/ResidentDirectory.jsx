@@ -277,8 +277,7 @@ function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAd
     phones: entry.phones?.length ? entry.phones : [""],
     emails: entry.emails?.length ? entry.emails : [""],
     tags: entry.tags || [],
-    notify_calendar: entry.notify_calendar ?? false,
-    notify_blog: entry.notify_blog ?? false,
+    notify_digest: entry.notify_digest ?? false,
     directory_visible: entry.directory_visible ?? true,
   });
   const [newTag, setNewTag] = useState("");
@@ -331,8 +330,7 @@ function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAd
       phones: form.phones.filter(p => p.trim()),
       emails: form.emails.filter(e => e.trim()),
       tags: form.tags,
-      notify_calendar: form.notify_calendar,
-      notify_blog: form.notify_blog,
+      notify_digest: form.notify_digest,
       directory_visible: form.directory_visible,
       photo_url,
     });
@@ -521,25 +519,18 @@ function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAd
           {/* ── Notification Preferences (own record only) ── */}
           {isOwnRecord && (
             <ModalField label="Email Notifications">
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-                {[
-                  { key: "notify_calendar", label: "Social Calendar", desc: "New events and updates" },
-                  { key: "notify_blog", label: "Community Blog", desc: "New posts and comments" },
-                ].map(({ key, label, desc }) => (
-                  <label key={key} style={{ display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer", padding: "0.5rem 0.75rem", borderRadius: "6px", background: "#f9fafb", border: "1px solid #e5e7eb" }}>
-                    <input
-                      type="checkbox"
-                      checked={form[key]}
-                      onChange={e => updateField(key, e.target.checked)}
-                      style={{ width: "16px", height: "16px", accentColor: "var(--color-primary)", cursor: "pointer", flexShrink: 0 }}
-                    />
-                    <div>
-                      <div style={{ fontSize: "0.875rem", fontWeight: "600", color: "#374151" }}>{label}</div>
-                      <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>{desc}</div>
-                    </div>
-                  </label>
-                ))}
-              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer", padding: "0.5rem 0.75rem", borderRadius: "6px", background: form.notify_digest ? "#f0fdf4" : "#f9fafb", border: `1px solid ${form.notify_digest ? "#86efac" : "#e5e7eb"}` }}>
+                <input
+                  type="checkbox"
+                  checked={form.notify_digest}
+                  onChange={e => updateField("notify_digest", e.target.checked)}
+                  style={{ width: "16px", height: "16px", accentColor: "var(--color-primary)", cursor: "pointer", flexShrink: 0 }}
+                />
+                <div>
+                  <div style={{ fontSize: "0.875rem", fontWeight: "600", color: "#374151" }}>Daily Digest</div>
+                  <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>Receive a daily email with new blog posts and calendar events</div>
+                </div>
+              </label>
             </ModalField>
           )}
         </div>
@@ -874,7 +865,7 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
     setLoading(true);
     let query = supabase
       .from("profiles")
-      .select("resident_id, id, surname, names, address, phones, emails, tags, directory_visible, notify_calendar, notify_blog, photo_url")
+      .select("resident_id, id, surname, names, address, phones, emails, tags, directory_visible, notify_digest, photo_url")
       .not("surname", "is", null)
       .order("surname");
     if (!includeHidden) query = query.eq("directory_visible", true);

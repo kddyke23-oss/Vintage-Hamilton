@@ -5,7 +5,7 @@ import { STREETS } from '@/config/constants'
 
 const EMPTY_PERSON = {
   surname: '', names: '', email: '', phone: '',
-  directoryVisible: true, notifyCalendar: false, notifyBlog: false,
+  directoryVisible: true, notifyDigest: true,
 }
 
 export default function RequestAccessPage() {
@@ -72,8 +72,7 @@ export default function RequestAccessPage() {
       primary_email: primary.email.trim().toLowerCase(),
       primary_phone: primary.phone.trim() || null,
       primary_directory_visible: primary.directoryVisible,
-      primary_notify_calendar: primary.notifyCalendar,
-      primary_notify_blog: primary.notifyBlog,
+      primary_notify_digest: primary.notifyDigest,
       consent_given: true,
     }
 
@@ -83,8 +82,7 @@ export default function RequestAccessPage() {
       row.secondary_email   = secondary.email.trim().toLowerCase()
       row.secondary_phone   = secondary.phone.trim() || null
       row.secondary_directory_visible = secondary.directoryVisible
-      row.secondary_notify_calendar   = secondary.notifyCalendar
-      row.secondary_notify_blog       = secondary.notifyBlog
+      row.secondary_notify_digest     = secondary.notifyDigest
     }
 
     const { error: insertError } = await supabase.from('access_requests').insert(row)
@@ -299,19 +297,11 @@ function PersonSection({ title, person, onChange, required }) {
         </label>
         <label className="flex items-center gap-2 text-sm text-brand-700 cursor-pointer">
           <input
-            type="checkbox" checked={person.notifyCalendar}
-            onChange={e => onChange('notifyCalendar', e.target.checked)}
+            type="checkbox" checked={person.notifyDigest}
+            onChange={e => onChange('notifyDigest', e.target.checked)}
             className="w-4 h-4 rounded border-brand-300 text-brand-600 focus:ring-brand-400"
           />
-          Email me about new calendar events
-        </label>
-        <label className="flex items-center gap-2 text-sm text-brand-700 cursor-pointer">
-          <input
-            type="checkbox" checked={person.notifyBlog}
-            onChange={e => onChange('notifyBlog', e.target.checked)}
-            className="w-4 h-4 rounded border-brand-300 text-brand-600 focus:ring-brand-400"
-          />
-          Email me about new blog posts
+          Receive daily digest of community updates (blog posts & events)
         </label>
       </div>
     </fieldset>

@@ -147,8 +147,7 @@ function EditResidentModal({ entry, onSave, onClose, isSaving }) {
     phones: entry.phones?.length ? entry.phones : [''],
     emails: entry.emails?.length ? entry.emails : [''],
     tags: entry.tags || [],
-    notify_calendar: entry.notify_calendar ?? true,
-    notify_blog: entry.notify_blog ?? true,
+    notify_digest: entry.notify_digest ?? true,
     directory_visible: entry.directory_visible ?? true,
   })
   const [newTag, setNewTag] = useState('')
@@ -196,8 +195,7 @@ function EditResidentModal({ entry, onSave, onClose, isSaving }) {
       phones: form.phones.filter(p => p.trim()),
       emails: form.emails.filter(e => e.trim()),
       tags: form.tags,
-      notify_calendar: form.notify_calendar,
-      notify_blog: form.notify_blog,
+      notify_digest: form.notify_digest,
       directory_visible: form.directory_visible,
       photo_url,
     })
@@ -327,21 +325,14 @@ function EditResidentModal({ entry, onSave, onClose, isSaving }) {
 
           {/* Email Notifications — admins can toggle for any resident */}
           <ModalField label="Email Notifications">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {[
-                { key: 'notify_calendar', label: 'Social Calendar', desc: 'New events and updates' },
-                { key: 'notify_blog', label: 'Community Blog', desc: 'New posts and comments' },
-              ].map(({ key, label, desc }) => (
-                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer', padding: '0.5rem 0.75rem', borderRadius: '6px', background: '#f9fafb', border: '1px solid #e5e7eb' }}>
-                  <input type="checkbox" checked={form[key]} onChange={e => upd(key, e.target.checked)}
-                    style={{ width: '16px', height: '16px', accentColor: '#1e4976', cursor: 'pointer', flexShrink: 0 }} />
-                  <div>
-                    <div style={{ fontSize: '0.875rem', fontWeight: '600', color: '#374151' }}>{label}</div>
-                    <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>{desc}</div>
-                  </div>
-                </label>
-              ))}
-            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer', padding: '0.5rem 0.75rem', borderRadius: '6px', background: form.notify_digest ? '#f0fdf4' : '#f9fafb', border: `1px solid ${form.notify_digest ? '#86efac' : '#e5e7eb'}` }}>
+              <input type="checkbox" checked={form.notify_digest} onChange={e => upd('notify_digest', e.target.checked)}
+                style={{ width: '16px', height: '16px', accentColor: '#1e4976', cursor: 'pointer', flexShrink: 0 }} />
+              <div>
+                <div style={{ fontSize: '0.875rem', fontWeight: '600', color: '#374151' }}>Daily Digest</div>
+                <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>Receive a daily email with new blog posts and calendar events</div>
+              </div>
+            </label>
           </ModalField>
         </div>
 
@@ -471,14 +462,9 @@ function ResidentProfileModal({ entry, authInfo, onEdit, onClose, onInviteSent }
           {/* Notification prefs */}
           <div style={{ background: '#f9fafb', borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.8rem' }}>
             <div style={{ fontWeight: '600', color: '#6b7280', marginBottom: '0.4rem' }}>Email notifications</div>
-            <div style={{ display: 'flex', gap: '1rem' }}>
-              <span style={{ color: entry.notify_calendar ? '#16a34a' : '#9ca3af' }}>
-                {entry.notify_calendar ? '✅' : '○'} Calendar
-              </span>
-              <span style={{ color: entry.notify_blog ? '#16a34a' : '#9ca3af' }}>
-                {entry.notify_blog ? '✅' : '○'} Blog
-              </span>
-            </div>
+            <span style={{ color: entry.notify_digest ? '#16a34a' : '#9ca3af' }}>
+              {entry.notify_digest ? '✅' : '○'} Daily Digest
+            </span>
           </div>
 
           {/* Invite feedback */}
@@ -539,7 +525,7 @@ export default function AccessPage() {
       const [{ data: profiles, error: pError }, { data: accessRows, error: aError }, authData] = await Promise.all([
         supabase
           .from('profiles')
-          .select('resident_id, id, surname, names, emails, phones, address, tags, directory_visible, notify_calendar, notify_blog, photo_url, is_active, is_admin')
+          .select('resident_id, id, surname, names, emails, phones, address, tags, directory_visible, notify_digest, photo_url, is_active, is_admin')
           .order('surname'),
         supabase.from('app_access').select('user_id, app_id, role'),
         supabase.rpc('get_resident_auth_info').then(r => r),
