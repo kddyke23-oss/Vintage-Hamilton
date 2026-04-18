@@ -162,7 +162,7 @@ serve(async (_req) => {
     // 1. Fetch new blog posts (not removed) created in the last 24h
     const { data: rawPosts, error: blogErr } = await supabase
       .from("blog_posts")
-      .select("title, author_id, created_at")
+      .select("title, created_by, created_at")
       .gte("created_at", since)
       .or("removed.is.null,removed.eq.false")
       .order("created_at", { ascending: true });
@@ -172,21 +172,22 @@ serve(async (_req) => {
     // Look up author names for blog posts
     const blogPosts: { title: string; author: string }[] = [];
     if (rawPosts && rawPosts.length > 0) {
-      const authorIds = [...new Set(rawPosts.map((p) => p.author_id))];
+      // created_by is a uuid (auth.users.id), need to join through profiles.id
+      const authorIds = [...new Set(rawPosts.map((p) => p.created_by).filter(Boolean))];
       const { data: authors } = await supabase
         .from("profiles")
-        .select("resident_id, names, surname")
-        .in("resident_id", authorIds);
+        .select("id, names, surname")
+        .in("id", authorIds);
 
-      const authorMap: Record<number, string> = {};
+      const authorMap: Record<string, string> = {};
       authors?.forEach((a) => {
-        authorMap[a.resident_id] = `${a.names} ${a.surname}`;
+        if (a.id) authorMap[a.id] = `${a.names} ${a.surname}`;
       });
 
       rawPosts.forEach((p) => {
         blogPosts.push({
           title: p.title || "New Blog Post",
-          author: authorMap[p.author_id] || "A neighbor",
+          author: authorMap[p.created_by] || "A neighbor",
         });
       });
     }
@@ -195,17 +196,17 @@ serve(async (_req) => {
     const today = new Date().toISOString().split("T")[0];
     const { data: rawEvents, error: calErr } = await supabase
       .from("calendar_events")
-      .select("title, start_date, location, created_at")
+      .select("title, event_date, location, created_at")
       .gte("created_at", since)
-      .gte("start_date", today)
+      .gte("event_date", today)
       .or("removed.is.null,removed.eq.false")
-      .order("start_date", { ascending: true });
+      .order("event_date", { ascending: true });
 
     if (calErr) throw calErr;
 
     const calendarEvents = (rawEvents || []).map((e) => ({
       title: e.title || "New Event",
-      start_date: e.start_date,
+      start_date: e.event_date,
       location: e.location,
     }));
 
@@ -250,9 +251,9 @@ serve(async (_req) => {
 
     const subject = `📬 Vintage @ Hamilton — ${itemSummary}`;
 
-    // 6. Send via BCC batches (Resend allows max 50 BCC per email)
-    //    We send TO a no-reply address and BCC all residents
-    const BCC_BATCH_SIZE = 50;
+    // 6. Send via BCC batches (Resend allows max 50 total recipients per email)
+    //    We send TO noreply (1) + BCC (up to 49) = 50 max
+    const BCC_BATCH_SIZE = 49;
     let sent = 0;
     let failed = 0;
 
