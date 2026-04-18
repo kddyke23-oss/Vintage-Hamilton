@@ -132,8 +132,7 @@ Extends Supabase `auth.users`. Contains both auth-facing fields and directory fi
 | directory_visible | boolean | Show in resident directory |
 | photo_url | text | Avatar photo — populated in Phase 5 Session 4 |
 | password_set | boolean | Whether resident has set their own password |
-| notify_calendar | boolean | Notification preference for calendar events |
-| notify_blog | boolean | Notification preference for blog posts |
+| notify_digest | boolean | Opt-in for the daily 6 PM ET digest email (replaced notify_calendar + notify_blog on Apr 11 2026) |
 
 > **Note:** The legacy fields `full_name`, `email`, `phone`, and `unit_number` were removed in Phase 5. All data is held in `surname`/`names`, `emails[]`, `phones[]`, and `address`.
 
