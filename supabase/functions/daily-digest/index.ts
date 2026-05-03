@@ -156,10 +156,32 @@ serve(async (_req) => {
   try {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Determine the time window: last 24 hours
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Determine the time window.
+    // Anchor `since` to the last successful digest send (digest_log.sent_at)
+    // rather than a fixed `now() - 24h`. This means:
+    //   - If yesterday's digest ran on time, the window is ~24h (same as before).
+    //   - If a run was missed, delayed, or errored, the next successful run
+    //     back-fills everything since the last good send.
+    // Fall back to 24h if digest_log is empty (first-ever run).
+    const { data: lastLog, error: lastLogErr } = await supabase
+      .from("digest_log")
+      .select("sent_at")
+      .eq("status", "success")
+      .order("sent_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    // 1. Fetch new blog posts (not removed) created in the last 24h
+    if (lastLogErr) {
+      console.error("Failed to read last digest_log row:", lastLogErr);
+    }
+
+    const since = lastLog?.sent_at
+      ? lastLog.sent_at
+      : new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+    console.log(`daily-digest: window since ${since}`);
+
+    // 1. Fetch new blog posts (not removed) created since `since`
     const { data: rawPosts, error: blogErr } = await supabase
       .from("blog_posts")
       .select("title, created_by, created_at")
@@ -268,8 +290,8 @@ serve(async (_req) => {
         },
         body: JSON.stringify({
           from: FROM_EMAIL,
-          to: FROM_EMAIL,       // send TO ourselves
-          bcc: bccBatch,        // actual recipients via BCC
+          to: "keith_dyke@hotmail.com",  // real mailbox accepts; Hotmail rule deletes
+          bcc: bccBatch,                 // actual recipients via BCC
           subject,
           html,
         }),
@@ -284,17 +306,25 @@ serve(async (_req) => {
       }
     }
 
-    // 7. Log the digest send
-    await supabase.from("digest_log").insert({
+    // 7. Log the digest send.
+    //    IMPORTANT: surface the error if the insert fails. The previous
+    //    version ignored `error` entirely, which is how we ended up with
+    //    a digest_log silent for ~30 days while emails went out fine.
+    const { error: logErr } = await supabase.from("digest_log").insert({
       blog_count: blogPosts.length,
       event_count: calendarEvents.length,
       recipient_count: sent,
       status: failed > 0 ? "partial" : "success",
     });
 
+    if (logErr) {
+      console.error("digest_log insert FAILED:", JSON.stringify(logErr));
+    }
+
     console.log(
       `Daily digest sent: ${sent} recipients, ${failed} failed. ` +
-      `Content: ${blogPosts.length} blog posts, ${calendarEvents.length} events.`
+      `Content: ${blogPosts.length} blog posts, ${calendarEvents.length} events. ` +
+      `Window since: ${since}. Log insert: ${logErr ? "FAILED" : "ok"}.`
     );
 
     return new Response(
@@ -303,6 +333,8 @@ serve(async (_req) => {
         failed,
         blog_count: blogPosts.length,
         event_count: calendarEvents.length,
+        since,
+        log_insert_error: logErr ?? null,
       }),
       { status: 200, headers: { "Content-Type": "application/json" } }
     );
