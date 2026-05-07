@@ -346,6 +346,16 @@ function MembersTab({ members, draws, periods, isAdmin, allResidents, onSaveMemb
   const [editingMember, setEditingMember] = useState(null);
   const [showAddModal, setShowAddModal]   = useState(false);
 
+  // Next sequential member ID (A, B, C, …). Includes exited members so IDs are never reused.
+  const nextMemberId = useMemo(() => {
+    const codes = members
+      .map(m => (m.id || "").toUpperCase().charCodeAt(0))
+      .filter(c => c >= 65 && c <= 90);
+    if (codes.length === 0) return "A";
+    const maxCode = Math.max(...codes);
+    return maxCode >= 90 ? "" : String.fromCharCode(maxCode + 1);
+  }, [members]);
+
   // Compute earnings per member
   const earnings = {};
   members.forEach(m => { earnings[m.id] = 0; });
@@ -382,6 +392,7 @@ function MembersTab({ members, draws, periods, isAdmin, allResidents, onSaveMemb
       {showAddModal && (
         <MemberModal
           member={null} allResidents={allResidents} title="Add Member"
+          nextId={nextMemberId}
           onSave={async (data) => { await onSaveMember(data); setShowAddModal(false); }}
           onClose={() => setShowAddModal(false)}
         />
@@ -436,10 +447,10 @@ function MemberCard({ member: m, earnings, isAdmin, onEdit }) {
   );
 }
 
-function MemberModal({ member, allResidents, title, onSave, onClose }) {
+function MemberModal({ member, allResidents, title, nextId = "", onSave, onClose }) {
   const isNew = !member;
   const [form, setForm] = useState({
-    id:          member?.id || "",
+    id:          member?.id || nextId || "",
     resident_id_1: member?.resident_id_1 || "",
     resident_id_2: member?.resident_id_2 || "",
     join_date:   member?.join_date || new Date().toISOString().slice(0, 10),
@@ -837,7 +848,9 @@ function WinningsTab({ members, draws, periods }) {
 // PAYMENTS TAB (admin only)
 // ─────────────────────────────────────────────────────────────────────────────
 function PaymentsTab({ members, periods, payments, isAdmin, onSavePayment }) {
-  const sortedPeriods = [...periods].sort((a, b) => a.start_date.localeCompare(b.start_date));
+  // Display order: latest period first, period 1 last (rightmost). Balance shown leftmost so
+  // current status is always visible without scrolling; older periods scroll off to the right.
+  const periodsDesc   = [...periods].sort((a, b) => b.start_date.localeCompare(a.start_date));
   const activeMembers = members.filter(m => !m.exit_date);
 
   const getPayment = (memberId, periodId) =>
@@ -870,22 +883,33 @@ function PaymentsTab({ members, periods, payments, isAdmin, onSavePayment }) {
           <thead>
             <tr style={{ borderBottom: "2px solid #f0f4f8" }}>
               <th style={{ padding: "0.75rem 1rem", textAlign: "left", fontFamily: "var(--font-display)", color: "var(--color-primary)", fontWeight: "600" }}>Member</th>
-              {sortedPeriods.map(p => (
+              <th style={{ padding: "0.75rem 1rem", textAlign: "right", color: "#6b7280", fontWeight: "600" }}>Balance</th>
+              {periodsDesc.map(p => (
                 <th key={p.id} style={{ padding: "0.75rem 0.5rem", textAlign: "right", color: "#6b7280", fontWeight: "600", whiteSpace: "nowrap", fontSize: "0.78rem" }}>{p.label}</th>
               ))}
-              <th style={{ padding: "0.75rem 1rem", textAlign: "right", color: "#6b7280", fontWeight: "600" }}>Balance</th>
             </tr>
           </thead>
           <tbody>
             {activeMembers.map((m, i) => {
+              // Balance computed up-front so it can render before the period columns.
               let totalPaid = 0, totalExpected = 0;
+              periodsDesc.forEach(p => {
+                const expected = getExpected(m, p);
+                if (expected !== null) {
+                  totalExpected += expected;
+                  totalPaid += (getPayment(m.id, p.id) || 0);
+                }
+              });
+              const bal = totalPaid - totalExpected;
               return (
                 <tr key={m.id} style={{ borderBottom: "1px solid #f0f4f8", background: i % 2 === 0 ? "white" : "#fafbfc" }}>
                   <td style={{ padding: "0.6rem 1rem", fontWeight: "500", color: "#374151", whiteSpace: "nowrap" }}>{memberDisplayName(m)}</td>
-                  {sortedPeriods.map(p => {
+                  <td style={{ padding: "0.6rem 1rem", textAlign: "right", fontWeight: "600", whiteSpace: "nowrap" }}>
+                    <span style={{ color: bal >= 0 ? "#059669" : "#dc2626" }}>{bal >= 0 ? "+" : ""}{fmtMoney(bal)}</span>
+                  </td>
+                  {periodsDesc.map(p => {
                     const paid     = getPayment(m.id, p.id);
                     const expected = getExpected(m, p);
-                    if (expected !== null) { totalExpected += expected; totalPaid += (paid || 0); }
                     const key = `${m.id}-${p.id}`;
                     const isEdit = editing === key;
                     if (expected === null) return <td key={p.id} style={{ padding: "0.6rem 0.5rem", textAlign: "right", color: "#d1d5db" }}>—</td>;
@@ -915,12 +939,6 @@ function PaymentsTab({ members, periods, payments, isAdmin, onSavePayment }) {
                       </td>
                     );
                   })}
-                  <td style={{ padding: "0.6rem 1rem", textAlign: "right", fontWeight: "600" }}>
-                    {(() => {
-                      const bal = totalPaid - totalExpected;
-                      return <span style={{ color: bal >= 0 ? "#059669" : "#dc2626" }}>{bal >= 0 ? "+" : ""}{fmtMoney(bal)}</span>;
-                    })()}
-                  </td>
                 </tr>
               );
             })}
