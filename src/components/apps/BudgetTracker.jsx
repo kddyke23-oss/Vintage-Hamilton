@@ -32,6 +32,8 @@ const ICONS = {
   chevD:    '<polyline points="6 9 12 15 18 9"/>',
   check:    '<polyline points="20 6 9 17 4 12"/>',
   warn:     '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  print:    '<polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>',
+  back:     '<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>',
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -201,7 +203,7 @@ export default function BudgetTracker({ user, isAdmin, isBudgetAdmin }) {
             myResidentId={myResidentId} onRefresh={loadData} showToast={showToast}
           />
         )}
-        {activeTab === "summary" && <SummaryTab entries={entries} categories={categories} categoryMap={categoryMap} settings={settings} />}
+        {activeTab === "summary" && <SummaryTab entries={entries} categories={categories} categoryMap={categoryMap} settings={settings} targets={targets} />}
         {activeTab === "targets" && <TargetsTab entries={entries} categories={categories} targets={targets} categoryMap={categoryMap} settings={settings} />}
         {activeTab === "admin"   && <AdminTab categories={categories} targets={targets} settings={settings} isBudgetAdmin={isBudgetAdmin} myResidentId={myResidentId} onRefresh={loadData} showToast={showToast} />}
       </div>
@@ -770,9 +772,13 @@ function LedgerTab({ entries, categories, categoryMap, profileMap, isBudgetAdmin
 // ══════════════════════════════════════════════════════════════════════════════
 //  TAB: SUMMARY
 // ══════════════════════════════════════════════════════════════════════════════
-function SummaryTab({ entries, categories, categoryMap, settings }) {
+function SummaryTab({ entries, categories, categoryMap, settings, targets = [] }) {
   // ── Fiscal year helpers ──────────────────────────────────────────────────
   const fyStart = settings?.fiscal_year_start_month || 1; // 1 = Jan
+
+  // ── Year-end report state ───────────────────────────────────────────────
+  const [showReportPicker, setShowReportPicker] = useState(false);
+  const [reportSections, setReportSections] = useState(null); // null = not in print mode
 
   // Derive available fiscal years from entries
   const fiscalYears = useMemo(() => {
@@ -919,26 +925,66 @@ function SummaryTab({ entries, categories, categoryMap, settings }) {
     );
   }
 
+  // ── Year-End Report overlay (renders instead of normal Summary when active) ──
+  if (reportSections) {
+    return (
+      <YearEndReport
+        sections={reportSections}
+        fyLabel={fyLabel}
+        fyEntries={fyEntries}
+        openingBalance={openingBalance}
+        totals={totals}
+        monthlyData={monthlyData}
+        categoryMap={categoryMap}
+        targets={targets.filter(t => t.fiscal_year === selectedFY)}
+        fyEntriesByCat={categoryData}
+        onClose={() => setReportSections(null)}
+      />
+    );
+  }
+
   return (
     <div style={{ animation: "slideUp 0.3s ease" }} className="space-y-5">
-      {/* Fiscal year selector */}
-      <div className="flex items-center justify-between">
+      {/* Section-picker modal */}
+      {showReportPicker && (
+        <ReportSectionPicker
+          fyLabel={fyLabel}
+          onConfirm={(sections) => {
+            setShowReportPicker(false);
+            setReportSections(sections);
+          }}
+          onClose={() => setShowReportPicker(false)}
+        />
+      )}
+
+      {/* Fiscal year selector + Year-End Report */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <h2 className="font-display text-lg text-brand-800">
           Fiscal Year: {fyLabel}
         </h2>
-        {fiscalYears.length > 1 && (
-          <select
-            value={selectedFY}
-            onChange={e => setSelectedFY(Number(e.target.value))}
-            className="border border-brand-200 rounded-lg px-3 py-1.5 text-sm text-brand-700 bg-white focus:ring-2 focus:ring-brand-300 outline-none"
+        <div className="flex items-center gap-2">
+          {fiscalYears.length > 1 && (
+            <select
+              value={selectedFY}
+              onChange={e => setSelectedFY(Number(e.target.value))}
+              className="border border-brand-200 rounded-lg px-3 py-1.5 text-sm text-brand-700 bg-white focus:ring-2 focus:ring-brand-300 outline-none"
+            >
+              {fiscalYears.map(fy => (
+                <option key={fy} value={fy}>
+                  {fyStart === 1 ? fy : `${fy}/${String(fy + 1).slice(2)}`}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            onClick={() => setShowReportPicker(true)}
+            className="flex items-center gap-2 px-3 py-1.5 bg-brand-700 text-white rounded-lg text-sm font-medium hover:bg-brand-800 transition-colors"
+            title="Generate year-end report"
           >
-            {fiscalYears.map(fy => (
-              <option key={fy} value={fy}>
-                {fyStart === 1 ? fy : `${fy}/${String(fy + 1).slice(2)}`}
-              </option>
-            ))}
-          </select>
-        )}
+            <Ic path={ICONS.print} size={14} />
+            Year-End Report
+          </button>
+        </div>
       </div>
 
       {/* Overview cards */}
@@ -1096,6 +1142,453 @@ function SummaryTab({ entries, categories, categoryMap, settings }) {
               ))}
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  YEAR-END REPORT: Section picker modal
+// ══════════════════════════════════════════════════════════════════════════════
+function ReportSectionPicker({ fyLabel, onConfirm, onClose }) {
+  const [sections, setSections] = useState({
+    headline: true,
+    categoryVsBudget: true,
+    monthly: true,
+    ledger: true,
+  });
+
+  const toggle = (key) => setSections(s => ({ ...s, [key]: !s[key] }));
+  const anyChecked = Object.values(sections).some(v => v);
+
+  const OPTIONS = [
+    { key: "headline",         label: "Headline Totals",      desc: "Opening balance, total income, total expenses, net, closing balance." },
+    { key: "categoryVsBudget", label: "Category vs Budget",   desc: "Each category: target, actual, variance, % used." },
+    { key: "monthly",          label: "Monthly Breakdown",    desc: "Month-by-month income, expenses, net, and running total." },
+    { key: "ledger",           label: "Transaction Ledger",   desc: "Every entry for the year, in date order — the full record." },
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4"
+      style={{ animation: "fadeIn 0.2s ease" }}
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-xl shadow-xl w-full max-w-md"
+        style={{ animation: "slideUp 0.25s ease" }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="px-6 py-4 border-b border-brand-200 flex items-center justify-between">
+          <div>
+            <h3 className="font-display text-lg text-brand-800">Year-End Report</h3>
+            <p className="text-brand-500 text-xs mt-0.5">Fiscal year {fyLabel}</p>
+          </div>
+          <button onClick={onClose} className="text-brand-400 hover:text-brand-700 p-1">
+            <Ic path={ICONS.x} size={18} />
+          </button>
+        </div>
+
+        <div className="px-6 py-4">
+          <p className="text-brand-600 text-sm mb-4">Choose the sections to include:</p>
+          <div className="space-y-2">
+            {OPTIONS.map(opt => (
+              <label
+                key={opt.key}
+                className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                  sections[opt.key]
+                    ? "border-brand-400 bg-brand-50"
+                    : "border-brand-200 hover:bg-brand-50"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={sections[opt.key]}
+                  onChange={() => toggle(opt.key)}
+                  className="mt-0.5 accent-brand-700"
+                />
+                <div className="flex-1">
+                  <div className="text-sm font-medium text-brand-800">{opt.label}</div>
+                  <div className="text-xs text-brand-500 mt-0.5">{opt.desc}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="px-6 py-3 border-t border-brand-200 flex items-center justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="px-4 py-1.5 text-sm text-brand-700 hover:bg-brand-50 rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(sections)}
+            disabled={!anyChecked}
+            className="px-4 py-1.5 bg-brand-700 text-white text-sm font-medium rounded-lg hover:bg-brand-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            Generate Report
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  YEAR-END REPORT: Print-friendly view
+// ══════════════════════════════════════════════════════════════════════════════
+const YEAR_END_PRINT_CSS = `
+  @media print {
+    @page { size: letter; margin: 0.5in; }
+    body { background: white !important; }
+    body * { visibility: hidden !important; }
+    .yer-overlay, .yer-overlay * { visibility: visible !important; }
+    .yer-overlay { position: static !important; padding: 0 !important; overflow: visible !important; }
+    .yer-no-print { display: none !important; }
+    section.yer-section { page-break-before: always; }
+    section.yer-section:first-of-type { page-break-before: auto; }
+    .yer-section { page-break-inside: avoid; }
+    .yer-ledger-table tr { page-break-inside: avoid; }
+    .yer-ledger-table thead { display: table-header-group; }
+  }
+`;
+
+function YearEndReport({
+  sections,
+  fyLabel,
+  fyEntries,
+  openingBalance,
+  totals,
+  monthlyData,
+  categoryMap,
+  targets,
+  fyEntriesByCat,
+  onClose,
+}) {
+  // Printed-on date string
+  const printedOn = new Date().toLocaleDateString("en-US", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
+  });
+
+  const closingBalance = openingBalance + totals.net;
+
+  // ── Category vs Budget rows ─────────────────────────────────────────────
+  // Include every category that has either a target OR actual spending this FY.
+  const categoryVsBudgetRows = useMemo(() => {
+    const actualMap = {};
+    fyEntriesByCat.forEach(c => {
+      if (!actualMap[c.category_id]) actualMap[c.category_id] = { income: 0, expense: 0, name: c.name };
+      actualMap[c.category_id][c.type] = c.total;
+    });
+    const targetMap = {};
+    targets.forEach(t => { targetMap[t.category_id] = Number(t.target_amount); });
+
+    const allCatIds = new Set([
+      ...Object.keys(actualMap).map(Number),
+      ...Object.keys(targetMap).map(Number),
+    ]);
+
+    const rows = [];
+    allCatIds.forEach(cid => {
+      const cat = categoryMap[cid];
+      const type = cat?.type === "income" ? "income" : "expense"; // 'both' → treat as expense for the report row
+      const actual = type === "income"
+        ? (actualMap[cid]?.income || 0)
+        : (actualMap[cid]?.expense || 0);
+      const budget = targetMap[cid] || 0;
+      const variance = budget - actual;
+      const pct = budget > 0 ? (actual / budget) * 100 : null;
+      rows.push({
+        category_id: cid,
+        name: cat?.name || actualMap[cid]?.name || "Unknown",
+        type,
+        budget,
+        actual,
+        variance,
+        pct,
+      });
+    });
+    return rows.sort((a, b) => b.budget - a.budget || b.actual - a.actual);
+  }, [fyEntriesByCat, targets, categoryMap]);
+
+  const cvbTotals = useMemo(() => {
+    const budgeted = categoryVsBudgetRows.reduce((s, r) => s + r.budget, 0);
+    const spent = categoryVsBudgetRows.filter(r => r.type === "expense").reduce((s, r) => s + r.actual, 0);
+    const income = categoryVsBudgetRows.filter(r => r.type === "income").reduce((s, r) => s + r.actual, 0);
+    return { budgeted, spent, income, variance: budgeted - spent };
+  }, [categoryVsBudgetRows]);
+
+  // ── Ledger: sorted ascending by date, with running balance ──────────────
+  const ledgerRows = useMemo(() => {
+    const sorted = [...fyEntries].sort(
+      (a, b) => a.entry_date.localeCompare(b.entry_date) || a.id - b.id
+    );
+    let bal = openingBalance;
+    return sorted.map(e => {
+      bal += e.entry_type === "income" ? Number(e.amount) : -Number(e.amount);
+      return { ...e, runningBalance: bal };
+    });
+  }, [fyEntries, openingBalance]);
+
+  return (
+    <div
+      className="yer-overlay fixed inset-0 z-[150] bg-white overflow-auto"
+      style={{ animation: "fadeIn 0.2s ease", padding: "24px" }}
+    >
+      <style>{YEAR_END_PRINT_CSS}</style>
+
+      {/* Action bar (hidden in print) */}
+      <div className="yer-no-print sticky top-0 bg-white border-b border-brand-200 -mx-6 px-6 py-3 mb-6 flex items-center justify-between z-10">
+        <button
+          onClick={onClose}
+          className="flex items-center gap-2 px-3 py-1.5 text-brand-700 hover:bg-brand-50 rounded-lg text-sm font-medium transition-colors"
+        >
+          <Ic path={ICONS.back} size={14} />
+          Back to Summary
+        </button>
+        <div className="text-brand-500 text-xs hidden sm:block">
+          Tip: in the print dialog, choose "Save as PDF" to keep a copy.
+        </div>
+        <button
+          onClick={() => window.print()}
+          className="flex items-center gap-2 px-4 py-1.5 bg-brand-700 text-white rounded-lg text-sm font-medium hover:bg-brand-800 transition-colors"
+        >
+          <Ic path={ICONS.print} size={14} />
+          Print / Save as PDF
+        </button>
+      </div>
+
+      {/* Report content — printed area */}
+      <div className="max-w-4xl mx-auto" style={{ color: "#1a1a1a", fontSize: "12pt" }}>
+        {/* Report header */}
+        <div className="yer-section mb-8 pb-4 border-b-2" style={{ borderColor: "#1e4976" }}>
+          <h1 className="font-display" style={{ fontSize: "26pt", color: "#1e4976", margin: 0 }}>
+            Vintage at Hamilton
+          </h1>
+          <h2 className="font-display" style={{ fontSize: "18pt", color: "#1e4976", marginTop: "4px" }}>
+            Social Committee — Year-End Report
+          </h2>
+          <div style={{ fontSize: "11pt", color: "#555", marginTop: "8px" }}>
+            <strong>Fiscal Year:</strong> {fyLabel}
+            <span style={{ margin: "0 12px" }}>•</span>
+            <strong>Printed:</strong> {printedOn}
+          </div>
+        </div>
+
+        {/* ── 1. Headline Totals ─────────────────────────────────────── */}
+        {sections.headline && (
+          <section className="yer-section yer-page mb-8">
+            <h3 className="font-display" style={{ fontSize: "15pt", color: "#1e4976", borderBottom: "1px solid #c9a94e", paddingBottom: "4px", marginBottom: "12px" }}>
+              Headline Totals
+            </h3>
+            <table className="w-full" style={{ borderCollapse: "collapse", fontSize: "12pt" }}>
+              <tbody>
+                <tr style={{ borderBottom: "1px solid #e2ddd5" }}>
+                  <td style={{ padding: "8px 12px" }}>Opening Balance</td>
+                  <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600 }}>{fmtMoney(openingBalance)}</td>
+                </tr>
+                <tr style={{ borderBottom: "1px solid #e2ddd5" }}>
+                  <td style={{ padding: "8px 12px" }}>Total Income</td>
+                  <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: "#1b5e20" }}>{fmtMoney(totals.income)}</td>
+                </tr>
+                <tr style={{ borderBottom: "1px solid #e2ddd5" }}>
+                  <td style={{ padding: "8px 12px" }}>Total Expenses</td>
+                  <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: "#b71c1c" }}>{fmtMoney(totals.expense)}</td>
+                </tr>
+                <tr style={{ borderBottom: "1px solid #e2ddd5" }}>
+                  <td style={{ padding: "8px 12px" }}>Net Change</td>
+                  <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: totals.net >= 0 ? "#1b5e20" : "#b71c1c" }}>
+                    {totals.net >= 0 ? "+" : ""}{fmtMoney(totals.net)}
+                  </td>
+                </tr>
+                <tr style={{ borderTop: "2px solid #1e4976", background: "#f7f4ee" }}>
+                  <td style={{ padding: "10px 12px", fontWeight: 700 }}>Closing Balance</td>
+                  <td style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: closingBalance >= 0 ? "#1e4976" : "#b71c1c" }}>
+                    {fmtMoney(closingBalance)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p style={{ fontSize: "10pt", color: "#777", marginTop: "8px", fontStyle: "italic" }}>
+              Based on {fyEntries.length} {fyEntries.length === 1 ? "entry" : "entries"} recorded in the fiscal year.
+            </p>
+          </section>
+        )}
+
+        {/* ── 2. Category vs Budget ──────────────────────────────────── */}
+        {sections.categoryVsBudget && categoryVsBudgetRows.length > 0 && (
+          <section className="yer-section yer-page mb-8">
+            <h3 className="font-display" style={{ fontSize: "15pt", color: "#1e4976", borderBottom: "1px solid #c9a94e", paddingBottom: "4px", marginBottom: "12px" }}>
+              Category vs Budget
+            </h3>
+            <table className="w-full" style={{ borderCollapse: "collapse", fontSize: "11pt" }}>
+              <thead>
+                <tr style={{ background: "#f7f4ee", borderBottom: "2px solid #1e4976" }}>
+                  <th style={{ padding: "8px", textAlign: "left", fontWeight: 600 }}>Category</th>
+                  <th style={{ padding: "8px", textAlign: "left", fontWeight: 600 }}>Type</th>
+                  <th style={{ padding: "8px", textAlign: "right", fontWeight: 600 }}>Budgeted</th>
+                  <th style={{ padding: "8px", textAlign: "right", fontWeight: 600 }}>Actual</th>
+                  <th style={{ padding: "8px", textAlign: "right", fontWeight: 600 }}>Variance</th>
+                  <th style={{ padding: "8px", textAlign: "right", fontWeight: 600 }}>% Used</th>
+                </tr>
+              </thead>
+              <tbody>
+                {categoryVsBudgetRows.map(r => (
+                  <tr key={r.category_id} style={{ borderBottom: "1px solid #e2ddd5" }}>
+                    <td style={{ padding: "6px 8px" }}>{r.name}</td>
+                    <td style={{ padding: "6px 8px", fontSize: "10pt", color: "#666", textTransform: "capitalize" }}>{r.type}</td>
+                    <td style={{ padding: "6px 8px", textAlign: "right" }}>{r.budget ? fmtMoney(r.budget) : "—"}</td>
+                    <td style={{ padding: "6px 8px", textAlign: "right" }}>{fmtMoney(r.actual)}</td>
+                    <td style={{ padding: "6px 8px", textAlign: "right", color: r.budget ? (r.variance >= 0 ? "#1b5e20" : "#b71c1c") : "#666" }}>
+                      {r.budget ? `${r.variance >= 0 ? "+" : ""}${fmtMoney(r.variance)}` : "—"}
+                    </td>
+                    <td style={{ padding: "6px 8px", textAlign: "right", color: r.pct === null ? "#666" : (r.pct > 100 ? "#b71c1c" : r.pct >= 80 ? "#a36b00" : "#1b5e20") }}>
+                      {r.pct === null ? "—" : `${r.pct.toFixed(0)}%`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop: "2px solid #1e4976", background: "#f7f4ee", fontWeight: 700 }}>
+                  <td style={{ padding: "8px" }} colSpan={2}>Totals</td>
+                  <td style={{ padding: "8px", textAlign: "right" }}>{fmtMoney(cvbTotals.budgeted)}</td>
+                  <td style={{ padding: "8px", textAlign: "right" }}>
+                    <div style={{ color: "#1b5e20" }}>+{fmtMoney(cvbTotals.income)}</div>
+                    <div style={{ color: "#b71c1c" }}>{"−"}{fmtMoney(cvbTotals.spent)}</div>
+                  </td>
+                  <td style={{ padding: "8px", textAlign: "right", color: cvbTotals.variance >= 0 ? "#1b5e20" : "#b71c1c" }}>
+                    {cvbTotals.budgeted ? `${cvbTotals.variance >= 0 ? "+" : ""}${fmtMoney(cvbTotals.variance)}` : "—"}
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+            {targets.length === 0 && (
+              <p style={{ fontSize: "10pt", color: "#a36b00", marginTop: "8px", fontStyle: "italic" }}>
+                Note: no budget targets were set for this fiscal year. Actual spending is shown without comparison.
+              </p>
+            )}
+          </section>
+        )}
+
+        {/* ── 3. Monthly Breakdown ───────────────────────────────────── */}
+        {sections.monthly && (
+          <section className="yer-section yer-page mb-8">
+            <h3 className="font-display" style={{ fontSize: "15pt", color: "#1e4976", borderBottom: "1px solid #c9a94e", paddingBottom: "4px", marginBottom: "12px" }}>
+              Monthly Breakdown
+            </h3>
+            <table className="w-full" style={{ borderCollapse: "collapse", fontSize: "11pt" }}>
+              <thead>
+                <tr style={{ background: "#f7f4ee", borderBottom: "2px solid #1e4976" }}>
+                  <th style={{ padding: "8px", textAlign: "left", fontWeight: 600 }}>Month</th>
+                  <th style={{ padding: "8px", textAlign: "right", fontWeight: 600 }}>Income</th>
+                  <th style={{ padding: "8px", textAlign: "right", fontWeight: 600 }}>Expenses</th>
+                  <th style={{ padding: "8px", textAlign: "right", fontWeight: 600 }}>Net</th>
+                  <th style={{ padding: "8px", textAlign: "right", fontWeight: 600 }}>Running Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {openingBalance !== 0 && (
+                  <tr style={{ borderBottom: "1px solid #e2ddd5", background: "#f7f4ee" }}>
+                    <td style={{ padding: "6px 8px", fontStyle: "italic" }}>Opening Balance</td>
+                    <td style={{ padding: "6px 8px", textAlign: "right" }}>—</td>
+                    <td style={{ padding: "6px 8px", textAlign: "right" }}>—</td>
+                    <td style={{ padding: "6px 8px", textAlign: "right" }}>—</td>
+                    <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 600 }}>{fmtMoney(openingBalance)}</td>
+                  </tr>
+                )}
+                {monthlyData.map((m, i) => {
+                  const hasData = m.income > 0 || m.expense > 0;
+                  return (
+                    <tr key={i} style={{ borderBottom: "1px solid #e2ddd5", color: hasData ? "#1a1a1a" : "#bbb" }}>
+                      <td style={{ padding: "6px 8px" }}>{m.fullLabel}</td>
+                      <td style={{ padding: "6px 8px", textAlign: "right" }}>{hasData ? fmtMoney(m.income) : "—"}</td>
+                      <td style={{ padding: "6px 8px", textAlign: "right" }}>{hasData ? fmtMoney(m.expense) : "—"}</td>
+                      <td style={{ padding: "6px 8px", textAlign: "right", color: hasData ? (m.net >= 0 ? "#1b5e20" : "#b71c1c") : "#bbb" }}>
+                        {hasData ? fmtMoney(m.net) : "—"}
+                      </td>
+                      <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 600 }}>{fmtMoney(m.runningTotal)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop: "2px solid #1e4976", background: "#f7f4ee", fontWeight: 700 }}>
+                  <td style={{ padding: "8px" }}>Totals</td>
+                  <td style={{ padding: "8px", textAlign: "right", color: "#1b5e20" }}>{fmtMoney(totals.income)}</td>
+                  <td style={{ padding: "8px", textAlign: "right", color: "#b71c1c" }}>{fmtMoney(totals.expense)}</td>
+                  <td style={{ padding: "8px", textAlign: "right", color: totals.net >= 0 ? "#1b5e20" : "#b71c1c" }}>{fmtMoney(totals.net)}</td>
+                  <td style={{ padding: "8px", textAlign: "right" }}>{fmtMoney(closingBalance)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </section>
+        )}
+
+        {/* ── 4. Transaction Ledger ──────────────────────────────────── */}
+        {sections.ledger && (
+          <section className="yer-section mb-6">
+            <h3 className="font-display" style={{ fontSize: "15pt", color: "#1e4976", borderBottom: "1px solid #c9a94e", paddingBottom: "4px", marginBottom: "12px" }}>
+              Transaction Ledger
+            </h3>
+            {ledgerRows.length === 0 ? (
+              <p style={{ fontStyle: "italic", color: "#777" }}>No transactions recorded in this fiscal year.</p>
+            ) : (
+              <table className="yer-ledger-table w-full" style={{ borderCollapse: "collapse", fontSize: "10pt" }}>
+                <thead>
+                  <tr style={{ background: "#f7f4ee", borderBottom: "2px solid #1e4976" }}>
+                    <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 600 }}>Date</th>
+                    <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 600 }}>Description</th>
+                    <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 600 }}>Paid To</th>
+                    <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 600 }}>Category</th>
+                    <th style={{ padding: "6px 8px", textAlign: "right", fontWeight: 600 }}>Amount</th>
+                    <th style={{ padding: "6px 8px", textAlign: "right", fontWeight: 600 }}>Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {openingBalance !== 0 && (
+                    <tr style={{ borderBottom: "1px solid #e2ddd5", background: "#f7f4ee" }}>
+                      <td style={{ padding: "5px 8px", fontStyle: "italic" }} colSpan={4}>Opening Balance</td>
+                      <td style={{ padding: "5px 8px", textAlign: "right" }}>—</td>
+                      <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600 }}>{fmtMoney(openingBalance)}</td>
+                    </tr>
+                  )}
+                  {ledgerRows.map(e => (
+                    <tr key={e.id} style={{ borderBottom: "1px solid #ececec" }}>
+                      <td style={{ padding: "5px 8px", whiteSpace: "nowrap" }}>{fmtDate(e.entry_date)}</td>
+                      <td style={{ padding: "5px 8px" }}>{e.description}</td>
+                      <td style={{ padding: "5px 8px", color: "#555" }}>{e.paid_to || "—"}</td>
+                      <td style={{ padding: "5px 8px", color: "#555" }}>{categoryMap[e.category_id]?.name || "—"}</td>
+                      <td style={{ padding: "5px 8px", textAlign: "right", whiteSpace: "nowrap", color: e.entry_type === "income" ? "#1b5e20" : "#b71c1c" }}>
+                        {e.entry_type === "income" ? "+" : "−"}{fmtMoney(e.amount)}
+                      </td>
+                      <td style={{ padding: "5px 8px", textAlign: "right", whiteSpace: "nowrap", fontWeight: 600 }}>{fmtMoney(e.runningBalance)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: "2px solid #1e4976", background: "#f7f4ee", fontWeight: 700 }}>
+                    <td style={{ padding: "6px 8px" }} colSpan={4}>Year-End Totals</td>
+                    <td style={{ padding: "6px 8px", textAlign: "right" }}>
+                      <div style={{ color: "#1b5e20" }}>+{fmtMoney(totals.income)}</div>
+                      <div style={{ color: "#b71c1c" }}>{"−"}{fmtMoney(totals.expense)}</div>
+                    </td>
+                    <td style={{ padding: "6px 8px", textAlign: "right" }}>{fmtMoney(closingBalance)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+          </section>
+        )}
+
+        {/* Footer */}
+        <div style={{ marginTop: "32px", paddingTop: "12px", borderTop: "1px solid #c9a94e", fontSize: "9pt", color: "#777", textAlign: "center" }}>
+          Vintage at Hamilton Social Committee • Generated from vintageathamilton.com on {printedOn}
         </div>
       </div>
     </div>
