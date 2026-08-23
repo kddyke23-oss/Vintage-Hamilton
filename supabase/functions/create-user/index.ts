@@ -9,6 +9,10 @@ const corsHeaders = {
 const FROM_EMAIL = 'noreply@vintageathamilton.com'
 const SITE_URL = 'https://vintageathamilton.com'
 
+// Apps granted by default on approve-request (2026-08-23, per Keith).
+// Lotto and Budget stay opt-in / admin-granted.
+const DEFAULT_APPROVED_APPS = ['directory', 'calendar', 'blog', 'recommendations']
+
 // ── Welcome email HTML ──────────────────────────────────────────────────────
 function buildWelcomeEmail(names: string): string {
   return `<!DOCTYPE html>
@@ -268,6 +272,21 @@ Deno.serve(async (req) => {
             const existing = listData?.users?.find(u => u.email === person.email)
             if (existing) {
               await supabaseAdmin.from('profiles').update({ id: existing.id }).eq('resident_id', profileResidentId)
+              // Grant default app access here too — this branch runs when an
+              // auth user already existed (e.g. re-approving after an earlier
+              // partial run), so it needs the same default grants as the
+              // freshly-created path below.
+              await supabaseAdmin
+                .from('app_access')
+                .upsert(
+                  DEFAULT_APPROVED_APPS.map(app_id => ({
+                    user_id: existing.id,
+                    app_id,
+                    role: 'user',
+                    granted_at: new Date().toISOString(),
+                  })),
+                  { onConflict: 'user_id,app_id' }
+                )
               results.push({ email: person.email, status: 'already_exists', userId: existing.id })
               // Also send welcome email to already-existing users so approval
               // always results in a clear "you're set up" email (closes BRAIN TODO)
@@ -285,15 +304,19 @@ Deno.serve(async (req) => {
             .update({ id: authData.user.id, password_set: false })
             .eq('resident_id', profileResidentId)
 
-          // 5. Grant directory access
+          // 5. Grant default app access: Directory, Calendar, Blog, Recommendations
+          //    (Lotto and Budget stay opt-in / admin-granted.)
           await supabaseAdmin
             .from('app_access')
-            .upsert({
-              user_id: authData.user.id,
-              app_id: 'directory',
-              role: 'user',
-              granted_at: new Date().toISOString(),
-            }, { onConflict: 'user_id,app_id' })
+            .upsert(
+              DEFAULT_APPROVED_APPS.map(app_id => ({
+                user_id: authData.user.id,
+                app_id,
+                role: 'user',
+                granted_at: new Date().toISOString(),
+              })),
+              { onConflict: 'user_id,app_id' }
+            )
 
           results.push({ email: person.email, status: 'created', userId: authData.user.id })
           emailsToWelcome.push({ email: person.email, names: person.names })

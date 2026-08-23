@@ -44,6 +44,18 @@ const fmtMoney = n => {
 };
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
+// An entry's fiscal year is normally derived from its entry_date, but an
+// admin can override it (fiscal_year_override) for entries logged just after
+// a fiscal year boundary that actually belong to the prior year's budget
+// (2026-08-23 reconcile/sweep feature — see ReconcileModal).
+const effectiveFY = (entry, fyStart) => {
+  if (entry.fiscal_year_override != null) return entry.fiscal_year_override;
+  const d = new Date(entry.entry_date + "T12:00:00");
+  const m = d.getMonth() + 1; // 1-based
+  const y = d.getFullYear();
+  return m < fyStart ? y - 1 : y;
+};
+
 // ─── Tab Definitions ──────────────────────────────────────────────────────────
 const TABS = [
   { id: "ledger",  label: "Ledger",           icon: ICONS.ledger },
@@ -86,6 +98,7 @@ export default function BudgetTracker({ user, isAdmin, isBudgetAdmin }) {
   const [targets, setTargets] = useState([]);
   const [profileMap, setProfileMap] = useState({}); // resident_id -> display name
   const [settings, setSettings] = useState({ fiscal_year_start_month: 1 });
+  const [reconciliations, setReconciliations] = useState([]); // [{ fiscal_year, swept_amount, ... }]
   const [loading, setLoading] = useState(true);
   const [myResidentId, setMyResidentId] = useState(null);
   const [toast, setToast] = useState(null); // { message, type }
@@ -93,6 +106,12 @@ export default function BudgetTracker({ user, isAdmin, isBudgetAdmin }) {
   const showToast = useCallback((message, type = "success") => {
     setToast({ message, type });
   }, []);
+
+  // Fiscal years that have been reconciled (locked from further edits until unreconciled)
+  const reconciledFYs = useMemo(
+    () => new Set(reconciliations.map(r => r.fiscal_year)),
+    [reconciliations]
+  );
 
   // ─── Load initial data ────────────────────────────────────────────────────
   useEffect(() => {
@@ -102,13 +121,15 @@ export default function BudgetTracker({ user, isAdmin, isBudgetAdmin }) {
   async function loadData() {
     setLoading(true);
     try {
-      const [catRes, entryRes, settingsRes, profileRes, targetRes] = await Promise.all([
+      const [catRes, entryRes, settingsRes, profileRes, targetRes, reconRes] = await Promise.all([
         supabase.from("budget_categories").select("*").order("sort_order"),
         supabase.from("budget_entries").select("*").order("entry_date", { ascending: false }),
         supabase.from("budget_settings").select("*").eq("id", 1).maybeSingle(),
         supabase.from("profiles").select("resident_id").eq("id", user.id).maybeSingle(),
         supabase.from("budget_targets").select("*"),
+        supabase.from("budget_reconciliations").select("*"),
       ]);
+      if (reconRes.data) setReconciliations(reconRes.data);
       if (catRes.data) setCategories(catRes.data);
       if (settingsRes.data) setSettings(settingsRes.data);
       if (targetRes.data) setTargets(targetRes.data);
@@ -201,9 +222,17 @@ export default function BudgetTracker({ user, isAdmin, isBudgetAdmin }) {
             entries={entries} categories={categories} categoryMap={categoryMap}
             profileMap={profileMap} isBudgetAdmin={isBudgetAdmin}
             myResidentId={myResidentId} onRefresh={loadData} showToast={showToast}
+            settings={settings} reconciledFYs={reconciledFYs}
           />
         )}
-        {activeTab === "summary" && <SummaryTab entries={entries} categories={categories} categoryMap={categoryMap} settings={settings} targets={targets} />}
+        {activeTab === "summary" && (
+          <SummaryTab
+            entries={entries} categories={categories} categoryMap={categoryMap}
+            settings={settings} targets={targets} isBudgetAdmin={isBudgetAdmin}
+            myResidentId={myResidentId} reconciliations={reconciliations}
+            onRefresh={loadData} showToast={showToast}
+          />
+        )}
         {activeTab === "targets" && <TargetsTab entries={entries} categories={categories} targets={targets} categoryMap={categoryMap} settings={settings} />}
         {activeTab === "admin"   && <AdminTab categories={categories} targets={targets} settings={settings} isBudgetAdmin={isBudgetAdmin} myResidentId={myResidentId} onRefresh={loadData} showToast={showToast} />}
       </div>
@@ -215,8 +244,9 @@ export default function BudgetTracker({ user, isAdmin, isBudgetAdmin }) {
 // ══════════════════════════════════════════════════════════════════════════════
 //  ENTRY FORM MODAL (Add / Edit)
 // ══════════════════════════════════════════════════════════════════════════════
-function EntryModal({ entry, categories, myResidentId, onSave, onClose }) {
+function EntryModal({ entry, categories, myResidentId, onSave, onClose, settings, reconciledFYs }) {
   const isEdit = !!entry;
+  const fyStart = settings?.fiscal_year_start_month || 1;
   const [form, setForm] = useState({
     entry_date:  entry?.entry_date || todayStr(),
     entry_type:  entry?.entry_type || "expense",
@@ -224,6 +254,7 @@ function EntryModal({ entry, categories, myResidentId, onSave, onClose }) {
     description: entry?.description || "",
     amount:      entry ? String(entry.amount) : "",
     paid_to:     entry?.paid_to || "",
+    fiscal_year_override: entry?.fiscal_year_override != null ? String(entry.fiscal_year_override) : "",
   });
   const [receiptFile, setReceiptFile] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -244,6 +275,18 @@ function EntryModal({ entry, categories, myResidentId, onSave, onClose }) {
     }
   }, [form.entry_type]);
 
+  // Fiscal year this entry would fall into by date alone, and which year it
+  // actually counts toward once an override is applied.
+  const computedFY = useMemo(() => {
+    if (!form.entry_date) return null;
+    const d = new Date(form.entry_date + "T12:00:00");
+    const m = d.getMonth() + 1;
+    const y = d.getFullYear();
+    return m < fyStart ? y - 1 : y;
+  }, [form.entry_date, fyStart]);
+  const effFY = form.fiscal_year_override !== "" ? Number(form.fiscal_year_override) : computedFY;
+  const fyOverrideOptions = computedFY != null ? [computedFY - 1, computedFY, computedFY + 1] : [];
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
@@ -254,6 +297,9 @@ function EntryModal({ entry, categories, myResidentId, onSave, onClose }) {
     if (!form.description.trim()) return setError("Description is required.");
     const amt = parseFloat(form.amount);
     if (!amt || amt <= 0) return setError("Amount must be greater than zero.");
+    if (reconciledFYs?.has(effFY)) {
+      return setError(`Fiscal year ${effFY} has been reconciled and is locked. Reopen it from the Summary tab before saving here.`);
+    }
 
     // Validate receipt file if provided
     if (receiptFile) {
@@ -271,6 +317,7 @@ function EntryModal({ entry, categories, myResidentId, onSave, onClose }) {
         description: form.description.trim(),
         amount:      amt,
         paid_to:     form.paid_to.trim() || null,
+        fiscal_year_override: form.fiscal_year_override === "" ? null : Number(form.fiscal_year_override),
       };
 
       let savedId = entry?.id;
@@ -371,6 +418,31 @@ function EntryModal({ entry, categories, myResidentId, onSave, onClose }) {
             />
           </div>
 
+          {/* Fiscal year (usually automatic — override only for entries logged
+              just after a FY boundary that really belong to the prior year) */}
+          {computedFY != null && (
+            <div>
+              <label className="block text-xs font-semibold text-brand-600 mb-1.5">
+                Counts Toward Fiscal Year
+              </label>
+              <select
+                value={form.fiscal_year_override}
+                onChange={e => set("fiscal_year_override", e.target.value)}
+                className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm text-brand-800 focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none bg-white"
+              >
+                <option value="">{`${computedFY} (based on date)`}</option>
+                {fyOverrideOptions.filter(fy => fy !== computedFY).map(fy => (
+                  <option key={fy} value={fy} disabled={reconciledFYs?.has(fy)}>
+                    {fy}{reconciledFYs?.has(fy) ? " — reconciled, locked" : ""}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-brand-400 mt-1">
+                Only change this for entries logged right after year-end that actually belong to the prior year's budget.
+              </p>
+            </div>
+          )}
+
           {/* Category */}
           <div>
             <label className="block text-xs font-semibold text-brand-600 mb-1.5">Category</label>
@@ -470,7 +542,7 @@ function EntryModal({ entry, categories, myResidentId, onSave, onClose }) {
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || reconciledFYs?.has(effFY)}
               className="px-5 py-2 bg-brand-700 text-white rounded-lg text-sm font-medium hover:bg-brand-800 transition-colors disabled:opacity-50"
             >
               {saving ? "Saving\u2026" : (isEdit ? "Update" : "Add Entry")}
@@ -531,12 +603,13 @@ function DeleteModal({ entry, categoryMap, onConfirm, onClose }) {
 // ══════════════════════════════════════════════════════════════════════════════
 //  TAB: LEDGER
 // ══════════════════════════════════════════════════════════════════════════════
-function LedgerTab({ entries, categories, categoryMap, profileMap, isBudgetAdmin, myResidentId, onRefresh, showToast }) {
+function LedgerTab({ entries, categories, categoryMap, profileMap, isBudgetAdmin, myResidentId, onRefresh, showToast, settings, reconciledFYs }) {
   const [filterType, setFilterType] = useState("all");
   const [filterCategory, setFilterCategory] = useState("all");
   const [showAddModal, setShowAddModal] = useState(false);
   const [editEntry, setEditEntry] = useState(null);
   const [deleteEntry, setDeleteEntry] = useState(null);
+  const fyStart = settings?.fiscal_year_start_month || 1;
 
   // Filtered entries
   const filtered = useMemo(() => {
@@ -580,6 +653,12 @@ function LedgerTab({ entries, categories, categoryMap, profileMap, isBudgetAdmin
   }
 
   async function handleDeleteConfirm(entryId) {
+    const target = entries.find(e => e.id === entryId);
+    if (target && reconciledFYs?.has(effectiveFY(target, fyStart))) {
+      showToast("That fiscal year has been reconciled and is locked. Reopen it from the Summary tab first.", "error");
+      setDeleteEntry(null);
+      return;
+    }
     const { error } = await supabase.from("budget_entries").delete().eq("id", entryId);
     setDeleteEntry(null);
     if (error) {
@@ -600,6 +679,8 @@ function LedgerTab({ entries, categories, categoryMap, profileMap, isBudgetAdmin
           myResidentId={myResidentId}
           onSave={handleAddSaved}
           onClose={() => setShowAddModal(false)}
+          settings={settings}
+          reconciledFYs={reconciledFYs}
         />
       )}
       {editEntry && (
@@ -609,6 +690,8 @@ function LedgerTab({ entries, categories, categoryMap, profileMap, isBudgetAdmin
           myResidentId={myResidentId}
           onSave={handleEditSaved}
           onClose={() => setEditEntry(null)}
+          settings={settings}
+          reconciledFYs={reconciledFYs}
         />
       )}
       {deleteEntry && (
@@ -694,9 +777,17 @@ function LedgerTab({ entries, categories, categoryMap, profileMap, isBudgetAdmin
                   </td>
                 </tr>
               ) : (
-                withBalance.map(e => (
+                withBalance.map(e => {
+                  const entryFY = effectiveFY(e, fyStart);
+                  const locked = reconciledFYs?.has(entryFY);
+                  return (
                   <tr key={e.id} className="border-b border-brand-100 hover:bg-brand-50 transition-colors">
-                    <td className="px-4 py-3 text-brand-600 whitespace-nowrap">{fmtDate(e.entry_date)}</td>
+                    <td className="px-4 py-3 text-brand-600 whitespace-nowrap">
+                      {fmtDate(e.entry_date)}
+                      {e.fiscal_year_override != null && (
+                        <span className="ml-1 text-xs text-brand-400" title={`Counts toward fiscal year ${entryFY}`}>\u21aa{entryFY}</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-brand-800">
                       <div className="flex items-center gap-2">
                         {e.description}
@@ -729,20 +820,25 @@ function LedgerTab({ entries, categories, categoryMap, profileMap, isBudgetAdmin
                     </td>
                     {isBudgetAdmin && (
                       <td className="px-4 py-3 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <button className="p-1.5 text-brand-400 hover:text-brand-700 rounded transition-colors"
-                            title="Edit" onClick={() => setEditEntry(e)}>
-                            <Ic path={ICONS.edit} size={14} />
-                          </button>
-                          <button className="p-1.5 text-brand-400 hover:text-red-600 rounded transition-colors"
-                            title="Delete" onClick={() => setDeleteEntry(e)}>
-                            <Ic path={ICONS.trash} size={14} />
-                          </button>
-                        </div>
+                        {locked ? (
+                          <span className="text-brand-300" title={`Fiscal year ${entryFY} is reconciled and locked`}>\ud83d\udd12</span>
+                        ) : (
+                          <div className="flex items-center justify-center gap-1">
+                            <button className="p-1.5 text-brand-400 hover:text-brand-700 rounded transition-colors"
+                              title="Edit" onClick={() => setEditEntry(e)}>
+                              <Ic path={ICONS.edit} size={14} />
+                            </button>
+                            <button className="p-1.5 text-brand-400 hover:text-red-600 rounded transition-colors"
+                              title="Delete" onClick={() => setDeleteEntry(e)}>
+                              <Ic path={ICONS.trash} size={14} />
+                            </button>
+                          </div>
+                        )}
                       </td>
                     )}
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
             {withBalance.length > 0 && (
@@ -772,26 +868,23 @@ function LedgerTab({ entries, categories, categoryMap, profileMap, isBudgetAdmin
 // ══════════════════════════════════════════════════════════════════════════════
 //  TAB: SUMMARY
 // ══════════════════════════════════════════════════════════════════════════════
-function SummaryTab({ entries, categories, categoryMap, settings, targets = [] }) {
+function SummaryTab({ entries, categories, categoryMap, settings, targets = [], isBudgetAdmin, myResidentId, reconciliations = [], onRefresh, showToast }) {
   // ── Fiscal year helpers ──────────────────────────────────────────────────
   const fyStart = settings?.fiscal_year_start_month || 1; // 1 = Jan
 
   // ── Year-end report state ───────────────────────────────────────────────
   const [showReportPicker, setShowReportPicker] = useState(false);
   const [reportSections, setReportSections] = useState(null); // null = not in print mode
+  const [showReconcileModal, setShowReconcileModal] = useState(false);
+  const [unreconciling, setUnreconciling] = useState(false);
 
-  // Derive available fiscal years from entries
+  const reconciledFYs = useMemo(() => new Set(reconciliations.map(r => r.fiscal_year)), [reconciliations]);
+
+  // Derive available fiscal years from entries (override-aware)
   const fiscalYears = useMemo(() => {
     if (!entries.length) return [];
     const years = new Set();
-    entries.forEach(e => {
-      const d = new Date(e.entry_date + "T12:00:00");
-      const m = d.getMonth() + 1; // 1-based
-      const y = d.getFullYear();
-      // If fiscal year starts in April (4), then Jan-Mar belong to prior FY
-      const fy = m < fyStart ? y - 1 : y;
-      years.add(fy);
-    });
+    entries.forEach(e => years.add(effectiveFY(e, fyStart)));
     return [...years].sort((a, b) => b - a);
   }, [entries, fyStart]);
 
@@ -804,12 +897,15 @@ function SummaryTab({ entries, categories, categoryMap, settings, targets = [] }
     }
   }, [fiscalYears]);
 
-  // Fiscal year date range
+  // Fiscal year date range (also used as the fallback bucket for entries
+  // whose date and fiscal_year_override disagree — see monthlyData below)
   const fyRange = useMemo(() => {
     const start = new Date(selectedFY, fyStart - 1, 1);
     const end = new Date(selectedFY + 1, fyStart - 1, 0); // last day of prior month next year
     return { start, end };
   }, [selectedFY, fyStart]);
+
+  const fyEndDateStr = useMemo(() => fyRange.end.toISOString().slice(0, 10), [fyRange]);
 
   // Label for the fiscal period
   const fyLabel = useMemo(() => {
@@ -819,20 +915,39 @@ function SummaryTab({ entries, categories, categoryMap, settings, targets = [] }
     return `${startMonth} ${selectedFY} \u2013 ${endMonth} ${selectedFY + 1}`;
   }, [selectedFY, fyStart]);
 
-  // Filter entries to selected fiscal year
+  // Filter entries to selected fiscal year (override-aware)
   const fyEntries = useMemo(() => {
-    return entries.filter(e => {
-      const d = new Date(e.entry_date + "T12:00:00");
-      return d >= fyRange.start && d <= fyRange.end;
-    });
-  }, [entries, fyRange]);
+    return entries.filter(e => effectiveFY(e, fyStart) === selectedFY);
+  }, [entries, fyStart, selectedFY]);
 
-  // ── Opening balance (carry-over from prior fiscal years) ─────────────
+  // ── Opening balance (carry-over from prior fiscal years, override-aware) ──
   const openingBalance = useMemo(() => {
     return entries
-      .filter(e => new Date(e.entry_date + "T12:00:00") < fyRange.start)
+      .filter(e => effectiveFY(e, fyStart) < selectedFY)
       .reduce((sum, e) => sum + (e.entry_type === "income" ? Number(e.amount) : -Number(e.amount)), 0);
-  }, [entries, fyRange]);
+  }, [entries, fyStart, selectedFY]);
+
+  const currentReconciliation = useMemo(
+    () => reconciliations.find(r => r.fiscal_year === selectedFY) || null,
+    [reconciliations, selectedFY]
+  );
+  const closingBalance = openingBalance + fyEntries.reduce(
+    (sum, e) => sum + (e.entry_type === "income" ? Number(e.amount) : -Number(e.amount)), 0
+  );
+
+  async function handleUnreconcile() {
+    if (!currentReconciliation) return;
+    if (!confirm(`Reopen fiscal year ${selectedFY}? This unlocks its entries for editing again — the reserve-sweep entry already recorded stays in the ledger unless you remove it separately.`)) return;
+    setUnreconciling(true);
+    const { error } = await supabase.from("budget_reconciliations").delete().eq("fiscal_year", selectedFY);
+    setUnreconciling(false);
+    if (error) {
+      showToast?.("Failed to reopen fiscal year: " + error.message, "error");
+    } else {
+      showToast?.(`Fiscal year ${selectedFY} reopened.`);
+      onRefresh?.();
+    }
+  }
 
   // ── Monthly breakdown ────────────────────────────────────────────────────
   const monthlyData = useMemo(() => {
@@ -855,11 +970,13 @@ function SummaryTab({ entries, categories, categoryMap, settings, targets = [] }
       const d = new Date(e.entry_date + "T12:00:00");
       const m = d.getMonth();
       const y = d.getFullYear();
-      const slot = months.find(s => s.monthIdx === m && s.year === y);
-      if (slot) {
-        if (e.entry_type === "income") slot.income += Number(e.amount);
-        else slot.expense += Number(e.amount);
-      }
+      // Entries reassigned to this FY via override may fall outside its 12
+      // calendar months (e.g. a January bill counted toward the prior FY) —
+      // fold those into the FY's final month so totals stay correct without
+      // fabricating a fake date.
+      const slot = months.find(s => s.monthIdx === m && s.year === y) || months[months.length - 1];
+      if (e.entry_type === "income") slot.income += Number(e.amount);
+      else slot.expense += Number(e.amount);
     });
 
     // Calculate net and running total (seeded with opening balance)
@@ -959,8 +1076,13 @@ function SummaryTab({ entries, categories, categoryMap, settings, targets = [] }
 
       {/* Fiscal year selector + Year-End Report */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <h2 className="font-display text-lg text-brand-800">
+        <h2 className="font-display text-lg text-brand-800 flex items-center gap-2">
           Fiscal Year: {fyLabel}
+          {currentReconciliation && (
+            <span className="text-xs font-medium bg-brand-100 text-brand-700 px-2 py-0.5 rounded-full" title={`Reconciled ${fmtDate(currentReconciliation.reconciled_at?.slice(0, 10))} — ${fmtMoney(currentReconciliation.swept_amount)} swept to reserve`}>
+              🔒 Reconciled
+            </span>
+          )}
         </h2>
         <div className="flex items-center gap-2">
           {fiscalYears.length > 1 && (
@@ -971,10 +1093,30 @@ function SummaryTab({ entries, categories, categoryMap, settings, targets = [] }
             >
               {fiscalYears.map(fy => (
                 <option key={fy} value={fy}>
-                  {fyStart === 1 ? fy : `${fy}/${String(fy + 1).slice(2)}`}
+                  {fyStart === 1 ? fy : `${fy}/${String(fy + 1).slice(2)}`}{reconciledFYs.has(fy) ? " 🔒" : ""}
                 </option>
               ))}
             </select>
+          )}
+          {isBudgetAdmin && (
+            currentReconciliation ? (
+              <button
+                onClick={handleUnreconcile}
+                disabled={unreconciling}
+                className="flex items-center gap-2 px-3 py-1.5 bg-white border border-brand-200 text-brand-600 rounded-lg text-sm font-medium hover:bg-brand-50 transition-colors disabled:opacity-50"
+                title="Reopen this fiscal year for editing"
+              >
+                {unreconciling ? "Reopening…" : "Reopen Year"}
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowReconcileModal(true)}
+                className="flex items-center gap-2 px-3 py-1.5 bg-white border border-brand-200 text-brand-600 rounded-lg text-sm font-medium hover:bg-brand-50 transition-colors"
+                title="Reconcile this fiscal year and sweep surplus to the HOA reserve"
+              >
+                🔒 Reconcile Year
+              </button>
+            )
           )}
           <button
             onClick={() => setShowReportPicker(true)}
@@ -986,6 +1128,24 @@ function SummaryTab({ entries, categories, categoryMap, settings, targets = [] }
           </button>
         </div>
       </div>
+
+      {/* Reconcile modal */}
+      {showReconcileModal && (
+        <ReconcileModal
+          fyLabel={fyLabel}
+          selectedFY={selectedFY}
+          fyEndDateStr={fyEndDateStr}
+          closingBalance={closingBalance}
+          myResidentId={myResidentId}
+          onClose={() => setShowReconcileModal(false)}
+          onReconciled={() => {
+            setShowReconcileModal(false);
+            showToast?.(`Fiscal year ${selectedFY} reconciled.`);
+            onRefresh?.();
+          }}
+          showToast={showToast}
+        />
+      )}
 
       {/* Overview cards */}
       <div className={`grid grid-cols-1 ${openingBalance !== 0 ? "sm:grid-cols-4" : "sm:grid-cols-3"} gap-4`}>
@@ -1142,6 +1302,161 @@ function SummaryTab({ entries, categories, categoryMap, settings, targets = [] }
               ))}
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  RECONCILE MODAL — year-end lock + sweep surplus to HOA reserve
+// ══════════════════════════════════════════════════════════════════════════════
+const RESERVE_CATEGORY_NAME = "Transfer to HOA Reserve";
+
+function ReconcileModal({ fyLabel, selectedFY, fyEndDateStr, closingBalance, myResidentId, onClose, onReconciled, showToast }) {
+  const maxSweep = Math.max(0, closingBalance);
+  const [sweepAmount, setSweepAmount] = useState(maxSweep > 0 ? maxSweep.toFixed(2) : "0.00");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleConfirm() {
+    setError("");
+    const amt = parseFloat(sweepAmount) || 0;
+    if (amt < 0) return setError("Sweep amount can't be negative.");
+    if (amt > maxSweep + 0.001) return setError(`Can't sweep more than the closing balance (${fmtMoney(maxSweep)}).`);
+
+    setSaving(true);
+    try {
+      if (amt > 0) {
+        // Find or create the reserve-transfer category
+        let { data: cat } = await supabase
+          .from("budget_categories")
+          .select("id")
+          .eq("name", RESERVE_CATEGORY_NAME)
+          .maybeSingle();
+
+        if (!cat) {
+          const { data: newCat, error: catErr } = await supabase
+            .from("budget_categories")
+            .insert({ name: RESERVE_CATEGORY_NAME, type: "expense", sort_order: 999, is_active: true })
+            .select("id")
+            .single();
+          if (catErr) throw catErr;
+          cat = newCat;
+        }
+
+        const { error: entryErr } = await supabase.from("budget_entries").insert({
+          entry_date: fyEndDateStr,
+          entry_type: "expense",
+          category_id: cat.id,
+          description: `Year-end sweep to HOA reserve account (FY ${selectedFY})`,
+          amount: amt,
+          paid_to: "HOA Reserve Account",
+          created_by: myResidentId,
+        });
+        if (entryErr) throw entryErr;
+      }
+
+      const { error: reconErr } = await supabase.from("budget_reconciliations").insert({
+        fiscal_year: selectedFY,
+        swept_amount: amt,
+        notes: notes.trim() || null,
+        reconciled_by: myResidentId,
+        reconciled_at: new Date().toISOString(),
+      });
+      if (reconErr) throw reconErr;
+
+      onReconciled();
+    } catch (err) {
+      console.error("Reconcile error:", err);
+      setError(err.message || "Failed to reconcile fiscal year.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/40" />
+      <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}
+        style={{ animation: "slideUp 0.2s ease" }}>
+        <div className="flex items-center justify-between px-6 pt-5 pb-3">
+          <h2 className="font-display text-lg text-brand-800">Reconcile Fiscal Year {fyLabel}</h2>
+          <button onClick={onClose} className="text-brand-400 hover:text-brand-700 transition-colors">
+            <Ic path={ICONS.x} size={20} />
+          </button>
+        </div>
+
+        <div className="px-6 pb-6 space-y-4">
+          <p className="text-sm text-brand-600">
+            This locks fiscal year {selectedFY}'s entries from further edits and, optionally, records a
+            transfer of surplus funds to the HOA reserve account (kept outside this tracker). The rest
+            of the closing balance still carries forward as next year's opening balance as usual.
+          </p>
+
+          <div className="bg-brand-50 rounded-lg px-4 py-3">
+            <p className="text-xs font-medium text-brand-500 uppercase tracking-wide mb-1">Closing Balance</p>
+            <p className={`text-xl font-bold ${closingBalance >= 0 ? "text-brand-800" : "text-red-700"}`}>{fmtMoney(closingBalance)}</p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-brand-600 mb-1.5">
+              Amount to Sweep to HOA Reserve
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max={maxSweep}
+              value={sweepAmount}
+              onChange={e => setSweepAmount(e.target.value)}
+              disabled={maxSweep <= 0}
+              className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm text-brand-800 focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none disabled:bg-brand-50 disabled:text-brand-400"
+            />
+            <p className="text-xs text-brand-400 mt-1">
+              {maxSweep > 0
+                ? `Up to ${fmtMoney(maxSweep)}. Leave at 0 to reconcile without sweeping anything.`
+                : "No surplus to sweep this year — you can still reconcile to lock the year."}
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-brand-600 mb-1.5">
+              Notes <span className="font-normal text-brand-400">(optional)</span>
+            </label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              rows={2}
+              placeholder="e.g. approved at Nov board meeting"
+              className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm text-brand-800 resize-none focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+            />
+          </div>
+
+          {error && (
+            <div className="text-red-600 text-xs bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              {error}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm text-brand-600 hover:text-brand-800 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirm}
+              disabled={saving}
+              className="px-5 py-2 bg-brand-700 text-white rounded-lg text-sm font-medium hover:bg-brand-800 transition-colors disabled:opacity-50"
+            >
+              {saving ? "Reconciling…" : "Reconcile Year"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1634,19 +1949,19 @@ function TargetsTab({ entries, categories, targets, categoryMap, settings }) {
   // Targets for selected FY
   const fyTargets = useMemo(() => targets.filter(t => t.fiscal_year === selectedFY), [targets, selectedFY]);
 
-  // Actual spending per category for the FY
+  // Actual spending per category for the FY (override-aware — matches the
+  // Summary tab's fiscal-year bucketing, see effectiveFY)
   const actualByCategory = useMemo(() => {
     const map = {};
     entries.forEach(e => {
-      const d = new Date(e.entry_date + "T12:00:00");
-      if (d >= fyRange.start && d <= fyRange.end) {
+      if (effectiveFY(e, fyStart) === selectedFY) {
         if (!map[e.category_id]) map[e.category_id] = { income: 0, expense: 0 };
         if (e.entry_type === "income") map[e.category_id].income += Number(e.amount);
         else map[e.category_id].expense += Number(e.amount);
       }
     });
     return map;
-  }, [entries, fyRange]);
+  }, [entries, fyStart, selectedFY]);
 
   // Build comparison rows
   const rows = useMemo(() => {

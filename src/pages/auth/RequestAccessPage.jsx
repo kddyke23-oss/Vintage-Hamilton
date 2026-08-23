@@ -33,6 +33,28 @@ export default function RequestAccessPage() {
     return null
   }
 
+  // Fire-and-forget: let Directory admins know a request is waiting.
+  // Never blocks the success screen — the request row is already saved,
+  // so a notification hiccup shouldn't look like a failed submission to the resident.
+  const notifyAdmins = async (requestId) => {
+    try {
+      await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-access-request`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ requestId }),
+        }
+      )
+    } catch (e) {
+      console.error('notify-access-request call failed:', e)
+    }
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     const validationError = validate()
@@ -65,7 +87,10 @@ export default function RequestAccessPage() {
       }
     }
 
+    const newRequestId = crypto.randomUUID()
+
     const row = {
+      id: newRequestId,
       address: address.trim(),
       primary_surname: primary.surname.trim().toUpperCase(),
       primary_names: primary.names.trim(),
@@ -85,7 +110,14 @@ export default function RequestAccessPage() {
       row.secondary_notify_digest     = secondary.notifyDigest
     }
 
-    const { error: insertError } = await supabase.from('access_requests').insert(row)
+    // Note: no .select() here — anonymous visitors have INSERT but never SELECT
+    // on access_requests (only admins can read it), so reading the row back
+    // would fail under RLS even though the insert itself succeeded. The id is
+    // generated client-side above instead, so we already have what notifyAdmins
+    // needs without reading anything back.
+    const { error: insertError } = await supabase
+      .from('access_requests')
+      .insert(row)
     setSubmitting(false)
 
     if (insertError) {
@@ -95,6 +127,7 @@ export default function RequestAccessPage() {
     }
 
     setSubmitted(true)
+    notifyAdmins(newRequestId)
   }
 
   // ── Success screen ──

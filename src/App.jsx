@@ -36,6 +36,19 @@ function AdminRoute({ children }) {
   )
 }
 
+// Reports page has its own internal app-admin eligibility check (global admin,
+// or calendar/blog/recommendations app_access role='admin' — see ReportsPage.jsx),
+// so the route itself only needs to require sign-in, not global admin. This is
+// what lets Calendar/Blog/Recommendations app-admins reach it, matching what
+// AdminReportsWidget.jsx already implies they can do.
+function ReportsRoute({ children }) {
+  return (
+    <ProtectedRoute>
+      <AdminShell>{children}</AdminShell>
+    </ProtectedRoute>
+  )
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
@@ -61,7 +74,7 @@ export default function App() {
               <Route path="/admin" element={<AdminRoute><AccessPage /></AdminRoute>} />
               <Route path="/admin/access" element={<AdminRoute><AccessPage /></AdminRoute>} />
               <Route path="/admin/requests" element={<AdminRoute><AccessRequestsPage /></AdminRoute>} />
-              <Route path="/admin/reports" element={<AdminRoute><ReportsPage /></AdminRoute>} />
+              <Route path="/admin/reports" element={<ReportsRoute><ReportsPage /></ReportsRoute>} />
 
               {/* Fallback */}
               <Route path="*" element={<Navigate to="/" replace />} />

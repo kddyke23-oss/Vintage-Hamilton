@@ -63,6 +63,83 @@ function UsefulLinks() {
   )
 }
 
+function ClubhouseInfo() {
+  const [wifiPassword, setWifiPassword] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    async function fetchSettings() {
+      try {
+        const { data, error } = await supabase
+          .from('community_settings')
+          .select('wifi_password')
+          .eq('id', 1)
+          .maybeSingle()
+        if (error) throw error
+        setWifiPassword(data?.wifi_password || null)
+      } catch (e) {
+        console.error('Failed to load community settings', e)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchSettings()
+  }, [])
+
+  const handleCopy = async () => {
+    if (!wifiPassword) return
+    try {
+      await navigator.clipboard.writeText(wifiPassword)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (e) {
+      // Clipboard API may be unavailable (e.g. non-HTTPS) — the password is
+      // still visible on screen, so just skip the copy convenience silently.
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-brand-100 p-5 grid grid-cols-1 sm:grid-cols-2 gap-5">
+      <div className="flex items-start gap-3">
+        <div className="w-9 h-9 flex-shrink-0 rounded-lg bg-brand-100 text-brand-600 flex items-center justify-center text-lg">
+          🏛️
+        </div>
+        <div>
+          <p className="text-xs font-semibold text-brand-400 uppercase tracking-wide mb-1">Clubhouse Address</p>
+          <p className="text-brand-800 text-sm leading-relaxed">
+            30 Sportsman Blvd,<br />
+            Hamilton, NJ 08690
+          </p>
+        </div>
+      </div>
+      <div className="flex items-start gap-3">
+        <div className="w-9 h-9 flex-shrink-0 rounded-lg bg-brand-100 text-brand-600 flex items-center justify-center text-lg">
+          📶
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-semibold text-brand-400 uppercase tracking-wide mb-1">Clubhouse WiFi Password</p>
+          {loading ? (
+            <p className="text-brand-400 text-sm">Loading…</p>
+          ) : wifiPassword ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-brand-800 text-sm font-mono break-all">{wifiPassword}</p>
+              <button
+                onClick={handleCopy}
+                className="text-xs text-brand-500 hover:text-brand-700 transition-colors flex-shrink-0"
+              >
+                {copied ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+          ) : (
+            <p className="text-brand-400 text-sm">Not set yet — an administrator can add this on the Admin Panel's Useful Links tab.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const ALL_APPS = [
   { id: 'directory',       label: 'Resident Directory',         description: 'Find and connect with your neighbors',   icon: '👥', path: '/apps/directory' },
   { id: 'calendar',        label: 'Social Calendar',            description: 'Community events and activities',         icon: '📅', path: '/apps/calendar' },
@@ -225,6 +302,9 @@ export default function HomePage() {
         </div>
         <div className="text-5xl hidden sm:block">🏡</div>
       </div>
+
+      {/* Clubhouse address + WiFi password */}
+      <ClubhouseInfo />
 
       {/* Useful Links — section hides itself when empty */}
       <UsefulLinks />

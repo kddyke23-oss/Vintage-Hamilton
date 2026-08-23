@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import { deleteStoragePhoto } from '@/lib/storage'
 import { useAuth } from '@/context/AuthContext'
@@ -7,6 +7,28 @@ import { useToast } from '@/components/ui/Toast'
 import { useImageUpload } from '@/hooks/useImageUpload'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+// Fire-and-forget: let the post's original author know a comment was added.
+// Never blocks the comment UI — the comment row is already saved, so a
+// notification hiccup shouldn't look like a failed submission to the commenter.
+const notifyCommentOwner = async (commentType, commentId) => {
+  try {
+    await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-comment`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ commentType, commentId }),
+      }
+    )
+  } catch (e) {
+    console.error('notify-comment call failed:', e)
+  }
+}
 
 const fmt = (ts) => {
   if (!ts) return ''
@@ -76,7 +98,7 @@ function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, o
             className="font-semibold text-gray-900 text-base cursor-pointer hover:text-blue-700 leading-snug"
             onClick={() => onOpen(post)}
           >
-            {post.title}
+            {post.external_url && '🔗 '}{post.title}
           </h3>
           {post.calendar_event && (
             <button
@@ -217,9 +239,11 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
       if (!photo_url) { setSubmitting(false); return }
     }
 
-    const { error } = await supabase
+    const { data: inserted, error } = await supabase
       .from('blog_comments')
       .insert({ post_id: post.id, body: newComment.trim(), created_by: user.id, photo_url })
+      .select('id')
+      .single()
     setSubmitting(false)
     if (error) { toast.error('Could not add comment.'); return }
     setNewComment('')
@@ -228,6 +252,7 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
     setCommentPhotoPreview(null)
     if (commentPhotoRef.current) commentPhotoRef.current.value = ''
     fetchComments()
+    if (inserted?.id) notifyCommentOwner('blog', inserted.id)
   }
 
   const handleRemoveComment = async (comment) => {
@@ -347,6 +372,22 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
             />
           )}
           <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">{post.body}</p>
+
+          {/* External link */}
+          {post.external_url && (
+            <a
+              href={post.external_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 underline underline-offset-2"
+            >
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+              More information
+            </a>
+          )}
+
           <div className="mt-4">
             <ReactionBar
               targetType="post"
@@ -516,6 +557,7 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
   const [title, setTitle] = useState(editPost?.title ?? '')
   const [body, setBody] = useState(editPost?.body ?? '')
   const [linkedEventId, setLinkedEventId] = useState(editPost?.calendar_event_id ? String(editPost.calendar_event_id) : '')
+  const [externalUrl, setExternalUrl] = useState(editPost?.external_url || '')
   const [events, setEvents] = useState([])
   const [saving, setSaving] = useState(false)
 
@@ -545,6 +587,21 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
 
   const handleSave = async () => {
     if (!title.trim() || !body.trim()) return
+
+    // Validate URL if provided
+    let external_url = null
+    if (externalUrl.trim()) {
+      try {
+        const url = externalUrl.trim()
+        const withProtocol = url.startsWith('http') ? url : 'https://' + url
+        new URL(withProtocol)
+        external_url = withProtocol
+      } catch {
+        toast.error('Please enter a valid URL')
+        return
+      }
+    }
+
     setSaving(true)
 
     // Resolve photo_url
@@ -562,7 +619,8 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
         .from('blog_posts')
         .update({
           title: title.trim(), body: body.trim(), photo_url,
-          calendar_event_id: linkedEventId ? parseInt(linkedEventId) : null
+          calendar_event_id: linkedEventId ? parseInt(linkedEventId) : null,
+          external_url,
         })
         .eq('id', editPost.id)
       setSaving(false)
@@ -579,6 +637,7 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
         created_by: user.id,
         calendar_event_id: linkedEventId ? parseInt(linkedEventId) : null,
         photo_url,
+        external_url,
       }
       const { error } = await supabase.from('blog_posts').insert(payload)
       setSaving(false)
@@ -642,6 +701,20 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
             <p className="text-xs text-gray-400 mt-1">Shows events from the last 30 days and upcoming.</p>
           </div>
 
+          {/* External URL */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              External Link <span className="text-gray-400 font-normal">(optional)</span>
+            </label>
+            <input
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+              value={externalUrl}
+              onChange={e => setExternalUrl(e.target.value)}
+              placeholder="https://example.com"
+            />
+            <p className="text-xs text-gray-400 mt-1">Link to an external website, ticketing page, or more info</p>
+          </div>
+
           {/* Photo upload */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Photo <span className="text-gray-400 font-normal">(optional)</span></label>
@@ -703,9 +776,22 @@ export default function CommunityBlog() {
   const [editPost, setEditPost] = useState(null)
   const [search, setSearch] = useState('')
 
+  const [searchParams, setSearchParams] = useSearchParams()
+
   const handleNavigateToEvent = (eventId) => {
     navigate(`/apps/calendar?openEvent=${eventId}`)
   }
+
+  // ── Auto-open post from ?openPost=id (linked from a comment-notification email) ──
+  useEffect(() => {
+    const openId = searchParams.get('openPost')
+    if (!openId || loading || posts.length === 0) return
+    const match = posts.find(p => p.id === parseInt(openId))
+    if (match) {
+      setSelectedPost(match)
+      setSearchParams({}, { replace: true }) // clean up URL after opening
+    }
+  }, [searchParams, posts, loading, setSearchParams])
 
   // ── Fetch resident_id & role ──────────────────────────────────────────────
   useEffect(() => {
@@ -739,7 +825,7 @@ export default function CommunityBlog() {
     const { data, error } = await supabase
       .from('blog_posts')
       .select(`
-        id, title, body, photo_url, created_by, created_at, locked, removed,
+        id, title, body, photo_url, external_url, created_by, created_at, locked, removed,
         calendar_event_id,
         calendar_events ( id, title, event_date )
       `)

@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { deleteStoragePhoto } from "@/lib/storage";
 import { useImageUpload } from "@/hooks/useImageUpload";
 import { STREETS } from "@/config/constants";
+import AccessRequestsPanel from "@/components/apps/AccessRequestsPanel";
 
 // Parse "12 Kay Chiarello Way" → { houseNumber: 12, street: "Kay Chiarello Way" }
 function parseAddress(address) {
@@ -858,8 +859,21 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [streetFilter, setStreetFilter] = useState(""); // "" = normal grid view
   const [showHidden, setShowHidden] = useState(false);
+  const [showRequests, setShowRequests] = useState(false);
+  const [pendingRequestCount, setPendingRequestCount] = useState(0);
 
   useEffect(() => { fetchResidents(showHidden); }, [showHidden]);
+
+  const fetchPendingRequestCount = useCallback(async () => {
+    if (!canAdminister) return;
+    const { count, error } = await supabase
+      .from("access_requests")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending");
+    if (!error) setPendingRequestCount(count || 0);
+  }, [canAdminister]);
+
+  useEffect(() => { fetchPendingRequestCount(); }, [fetchPendingRequestCount]);
 
   async function fetchResidents(includeHidden = false) {
     setLoading(true);
@@ -1003,6 +1017,21 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
               style={showHidden ? { ...btnPrimaryStyle, background: "#dc2626" } : btnSecStyle}
             >
               {showHidden ? "👁 Hiding Hidden" : "👁 Show Hidden"}
+            </button>
+          )}
+          {canAdminister && (
+            <button
+              onClick={() => setShowRequests(true)}
+              style={pendingRequestCount > 0 ? { ...btnPrimaryStyle, background: "#c9922a" } : btnSecStyle}
+            >
+              📋 Access Requests
+              {pendingRequestCount > 0 && (
+                <span style={{
+                  background: "rgba(255,255,255,0.9)", color: "#c9922a",
+                  fontSize: "0.7rem", fontWeight: "700",
+                  padding: "0.05rem 0.4rem", borderRadius: "10px", marginLeft: "0.2rem",
+                }}>{pendingRequestCount}</span>
+              )}
             </button>
           )}
           <button onClick={() => setShowPrintModal(true)} style={btnSecStyle}><IconPrint /> Print</button>
@@ -1182,6 +1211,13 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
             <button onClick={() => setShowPrintModal(false)} style={{ ...btnSecStyle, width: "100%", marginTop: "0.5rem" }}>Cancel</button>
           </div>
         </div>
+      )}
+
+      {/* ── Access Requests Panel ── */}
+      {showRequests && (
+        <AccessRequestsPanel
+          onClose={() => { setShowRequests(false); fetchPendingRequestCount(); }}
+        />
       )}
 
       <Toast message={toast} />

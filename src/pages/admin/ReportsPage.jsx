@@ -12,7 +12,7 @@ const fmtDate = (ts) => {
   return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-const TARGET_LABELS = { event: '📅 Calendar Event', post: '📝 Blog Post', comment: '💬 Blog Comment' }
+const TARGET_LABELS = { event: '📅 Calendar Event', post: '📝 Blog Post', comment: '💬 Blog Comment', calendar_comment: '💬 Calendar Comment' }
 
 const CATEGORY_COLORS = [
   { label: 'Ocean Blue', value: '#2C5F8A' },
@@ -63,8 +63,9 @@ function ReportsTab() {
     const eventIds = [...new Set(data.filter(r => r.target_type === 'event').map(r => r.target_id))]
     const postIds = [...new Set(data.filter(r => r.target_type === 'post').map(r => r.target_id))]
     const commentIds = [...new Set(data.filter(r => r.target_type === 'comment').map(r => r.target_id))]
+    const calCommentIds = [...new Set(data.filter(r => r.target_type === 'calendar_comment').map(r => r.target_id))]
 
-    const [eventsRes, postsRes, commentsRes] = await Promise.all([
+    const [eventsRes, postsRes, commentsRes, calCommentsRes] = await Promise.all([
       eventIds.length > 0
         ? supabase.from('calendar_events').select('id, title').in('id', eventIds)
         : { data: [] },
@@ -74,6 +75,9 @@ function ReportsTab() {
       commentIds.length > 0
         ? supabase.from('blog_comments').select('id, body').in('id', commentIds)
         : { data: [] },
+      calCommentIds.length > 0
+        ? supabase.from('calendar_comments').select('id, body').in('id', calCommentIds)
+        : { data: [] },
     ])
 
     const previewMap = {}
@@ -81,6 +85,9 @@ function ReportsTab() {
       ; (postsRes.data || []).forEach(p => { previewMap[`post-${p.id}`] = p.title })
       ; (commentsRes.data || []).forEach(c => {
         previewMap[`comment-${c.id}`] = c.body.slice(0, 80) + (c.body.length > 80 ? '…' : '')
+      })
+      ; (calCommentsRes.data || []).forEach(c => {
+        previewMap[`calendar_comment-${c.id}`] = c.body.slice(0, 80) + (c.body.length > 80 ? '…' : '')
       })
 
     const enriched = data.map(report => ({
@@ -1072,6 +1079,75 @@ function CategoriesTagsTab() {
 
 // ─── Tab: Useful Links ────────────────────────────────────────────────────────
 
+function CommunitySettingsCard() {
+  const toast = useToast()
+  const [wifiPassword, setWifiPassword] = useState('')
+  const [savedPassword, setSavedPassword] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  const fetchSettings = useCallback(async () => {
+    setLoading(true)
+    const { data, error } = await supabase
+      .from('community_settings')
+      .select('wifi_password')
+      .eq('id', 1)
+      .maybeSingle()
+    if (!error) {
+      setWifiPassword(data?.wifi_password || '')
+      setSavedPassword(data?.wifi_password || '')
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { fetchSettings() }, [fetchSettings])
+
+  const saveWifiPassword = async () => {
+    setSaving(true)
+    const { error } = await supabase
+      .from('community_settings')
+      .update({ wifi_password: wifiPassword.trim() || null })
+      .eq('id', 1)
+    setSaving(false)
+    if (error) { toast.error('Could not save WiFi password.'); return }
+    setSavedPassword(wifiPassword.trim())
+    toast.success('Clubhouse WiFi password updated.')
+  }
+
+  return (
+    <div className="mb-8">
+      <div className="mb-4">
+        <h2 className="text-lg font-bold text-gray-900">Community Settings</h2>
+        <p className="text-sm text-gray-500 mt-0.5">Shown to every signed-in resident on the home screen.</p>
+      </div>
+      <div className="bg-white rounded-xl border border-gray-200 p-5 flex items-end gap-3 flex-wrap">
+        <div className="flex-1 min-w-[220px]">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Clubhouse WiFi Password</label>
+          {loading ? (
+            <div className="text-sm text-gray-400 py-2">Loading…</div>
+          ) : (
+            <input
+              type="text"
+              value={wifiPassword}
+              onChange={e => setWifiPassword(e.target.value)}
+              placeholder="e.g. Sportsman2026"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+            />
+          )}
+        </div>
+        <button
+          onClick={saveWifiPassword}
+          disabled={loading || saving || wifiPassword.trim() === savedPassword}
+          className="bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50 transition-colors"
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      <p className="text-xs text-gray-400 mt-2">The clubhouse address (30 Sportsman Blvd, Hamilton, NJ 08690) is fixed and shown alongside this on the home screen.</p>
+    </div>
+  )
+}
+
 function UsefulLinksTab() {
   const toast = useToast()
   const [links, setLinks] = useState([])
@@ -1145,6 +1221,8 @@ function UsefulLinksTab() {
 
   return (
     <div className="space-y-6">
+      <CommunitySettingsCard />
+
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-gray-900">Useful Links</h2>

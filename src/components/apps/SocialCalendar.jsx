@@ -1,10 +1,34 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
+import { deleteStoragePhoto } from '@/lib/storage'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/components/ui/Toast'
+import { useImageUpload } from '@/hooks/useImageUpload'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+// Fire-and-forget: let the event's original author know a comment was added.
+// Never blocks the comment UI — the comment row is already saved, so a
+// notification hiccup shouldn't look like a failed submission to the commenter.
+const notifyCommentOwner = async (commentType, commentId) => {
+  try {
+    await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-comment`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ commentType, commentId }),
+      }
+    )
+  } catch (e) {
+    console.error('notify-comment call failed:', e)
+  }
+}
 
 function formatDate(dateStr) {
   if (!dateStr) return ''
@@ -249,13 +273,116 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
 
 // ─── Event Detail Modal ──────────────────────────────────────────────────────
 
-function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, onClose, onEdit, onRemove, onReport, onRsvp, onRepeat, userRsvp }) {
+function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, onClose, onEdit, onRemove, onReport, onRsvp, onRepeat, userRsvp, toast }) {
   const cat = categories.find(c => c.id === event.category_id)
   const canModify = isCalendarAdmin || event.created_by === currentUserId
   const upcoming = isFutureOrToday(event.event_date)
   const [showAttendees, setShowAttendees] = useState(false)
   const [attendees, setAttendees] = useState([])
   const [loadingAttendees, setLoadingAttendees] = useState(false)
+
+  // ── Comments ──────────────────────────────────────────────────────────────
+  const [comments, setComments] = useState([])
+  const [loadingComments, setLoadingComments] = useState(true)
+  const [newComment, setNewComment] = useState('')
+  const [submittingComment, setSubmittingComment] = useState(false)
+  const [showCommentReport, setShowCommentReport] = useState(false)
+  const [reportCommentId, setReportCommentId] = useState(null)
+  const [commentReportReason, setCommentReportReason] = useState('')
+
+  const [commentPhotoFile, setCommentPhotoFile] = useState(null)
+  const [commentPhotoPreview, setCommentPhotoPreview] = useState(null)
+  const commentPhotoRef = useRef(null)
+  const { uploading: commentPhotoUploading, error: commentPhotoError, uploadImage: uploadCommentPhoto } = useImageUpload({
+    bucket: 'calendar-comments',
+    maxDimension: 1200,
+  })
+
+  const fetchComments = useCallback(async () => {
+    setLoadingComments(true)
+    const { data, error } = await supabase
+      .from('calendar_comments')
+      .select('id, body, photo_url, created_by, created_at, removed')
+      .eq('event_id', event.id)
+      .eq('removed', false)
+      .order('created_at', { ascending: true })
+
+    if (error) { setLoadingComments(false); return }
+
+    const userIds = [...new Set(data.map(c => c.created_by).filter(Boolean))]
+    let nameMap = {}
+    if (userIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, names, surname')
+        .in('id', userIds)
+      if (profiles) {
+        profiles.forEach(p => {
+          const first = p.names?.split(' ')[0] || ''
+          nameMap[p.id] = `${first} ${p.surname || ''}`.trim()
+        })
+      }
+    }
+
+    setComments(data.map(c => ({ ...c, author_name: nameMap[c.created_by] || 'Resident' })))
+    setLoadingComments(false)
+  }, [event.id])
+
+  useEffect(() => { fetchComments() }, [fetchComments])
+
+  const handleAddComment = async () => {
+    if (!newComment.trim()) return
+    setSubmittingComment(true)
+
+    let photo_url = null
+    if (commentPhotoFile) {
+      photo_url = await uploadCommentPhoto(commentPhotoFile)
+      if (!photo_url) { setSubmittingComment(false); return }
+    }
+
+    const { data: inserted, error } = await supabase
+      .from('calendar_comments')
+      .insert({ event_id: event.id, body: newComment.trim(), created_by: currentUserId, photo_url })
+      .select('id')
+      .single()
+    setSubmittingComment(false)
+    if (error) { toast.error('Could not add comment.'); return }
+    setNewComment('')
+    setCommentPhotoFile(null)
+    if (commentPhotoPreview) URL.revokeObjectURL(commentPhotoPreview)
+    setCommentPhotoPreview(null)
+    if (commentPhotoRef.current) commentPhotoRef.current.value = ''
+    fetchComments()
+    if (inserted?.id) notifyCommentOwner('calendar', inserted.id)
+  }
+
+  const handleRemoveComment = async (comment) => {
+    if (!window.confirm('Remove this comment?')) return
+    const { error } = await supabase
+      .from('calendar_comments')
+      .update({ removed: true })
+      .eq('id', comment.id)
+    if (error) { toast.error('Could not remove comment.'); return }
+    deleteStoragePhoto(comment.photo_url, 'calendar-comments')
+    toast.success('Comment removed.')
+    fetchComments()
+  }
+
+  const openCommentReport = (commentId) => {
+    setReportCommentId(commentId)
+    setCommentReportReason('')
+    setShowCommentReport(true)
+  }
+
+  const submitCommentReport = async () => {
+    if (!commentReportReason.trim()) return
+    const { error } = await supabase
+      .from('blog_reports')
+      .insert({ target_type: 'calendar_comment', target_id: reportCommentId, reported_by: currentUserId, reason: commentReportReason.trim() })
+    if (error) { toast.error('Could not submit report.'); return }
+    toast.success('Report submitted. Thank you.')
+    setShowCommentReport(false)
+  }
 
   async function fetchAttendees() {
     if (attendees.length > 0) { setShowAttendees(true); return }
@@ -391,6 +518,98 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, o
             </div>
           )}
 
+          {/* Comments */}
+          <div className="mt-6 pt-4 border-t border-brand-100">
+            <h3 className="text-sm font-semibold text-brand-700 mb-3">
+              Comments {!loadingComments && `(${comments.length})`}
+            </h3>
+
+            {loadingComments ? (
+              <p className="text-xs text-brand-400">Loading comments…</p>
+            ) : comments.length === 0 ? (
+              <p className="text-xs text-brand-400 italic mb-3">No comments yet — ask a question or leave a note!</p>
+            ) : (
+              <div className="space-y-3 mb-3">
+                {comments.map(comment => {
+                  const isOwnComment = comment.created_by === currentUserId
+                  const canRemoveComment = isCalendarAdmin || isOwnComment
+                  return (
+                    <div key={comment.id} className="flex gap-2.5">
+                      <div className="w-7 h-7 rounded-full bg-brand-100 flex items-center justify-center text-xs font-semibold text-brand-700 flex-shrink-0 mt-0.5">
+                        {(comment.author_name || 'R')[0].toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="bg-brand-50 rounded-xl px-3 py-2">
+                          <div className="flex items-center justify-between gap-2 mb-0.5">
+                            <span className="text-xs font-semibold text-brand-700">{comment.author_name || 'Resident'}</span>
+                            <span className="text-xs text-brand-400">{formatDate(comment.created_at.slice(0, 10))}</span>
+                          </div>
+                          <p className="text-sm text-brand-800 whitespace-pre-wrap">{comment.body}</p>
+                          {comment.photo_url && (
+                            <img src={comment.photo_url} alt="Comment attachment" loading="lazy" className="mt-2 rounded-lg max-h-40 object-cover w-full" />
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3 mt-1 pl-1">
+                          {!isOwnComment && (
+                            <button onClick={() => openCommentReport(comment.id)} className="text-xs text-brand-400 hover:text-brand-600">
+                              🚩 Report
+                            </button>
+                          )}
+                          {canRemoveComment && (
+                            <button onClick={() => handleRemoveComment(comment)} className="text-xs text-red-400 hover:text-red-600">
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* Add comment */}
+            <div className="flex gap-2 items-start">
+              <div className="flex-1">
+                <textarea
+                  value={newComment}
+                  onChange={e => setNewComment(e.target.value)}
+                  placeholder="Ask a question or leave a comment…"
+                  rows={2}
+                  className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand-400"
+                />
+                {commentPhotoPreview ? (
+                  <div className="relative inline-block mt-2 rounded-lg overflow-hidden border border-brand-200">
+                    <img src={commentPhotoPreview} alt="Preview" className="max-h-24 object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => { setCommentPhotoFile(null); URL.revokeObjectURL(commentPhotoPreview); setCommentPhotoPreview(null); if (commentPhotoRef.current) commentPhotoRef.current.value = '' }}
+                      className="absolute top-1 right-1 bg-white bg-opacity-90 rounded-full w-5 h-5 flex items-center justify-center shadow text-brand-700 font-bold text-xs"
+                    >×</button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => commentPhotoRef.current?.click()}
+                    className="mt-2 text-xs text-brand-500 hover:text-brand-700 flex items-center gap-1"
+                  >
+                    📷 Add a photo
+                  </button>
+                )}
+                <input ref={commentPhotoRef} type="file" accept="image/jpeg,image/jpg,image/png,image/webp" className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (!f) return; setCommentPhotoFile(f); setCommentPhotoPreview(URL.createObjectURL(f)) }} />
+                {commentPhotoError && <p className="text-xs text-red-500 mt-1">{commentPhotoError}</p>}
+              </div>
+              <button
+                onClick={handleAddComment}
+                disabled={submittingComment || commentPhotoUploading || !newComment.trim()}
+                className="px-3 py-2 text-sm bg-brand-700 text-white rounded-lg hover:bg-brand-600 disabled:opacity-50 transition-colors flex-shrink-0"
+              >
+                {commentPhotoUploading ? 'Uploading…' : submittingComment ? 'Posting…' : 'Post'}
+              </button>
+            </div>
+          </div>
+
           {/* Actions */}
           <div className="flex items-center justify-between mt-6 pt-4 border-t border-brand-100">
             <div className="flex gap-2 flex-wrap">
@@ -437,6 +656,38 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, o
           </div>
         </div>
       </div>
+
+      {/* Report Comment modal */}
+      {showCommentReport && (
+        <div
+          className="fixed inset-0 flex items-center justify-center p-4"
+          style={{ zIndex: 1600, backgroundColor: 'rgba(0,0,0,0.5)' }}
+          onClick={e => { if (e.target === e.currentTarget) setShowCommentReport(false) }}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm">
+            <h3 className="font-display text-lg text-brand-800 mb-1">Report Comment</h3>
+            <p className="text-sm text-brand-500 mb-3">Let the admin team know why this comment is inappropriate.</p>
+            <textarea
+              value={commentReportReason}
+              onChange={e => setCommentReportReason(e.target.value)}
+              placeholder="Describe the issue…"
+              aria-label="Report reason"
+              rows={3}
+              className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand-400 mb-4"
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowCommentReport(false)} className="px-4 py-2 text-sm text-brand-600 hover:bg-brand-50 rounded-lg">Cancel</button>
+              <button
+                onClick={submitCommentReport}
+                disabled={!commentReportReason.trim()}
+                className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                Submit Report
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1130,6 +1381,7 @@ export default function SocialCalendar() {
           onRsvp={handleRsvp}
           onRepeat={ev => { setRepeatEvent(ev); setSelectedEvent(null) }}
           userRsvp={userRsvps.has(selectedEvent.id)}
+          toast={toast}
         />
       )}
 

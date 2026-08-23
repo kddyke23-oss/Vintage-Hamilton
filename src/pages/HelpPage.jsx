@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import { GENERAL_HELP_CONTACT } from '@/config/constants'
 
-const TABS = ['Getting Started', 'Navigating the App', 'Directory', 'Social Calendar', 'Blog', 'Recommendations', 'Lotto Syndicate', 'Contact & Help']
+const TABS = ['Getting Started', 'Navigating the App', 'Directory', 'Social Calendar', 'Blog', 'Recommendations', 'Lotto Syndicate', 'Budget Tracker', 'Contact & Help']
 
 export default function HelpPage() {
   const [activeTab, setActiveTab] = useState(0)
@@ -141,6 +141,7 @@ export default function HelpPage() {
               <NavItem icon="🎱" label="Lotto Syndicate" description="Track the community Powerball syndicate — draws, winnings, payments, and member details." />
               <NavItem icon="📝" label="Blog" description="Community news, announcements, and posts from residents. React, comment, and share your own stories." />
               <NavItem icon="⭐" label="Recommendations" description="Share trusted recommendations for local services, contractors, and businesses — and warn neighbours about bad experiences." />
+              <NavItem icon="💰" label="Budget Tracker" description="See the social committee's income, expenses, and running balance for the year." />
             </div>
 
             <Section title="The top bar">
@@ -185,6 +186,22 @@ export default function HelpPage() {
               </p>
             </Section>
 
+            <Section title="Reviewing new resident requests (Directory admins)">
+              <p className="text-brand-600 mb-3">
+                When someone applies for portal access, Directory admins are notified by email and can review
+                the request right from the Directory app:
+              </p>
+              <Steps steps={[
+                { n: 1, text: <>Open the <strong>Directory</strong> app.</> },
+                { n: 2, text: <>Look for the <strong>"📋 Access Requests"</strong> button in the toolbar — a gold badge shows how many requests are waiting.</> },
+                { n: 3, text: <>Click it to review the applicant's details, then <strong>Approve</strong> or <strong>Reject</strong>.</> },
+                { n: 4, text: <>Approved residents are automatically given access to the Directory, Calendar, Blog, and Recommendations.</> },
+              ]} />
+              <p className="text-brand-500 text-sm mt-3">
+                (The community administrator can also still review requests from the Admin Portal, if you're used to that screen.)
+              </p>
+            </Section>
+
             <AdminContact appId="directory" admins={appAdmins} loading={loadingAdmins} />
           </div>
         )}
@@ -222,6 +239,21 @@ export default function HelpPage() {
                 { n: 3, text: <>Optionally add a location, description, and a link to any external page (e.g. a sign-up form or map).</> },
                 { n: 4, text: <>Click <strong>"Save Event"</strong> — the event will appear on the calendar immediately.</> },
               ]} />
+            </Section>
+
+            <Section title="Comments & questions on events">
+              <p className="text-brand-600 mb-3">
+                Every event has its own comments section — a good place to ask questions, offer to carpool,
+                or share a quick update.
+              </p>
+              <Steps steps={[
+                { n: 1, text: <>Open an event and scroll down to the <strong>Comments</strong> section.</> },
+                { n: 2, text: <>Type your comment or question and click <strong>Post</strong> — you can attach a photo too if it helps (e.g. showing where to park).</> },
+                { n: 3, text: <>See something inappropriate? Click <strong>🚩 Report</strong> next to the comment to flag it for an administrator.</> },
+              ]} />
+              <p className="text-brand-500 text-sm mt-3">
+                You can remove your own comment at any time. Calendar admins can also remove any comment if needed.
+              </p>
             </Section>
 
             <Section title="Event categories">
@@ -285,7 +317,8 @@ export default function HelpPage() {
                 { n: 1, text: <>Click the <strong>✏️ Write Post</strong> button at the top of the Blog page.</> },
                 { n: 2, text: <>Give your post a title and write your content in the body field.</> },
                 { n: 3, text: <>Optionally link your post to a calendar event — useful for event previews or recaps.</> },
-                { n: 4, text: <>Click <strong>"Publish Post"</strong> — your post will appear immediately for everyone to read.</> },
+                { n: 4, text: <>Optionally add an <strong>external link</strong> too — a news article, sign-up page, or event website. Posts with a link show a 🔗 in the title.</> },
+                { n: 5, text: <>Click <strong>"Publish Post"</strong> — your post will appear immediately for everyone to read.</> },
               ]} />
             </Section>
 
@@ -438,8 +471,67 @@ export default function HelpPage() {
           </div>
         )}
 
-        {/* ── Contact & Help ── */}
+        {/* ── Budget Tracker ── */}
         {activeTab === 7 && (
+          <div className="space-y-6">
+            <Section title="The Budget Tracker 💰">
+              <p className="text-brand-600">
+                The Budget Tracker keeps the social committee's finances open and easy to follow — every
+                income and expense entry, a running balance, and how spending compares to plan for the year.
+              </p>
+            </Section>
+
+            <Section title="The Ledger">
+              <p className="text-brand-600">
+                The <strong>Ledger</strong> tab lists every entry for the fiscal year — date, description,
+                category, and amount. Use the fiscal year dropdown to look back at previous years. Entries
+                marked <strong>↪</strong> have been reassigned to count toward a different fiscal year than
+                their date would normally suggest (see "Year-end reconciliation" below).
+              </p>
+            </Section>
+
+            <Section title="Adding an entry (Budget admins)">
+              <Steps steps={[
+                { n: 1, text: <>Open the <strong>Budget Tracker</strong> and go to the <strong>Ledger</strong> tab.</> },
+                { n: 2, text: <>Click <strong>"+ Add Entry"</strong>.</> },
+                { n: 3, text: <>Choose income or expense, a category, the date, amount, and a description.</> },
+                { n: 4, text: <>If this entry actually belongs to a different fiscal year than its date (e.g. an invoice paid in early January for last year's event), use the <strong>"Counts Toward Fiscal Year"</strong> field to reassign it.</> },
+                { n: 5, text: <>Click <strong>Save</strong>.</> },
+              ]} />
+            </Section>
+
+            <Section title="Summary & Targets">
+              <p className="text-brand-600">
+                The <strong>Summary</strong> tab shows the opening balance, closing balance, and a month-by-month
+                chart for the selected fiscal year. The <strong>Targets</strong> tab compares actual spending in
+                each category against the budget set for the year.
+              </p>
+            </Section>
+
+            <Section title="Year-end reconciliation & sweeping to the HOA Reserve (Budget admins)">
+              <p className="text-brand-600 mb-3">
+                At the end of a fiscal year, Budget admins can lock the year and optionally transfer surplus
+                funds to the HOA reserve account:
+              </p>
+              <Steps steps={[
+                { n: 1, text: <>Before reconciling, check the Ledger for any entries logged early in the new year that actually belong to the year you're closing — reassign them with <strong>"Counts Toward Fiscal Year"</strong> first.</> },
+                { n: 2, text: <>On the <strong>Summary</strong> tab, select the fiscal year you want to close and click <strong>"Reconcile Year"</strong>.</> },
+                { n: 3, text: <>Enter the amount to sweep to the HOA reserve account (up to the year's closing balance) and any notes, then confirm.</> },
+                { n: 4, text: <>A <strong>"Transfer to HOA Reserve"</strong> entry is added automatically and the year is locked <strong>🔒</strong> — entries in a locked year can't be edited or deleted.</> },
+              ]} />
+              <p className="text-brand-500 text-sm mt-3">
+                Need to make a correction after reconciling? Budget admins can click <strong>"Reopen Year"</strong> to
+                unlock it. Reopening does not automatically remove the sweep entry — if you need to undo the transfer,
+                remove that ledger entry separately.
+              </p>
+            </Section>
+
+            <AdminContact appId="budget" admins={appAdmins} loading={loadingAdmins} />
+          </div>
+        )}
+
+        {/* ── Contact & Help ── */}
+        {activeTab === 8 && (
           <div className="space-y-6">
             <Section title="Need help? We've got you covered 😊">
               <p className="text-brand-600">
@@ -457,10 +549,10 @@ export default function HelpPage() {
                 <p className="text-brand-400 text-sm">Loading...</p>
               ) : (
                 <div className="space-y-4">
-                  {['directory', 'calendar', 'blog', 'recommendations', 'lotto'].map(appId => (
+                  {['directory', 'calendar', 'blog', 'recommendations', 'lotto', 'budget'].map(appId => (
                     <div key={appId}>
                       <p className="text-sm font-semibold text-brand-700 mb-2 capitalize">
-                        {appId === 'lotto' ? 'Lotto Syndicate' : appId === 'calendar' ? 'Social Calendar' : appId === 'blog' ? 'Community Blog' : appId === 'recommendations' ? 'Recommendations' : 'Resident Directory'}
+                        {appId === 'lotto' ? 'Lotto Syndicate' : appId === 'calendar' ? 'Social Calendar' : appId === 'blog' ? 'Community Blog' : appId === 'recommendations' ? 'Recommendations' : appId === 'budget' ? 'Budget Tracker' : 'Resident Directory'}
                       </p>
                       {appAdmins[appId]?.length > 0 ? (
                         <div className="space-y-2">
