@@ -1011,6 +1011,7 @@ export default function SocialCalendar() {
     const params = new URLSearchParams(window.location.search)
     return !!params.get('openEvent') // show past events if arriving from a blog link
   })
+  const [showAll, setShowAll] = useState(false) // list view: ignore date bounds entirely
 
   const [categories, setCategories] = useState([])
   const [events, setEvents] = useState([])
@@ -1076,22 +1077,31 @@ export default function SocialCalendar() {
       const start = new Date(currentYear, currentMonth, 1).toISOString().split('T')[0]
       const end = new Date(currentYear, currentMonth + 1, 0).toISOString().split('T')[0]
       query = query.gte('event_date', start).lte('event_date', end)
+    } else if (showAll) {
+      // No date bounds at all — every event, oldest first.
     } else {
-      // List: starts at today by default. Once the month nav has moved away
-      // from the current real month, start at the 1st of that selected month
-      // instead — previously currentYear/currentMonth were only used for the
-      // upper bound here, so the month nav appeared to do nothing in List
-      // view and, with "Show past" on, the list had no lower bound at all
-      // (showed every event ever entered).
       const isCurrentRealMonth = currentYear === now.getFullYear() && currentMonth === now.getMonth()
-      let listStart = new Date(currentYear, currentMonth, 1)
-      if (isCurrentRealMonth && !showPast) {
-        const today = new Date()
-        today.setHours(0, 0, 0, 0)
-        listStart = today
+      if (isCurrentRealMonth) {
+        // Default "what's coming up" list: today (or the whole current month
+        // if "Show past" is on) through 3 months ahead.
+        let start
+        if (showPast) {
+          start = new Date(currentYear, currentMonth, 1)
+        } else {
+          start = new Date()
+          start.setHours(0, 0, 0, 0)
+        }
+        query = query.gte('event_date', start.toISOString().split('T')[0])
+        query = query.lte('event_date', new Date(currentYear, currentMonth + 3, 0).toISOString().split('T')[0])
+      } else {
+        // The month nav has moved to a specific month — show just that month
+        // (same bounds as Grid view for that month), so every click of ‹ / ›
+        // visibly changes what's shown instead of subtly sliding a window
+        // that, with only a handful of events, often looks like it did nothing.
+        const start = new Date(currentYear, currentMonth, 1).toISOString().split('T')[0]
+        const end = new Date(currentYear, currentMonth + 1, 0).toISOString().split('T')[0]
+        query = query.gte('event_date', start).lte('event_date', end)
       }
-      query = query.gte('event_date', listStart.toISOString().split('T')[0])
-      query = query.lte('event_date', new Date(currentYear, currentMonth + 3, 0).toISOString().split('T')[0])
     }
 
     if (filterCategory !== 'all') {
@@ -1154,7 +1164,7 @@ export default function SocialCalendar() {
     }
 
     setLoading(false)
-  }, [viewMode, currentYear, currentMonth, filterCategory, showPast, user])
+  }, [viewMode, currentYear, currentMonth, filterCategory, showPast, showAll, user])
 
   useEffect(() => { fetchEvents() }, [fetchEvents])
 
@@ -1223,15 +1233,21 @@ export default function SocialCalendar() {
   }
 
   // ── Month navigation ──────────────────────────────────────────────────────
+  // Navigating by month always exits "Show All" — it's a distinct mode, and
+  // clicking ‹ / › or the month label is a clear signal to browse a specific
+  // period again instead.
   function prevMonth() {
+    setShowAll(false)
     if (currentMonth === 0) { setCurrentMonth(11); setCurrentYear(y => y - 1) }
     else setCurrentMonth(m => m - 1)
   }
   function nextMonth() {
+    setShowAll(false)
     if (currentMonth === 11) { setCurrentMonth(0); setCurrentYear(y => y + 1) }
     else setCurrentMonth(m => m + 1)
   }
   function goToToday() {
+    setShowAll(false)
     setCurrentYear(now.getFullYear())
     setCurrentMonth(now.getMonth())
   }
@@ -1310,8 +1326,8 @@ export default function SocialCalendar() {
           ))}
         </select>
 
-        {/* Show past toggle (list only) */}
-        {viewMode === 'list' && (
+        {/* Show past toggle (list only) — moot once "Show All" is on */}
+        {viewMode === 'list' && !showAll && (
           <button
             onClick={() => setShowPast(p => !p)}
             className={`text-sm px-3 py-1.5 rounded-lg border transition-colors ${
@@ -1319,6 +1335,18 @@ export default function SocialCalendar() {
             }`}
           >
             {showPast ? 'Hiding past' : 'Show past'}
+          </button>
+        )}
+
+        {/* Show All toggle (list only) — every event, no date filtering */}
+        {viewMode === 'list' && (
+          <button
+            onClick={() => setShowAll(a => !a)}
+            className={`text-sm px-3 py-1.5 rounded-lg border transition-colors ${
+              showAll ? 'bg-gold-100 border-gold-400 text-brand-800 font-medium' : 'border-brand-200 text-brand-500 hover:bg-brand-50'
+            }`}
+          >
+            {showAll ? '✓ Showing All' : 'Show All'}
           </button>
         )}
       </div>
