@@ -1077,12 +1077,20 @@ export default function SocialCalendar() {
       const end = new Date(currentYear, currentMonth + 1, 0).toISOString().split('T')[0]
       query = query.gte('event_date', start).lte('event_date', end)
     } else {
-      // List: show 3 months ahead + past if toggled
-      if (!showPast) {
+      // List: starts at today by default. Once the month nav has moved away
+      // from the current real month, start at the 1st of that selected month
+      // instead — previously currentYear/currentMonth were only used for the
+      // upper bound here, so the month nav appeared to do nothing in List
+      // view and, with "Show past" on, the list had no lower bound at all
+      // (showed every event ever entered).
+      const isCurrentRealMonth = currentYear === now.getFullYear() && currentMonth === now.getMonth()
+      let listStart = new Date(currentYear, currentMonth, 1)
+      if (isCurrentRealMonth && !showPast) {
         const today = new Date()
         today.setHours(0, 0, 0, 0)
-        query = query.gte('event_date', today.toISOString().split('T')[0])
+        listStart = today
       }
+      query = query.gte('event_date', listStart.toISOString().split('T')[0])
       query = query.lte('event_date', new Date(currentYear, currentMonth + 3, 0).toISOString().split('T')[0])
     }
 
