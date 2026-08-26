@@ -164,6 +164,22 @@ Extends Supabase `auth.users`. Contains both auth-facing fields and directory fi
 | nums | int[] | 5 chosen numbers |
 | pb | int | Chosen Powerball number |
 
+### `lotto_member_numbers`
+| Column | Type | Notes |
+|--------|------|-------|
+| id | serial | Primary key |
+| member_id | text | FK → lotto_members |
+| nums | int[] | 5 numbers held during this date range |
+| pb | int | Powerball number held during this date range |
+| effective_from | date | When this number set started |
+| effective_to | date nullable | When it ended (null = current) |
+
+Lets a member change their numbers without corrupting past draw results —
+every draw checks the numbers effective on its own `draw_date`, not whatever
+is currently on the member record. `lotto_members.nums`/`pb` still holds the
+current set as a display cache; use the "Change Numbers" action on a member's
+card to update both in sync.
+
 ### `lotto_draws`
 | Column | Type | Notes |
 |--------|------|-------|

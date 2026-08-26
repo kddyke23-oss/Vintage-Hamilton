@@ -64,6 +64,23 @@ const getMatches = (nums, pb, winNums, winPb) => {
   return { matchCount: count, pbMatch: pb === winPb };
 };
 
+// Numbers a member had in play on a given date, from their change history
+// (lotto_member_numbers). Falls back to the member's current nums/pb if no
+// history row covers that date (e.g. history hasn't been backfilled yet),
+// so this stays safe to call even before the migration has fully run.
+const numbersAsOf = (history, memberId, dt) => {
+  const rows = history.filter(h => h.member_id === memberId);
+  const match = rows.find(h => h.effective_from <= dt && (!h.effective_to || dt < h.effective_to));
+  if (match) return match;
+  const sorted = [...rows].sort((a, b) => a.effective_from.localeCompare(b.effective_from));
+  return sorted[0] || null;
+};
+
+const memberNumbersAt = (history, m, dt) => {
+  const row = numbersAsOf(history, m.id, dt);
+  return row ? { nums: row.nums, pb: row.pb } : { nums: m.nums, pb: m.pb };
+};
+
 const memberDisplayName = (m) => {
   const p1 = m.profile1;
   const p2 = m.profile2;
@@ -342,7 +359,7 @@ function DashboardTab({ members, draws, periods, payments, isAdmin, onAddDraw, o
 // ─────────────────────────────────────────────────────────────────────────────
 // MEMBERS TAB
 // ─────────────────────────────────────────────────────────────────────────────
-function MembersTab({ members, draws, periods, isAdmin, allResidents, onSaveMember, showToast }) {
+function MembersTab({ members, draws, periods, isAdmin, allResidents, onSaveMember, onChangeNumbers, numberHistory, showToast }) {
   const [editingMember, setEditingMember] = useState(null);
   const [showAddModal, setShowAddModal]   = useState(false);
 
@@ -379,6 +396,7 @@ function MembersTab({ members, draws, periods, isAdmin, allResidents, onSaveMemb
           <MemberCard
             key={m.id} member={m} earnings={earnings[m.id] || 0}
             isAdmin={isAdmin} onEdit={() => setEditingMember({ ...m })}
+            numberHistory={numberHistory} onChangeNumbers={onChangeNumbers}
           />
         ))}
       </div>
@@ -401,8 +419,10 @@ function MembersTab({ members, draws, periods, isAdmin, allResidents, onSaveMemb
   );
 }
 
-function MemberCard({ member: m, earnings, isAdmin, onEdit }) {
+function MemberCard({ member: m, earnings, isAdmin, onEdit, numberHistory = [], onChangeNumbers }) {
   const active = !m.exit_date;
+  const [showChangeNumbers, setShowChangeNumbers] = useState(false);
+  const openRow = numberHistory.find(h => h.member_id === m.id && !h.effective_to);
   return (
     <div style={{
       ...s.card,
@@ -427,21 +447,124 @@ function MemberCard({ member: m, earnings, isAdmin, onEdit }) {
       </div>
 
       {/* Numbers */}
-      <div style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: "0.6rem", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: "0.3rem", flexWrap: "wrap" }}>
         {m.nums.map((n, i) => <Ball key={i} number={n} isPb={false} isMatch={false} small />)}
         <span style={{ color: "#9ca3af", fontSize: "0.75rem", margin: "0 2px" }}>PB</span>
         <Ball number={m.pb} isPb={true} isMatch={false} small />
       </div>
+      {openRow && (
+        <div style={{ fontSize: "0.72rem", color: "#9ca3af", marginBottom: "0.6rem" }}>
+          Playing these numbers since {fmtS(openRow.effective_from)}
+        </div>
+      )}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.4rem" }}>
         <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>
           Total earnings: <strong style={{ color: earnings > 0 ? "var(--color-gold)" : "#9ca3af" }}>{fmtMoney(earnings)}</strong>
         </span>
         {isAdmin && (
-          <button onClick={onEdit} style={{ ...s.btnIcon, padding: "0.3rem 0.65rem", gap: "0.3rem", fontSize: "0.8rem", color: "var(--color-primary)" }}>
-            <Ic path={ICONS.edit} size={13} /> Edit
-          </button>
+          <div style={{ display: "flex", gap: "0.4rem" }}>
+            <button onClick={() => setShowChangeNumbers(true)} style={{ ...s.btnIcon, padding: "0.3rem 0.65rem", gap: "0.3rem", fontSize: "0.8rem", color: "var(--color-gold)" }}>
+              <Ic path={ICONS.edit} size={13} /> Change Numbers
+            </button>
+            <button onClick={onEdit} style={{ ...s.btnIcon, padding: "0.3rem 0.65rem", gap: "0.3rem", fontSize: "0.8rem", color: "var(--color-primary)" }}>
+              <Ic path={ICONS.edit} size={13} /> Edit
+            </button>
+          </div>
         )}
+      </div>
+
+      {showChangeNumbers && (
+        <ChangeNumbersModal
+          member={m} numberHistory={numberHistory}
+          onSave={async (data) => { await onChangeNumbers(data); setShowChangeNumbers(false); }}
+          onClose={() => setShowChangeNumbers(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ChangeNumbersModal({ member: m, numberHistory, onSave, onClose }) {
+  const history = [...numberHistory.filter(h => h.member_id === m.id)]
+    .sort((a, b) => b.effective_from.localeCompare(a.effective_from));
+  const openRow = history.find(h => !h.effective_to);
+  const [form, setForm] = useState({
+    nums: "",
+    pb: "",
+    effective_from: new Date().toISOString().slice(0, 10),
+  });
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    const nums = form.nums.split(/[\s,]+/).map(Number).filter(n => n >= 1 && n <= 69);
+    if (nums.length !== 5) { alert("Please enter exactly 5 numbers (1–69)."); return; }
+    const pb = parseInt(form.pb);
+    if (!pb || pb < 1 || pb > 26) { alert("Powerball must be 1–26."); return; }
+    if (openRow && form.effective_from <= openRow.effective_from) {
+      alert(`Effective date must be after ${fmtS(openRow.effective_from)}, when the current numbers started.`);
+      return;
+    }
+    setSaving(true);
+    await onSave({ memberId: m.id, nums, pb, effectiveFrom: form.effective_from });
+    setSaving(false);
+  };
+
+  return (
+    <div style={s.overlay} onClick={onClose}>
+      <div style={s.modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1.5rem 2rem 1rem", flexShrink: 0 }}>
+          <h3 style={{ fontFamily: "var(--font-display)", color: "var(--color-primary)", fontSize: "1.25rem", margin: 0 }}>
+            Change Numbers — {memberDisplayName(m)}
+          </h3>
+          <button onClick={onClose} style={s.btnIcon}><Ic path={ICONS.x} size={14} /></button>
+        </div>
+        <div style={{ overflowY: "auto", padding: "0 2rem", flex: 1 }}>
+          <div style={{ background: "#f0f4f8", borderRadius: "8px", padding: "0.75rem 1rem", marginBottom: "1rem", fontSize: "0.82rem", color: "#374151" }}>
+            Draw history keeps using the numbers that were actually in play on each draw date — changing numbers here won&rsquo;t alter past results. It just starts a new set from the effective date you choose.
+          </div>
+          {openRow && (
+            <div style={{ marginBottom: "1rem", fontSize: "0.85rem", color: "#6b7280" }}>
+              Currently playing (since {fmtS(openRow.effective_from)}):
+              <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: "0.4rem" }}>
+                {openRow.nums.map((n, i) => <Ball key={i} number={n} isPb={false} isMatch={false} small />)}
+                <span style={{ color: "#9ca3af", fontSize: "0.75rem", margin: "0 2px" }}>PB</span>
+                <Ball number={openRow.pb} isPb={true} isMatch={false} small />
+              </div>
+            </div>
+          )}
+          <MField label="New Numbers (5 numbers, 1–69)">
+            <input value={form.nums} onChange={e => setForm(f => ({ ...f, nums: e.target.value }))}
+              style={{ ...s.input, width: "100%" }} placeholder="e.g. 8, 19, 23, 26, 31" />
+          </MField>
+          <MField label="New Powerball (1–26)">
+            <input type="number" value={form.pb} onChange={e => setForm(f => ({ ...f, pb: e.target.value }))}
+              style={{ ...s.input, width: "100%" }} min={1} max={26} />
+          </MField>
+          <MField label="Effective From">
+            <input type="date" value={form.effective_from} onChange={e => setForm(f => ({ ...f, effective_from: e.target.value }))} style={{ ...s.input, width: "100%" }} />
+          </MField>
+          {history.length > 0 && (
+            <div style={{ marginTop: "0.5rem" }}>
+              <div style={{ fontSize: "0.8rem", fontWeight: "600", color: "#374151", marginBottom: "0.4rem" }}>Number history</div>
+              {history.map(h => (
+                <div key={h.id} style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.35rem", fontSize: "0.82rem", color: "#6b7280" }}>
+                  <div style={{ display: "flex", gap: 3 }}>
+                    {h.nums.map((n, i) => <Ball key={i} number={n} isPb={false} isMatch={false} small />)}
+                    <Ball number={h.pb} isPb={true} isMatch={false} small />
+                  </div>
+                  <span>{fmtS(h.effective_from)} – {h.effective_to ? fmtS(h.effective_to) : "present"}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem", padding: "1rem 2rem 1.5rem", flexShrink: 0, borderTop: "1px solid #f0f0f0" }}>
+          <button onClick={handleSave} disabled={saving} style={{ ...s.btnGold, flex: 1, justifyContent: "center" }}>
+            {saving ? "Saving…" : "Save New Numbers"}
+          </button>
+          <button onClick={onClose} style={{ ...s.btnSec, flex: 1, justifyContent: "center" }}>Cancel</button>
+        </div>
       </div>
     </div>
   );
@@ -461,21 +584,24 @@ function MemberModal({ member, allResidents, title, nextId = "", onSave, onClose
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
-    const nums = form.nums.split(/[\s,]+/).map(Number).filter(n => n >= 1 && n <= 69);
-    if (nums.length !== 5) { alert("Please enter exactly 5 numbers (1–69)."); return; }
-    const pb = parseInt(form.pb);
-    if (!pb || pb < 1 || pb > 26) { alert("Powerball must be 1–26."); return; }
     if (!form.resident_id_1) { alert("Primary resident is required."); return; }
-    setSaving(true);
-    await onSave({
+    const payload = {
       id:           form.id.toUpperCase(),
       resident_id_1: parseInt(form.resident_id_1),
       resident_id_2: form.resident_id_2 ? parseInt(form.resident_id_2) : null,
       join_date:    form.join_date,
       exit_date:    form.exit_date || null,
-      nums,
-      pb,
-    });
+    };
+    if (isNew) {
+      const nums = form.nums.split(/[\s,]+/).map(Number).filter(n => n >= 1 && n <= 69);
+      if (nums.length !== 5) { alert("Please enter exactly 5 numbers (1–69)."); return; }
+      const pb = parseInt(form.pb);
+      if (!pb || pb < 1 || pb > 26) { alert("Powerball must be 1–26."); return; }
+      payload.nums = nums;
+      payload.pb = pb;
+    }
+    setSaving(true);
+    await onSave(payload);
     setSaving(false);
   };
 
@@ -510,14 +636,22 @@ function MemberModal({ member, allResidents, title, nextId = "", onSave, onClose
               {residentOptions.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
             </select>
           </MField>
-          <MField label="Numbers (5 numbers, 1–69)">
-            <input value={form.nums} onChange={e => setForm(f => ({ ...f, nums: e.target.value }))}
-              style={{ ...s.input, width: "100%" }} placeholder="e.g. 8, 19, 23, 26, 31" />
-          </MField>
-          <MField label="Powerball (1–26)">
-            <input type="number" value={form.pb} onChange={e => setForm(f => ({ ...f, pb: e.target.value }))}
-              style={{ ...s.input, width: "100%" }} min={1} max={26} />
-          </MField>
+          {isNew ? (
+            <>
+              <MField label="Numbers (5 numbers, 1–69)">
+                <input value={form.nums} onChange={e => setForm(f => ({ ...f, nums: e.target.value }))}
+                  style={{ ...s.input, width: "100%" }} placeholder="e.g. 8, 19, 23, 26, 31" />
+              </MField>
+              <MField label="Powerball (1–26)">
+                <input type="number" value={form.pb} onChange={e => setForm(f => ({ ...f, pb: e.target.value }))}
+                  style={{ ...s.input, width: "100%" }} min={1} max={26} />
+              </MField>
+            </>
+          ) : (
+            <div style={{ background: "#f0f4f8", borderRadius: "8px", padding: "0.65rem 0.9rem", marginBottom: "1rem", fontSize: "0.8rem", color: "#6b7280" }}>
+              Use &ldquo;Change Numbers&rdquo; on this member&rsquo;s card to update their numbers — it keeps past draw results accurate.
+            </div>
+          )}
           <MField label="Join Date">
             <input type="date" value={form.join_date} onChange={e => setForm(f => ({ ...f, join_date: e.target.value }))} style={{ ...s.input, width: "100%" }} />
           </MField>
@@ -548,7 +682,7 @@ function MField({ label, children }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // DRAWS TAB
 // ─────────────────────────────────────────────────────────────────────────────
-function DrawsTab({ members, draws, periods, isAdmin, onSaveDraw }) {
+function DrawsTab({ members, draws, periods, isAdmin, onSaveDraw, numberHistory }) {
   const [expanded, setExpanded]     = useState(null);
   const [showAddDraw, setShowAddDraw] = useState(false);
   const [filterPeriod, setFilterPeriod] = useState("all");
@@ -582,8 +716,9 @@ function DrawsTab({ members, draws, periods, isAdmin, onSaveDraw }) {
           if (!pending) {
             const activeMs = members.filter(m => isActive(m, dr.draw_date));
             matches = activeMs.map(m => {
-              const r = getMatches(m.nums, m.pb, dr.winning, dr.powerball);
-              return { ...m, ...r };
+              const mn = memberNumbersAt(numberHistory, m, dr.draw_date);
+              const r = getMatches(mn.nums, mn.pb, dr.winning, dr.powerball);
+              return { ...m, nums: mn.nums, pb: mn.pb, ...r };
             }).filter(m => m.matchCount >= 1 || m.pbMatch);
           }
 
@@ -641,7 +776,7 @@ function DrawsTab({ members, draws, periods, isAdmin, onSaveDraw }) {
 
       {showAddDraw && (
         <AddDrawModal
-          members={members} draws={draws} periods={periods}
+          members={members} draws={draws} periods={periods} numberHistory={numberHistory}
           onSave={async (d) => { await onSaveDraw(d); setShowAddDraw(false); }}
           onClose={() => setShowAddDraw(false)}
         />
@@ -651,7 +786,7 @@ function DrawsTab({ members, draws, periods, isAdmin, onSaveDraw }) {
 }
 
 // ─── Add Draw Modal ────────────────────────────────────────────────────────────
-function AddDrawModal({ members, draws, periods, onSave, onClose }) {
+function AddDrawModal({ members, draws, periods, onSave, onClose, numberHistory }) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({ winning: "", pb: "", prize: "" });
   const [matchResult, setMatchResult] = useState(null);
@@ -668,8 +803,9 @@ function AddDrawModal({ members, draws, periods, onSave, onClose }) {
     const drawDate = nextPending?.draw_date || new Date().toISOString().slice(0, 10);
     const activeMs = members.filter(m => isActive(m, drawDate));
     const results = activeMs.map(m => {
-      const r = getMatches(m.nums, m.pb, winning, pb);
-      return { ...m, ...r };
+      const mn = memberNumbersAt(numberHistory, m, drawDate);
+      const r = getMatches(mn.nums, mn.pb, winning, pb);
+      return { ...m, nums: mn.nums, pb: mn.pb, ...r };
     });
     const winners = results.filter(r => r.matchCount >= 3 || r.pbMatch);
     setMatchResult({ winning, pb, drawDate, results, winners, isWinner: winners.length > 0 });
@@ -1159,7 +1295,7 @@ function PeriodSummaryModal({ members, draws, periods, payments, onClose }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // CHARTS TAB
 // ─────────────────────────────────────────────────────────────────────────────
-function ChartsTab({ members, draws, periods }) {
+function ChartsTab({ members, draws, periods, numberHistory }) {
   const completedDraws = draws.filter(d => !isPending(d))
     .sort((a, b) => a.draw_date.localeCompare(b.draw_date));
   const activeMembers = members.filter(m => !m.exit_date)
@@ -1175,7 +1311,8 @@ function ChartsTab({ members, draws, periods }) {
         const actMs = members.filter(x => isActive(x, dr.draw_date));
         const share = actMs.length > 0 ? (dr.prize || 0) / actMs.length : 0;
         totalWon += share;
-        const result = getMatches(m.nums, m.pb, dr.winning, dr.powerball);
+        const mn = memberNumbersAt(numberHistory, m, dr.draw_date);
+        const result = getMatches(mn.nums, mn.pb, dr.winning, dr.powerball);
         if (result.matchCount >= 3 || result.pbMatch) winCount++;
       });
       return {
@@ -1185,7 +1322,7 @@ function ChartsTab({ members, draws, periods }) {
         wins: winCount,
       };
     }).sort((a, b) => b.winnings - a.winnings);
-  }, [members, completedDraws]);
+  }, [members, completedDraws, numberHistory]);
 
   // ── Line chart data: cumulative invested vs won ──
   const lineData = useMemo(() => {
@@ -1465,6 +1602,7 @@ export default function LottoTracker({ user, isAdmin, isLottoAdmin }) {
   const [draws, setDraws]         = useState([]);
   const [periods, setPeriods]     = useState([]);
   const [payments, setPayments]   = useState([]);
+  const [numberHistory, setNumberHistory] = useState([]);
   const [allResidents, setAllResidents] = useState([]);
   const [loading, setLoading]     = useState(true);
   const [toast, setToast]         = useState(null);
@@ -1480,7 +1618,7 @@ export default function LottoTracker({ user, isAdmin, isLottoAdmin }) {
 
   async function loadAll() {
     setLoading(true);
-    const [periodsRes, drawsRes, membersRes, paymentsRes, residentsRes] = await Promise.all([
+    const [periodsRes, drawsRes, membersRes, paymentsRes, residentsRes, numberHistoryRes] = await Promise.all([
       supabase.from("lotto_periods").select("*").order("start_date"),
       supabase.from("lotto_draws").select("*").order("draw_date"),
       supabase.from("lotto_members").select(`
@@ -1490,18 +1628,21 @@ export default function LottoTracker({ user, isAdmin, isLottoAdmin }) {
       `).order("id"),
       supabase.from("lotto_payments").select("*"),
       supabase.from("profiles").select("resident_id, names, surname").order("surname"),
+      supabase.from("lotto_member_numbers").select("*").order("effective_from"),
     ]);
 
     if (periodsRes.error)  console.error("periods",  periodsRes.error);
     if (drawsRes.error)    console.error("draws",    drawsRes.error);
     if (membersRes.error)  console.error("members",  membersRes.error);
     if (paymentsRes.error) console.error("payments", paymentsRes.error);
+    if (numberHistoryRes.error) console.error("number history", numberHistoryRes.error);
 
     setPeriods(periodsRes.data   || []);
     setDraws(drawsRes.data       || []);
     setMembers(membersRes.data   || []);
     setPayments(paymentsRes.data || []);
     setAllResidents(residentsRes.data || []);
+    setNumberHistory(numberHistoryRes.data || []);
     setLoading(false);
   }
 
@@ -1531,12 +1672,42 @@ export default function LottoTracker({ user, isAdmin, isLottoAdmin }) {
     const existing = members.find(m => m.id === id);
     let error;
     if (existing) {
-      ({ error } = await supabase.from("lotto_members").update(fields).eq("id", id));
+      // Numbers are changed via "Change Numbers" (handleChangeNumbers below) so
+      // that past draw history stays accurate — never overwritten from here.
+      const { nums: _nums, pb: _pb, ...safeFields } = fields;
+      ({ error } = await supabase.from("lotto_members").update(safeFields).eq("id", id));
     } else {
       ({ error } = await supabase.from("lotto_members").insert([{ id, ...fields }]));
+      if (!error && fields.nums && fields.pb) {
+        const { error: histErr } = await supabase.from("lotto_member_numbers").insert([{
+          member_id: id, nums: fields.nums, pb: fields.pb,
+          effective_from: fields.join_date, effective_to: null,
+        }]);
+        if (histErr) console.error("number history seed", histErr);
+      }
     }
     if (error) { showToast("Error saving member"); console.error(error); }
     else { showToast(existing ? "Member updated" : "Member added"); await loadAll(); }
+  }
+
+  // ── Change member numbers (keeps past draw history accurate) ───────────────
+  async function handleChangeNumbers({ memberId, nums, pb, effectiveFrom }) {
+    const openRow = numberHistory.find(h => h.member_id === memberId && !h.effective_to);
+    if (openRow) {
+      const { error: closeErr } = await supabase.from("lotto_member_numbers")
+        .update({ effective_to: effectiveFrom }).eq("id", openRow.id);
+      if (closeErr) { showToast("Error updating number history"); console.error(closeErr); return; }
+    }
+    const { error: insErr } = await supabase.from("lotto_member_numbers").insert([{
+      member_id: memberId, nums, pb, effective_from: effectiveFrom, effective_to: null,
+    }]);
+    if (insErr) { showToast("Error saving new numbers"); console.error(insErr); return; }
+    // Keep lotto_members.nums/pb as a "current numbers" cache for quick display.
+    const { error: updErr } = await supabase.from("lotto_members")
+      .update({ nums, pb }).eq("id", memberId);
+    if (updErr) console.error("current numbers cache", updErr);
+    showToast("Numbers updated — past draw history is unaffected");
+    await loadAll();
   }
 
   // ── Save payment ───────────────────────────────────────────────────────────
@@ -1663,20 +1834,21 @@ export default function LottoTracker({ user, isAdmin, isLottoAdmin }) {
         <MembersTab
           members={members} draws={draws} periods={periods}
           isAdmin={canAdmin} allResidents={allResidents}
-          onSaveMember={handleSaveMember} showToast={showToast}
+          onSaveMember={handleSaveMember} onChangeNumbers={handleChangeNumbers}
+          numberHistory={numberHistory} showToast={showToast}
         />
       )}
       {tab === "draws" && (
         <DrawsTab
           members={members} draws={draws} periods={periods}
-          isAdmin={canAdmin} onSaveDraw={handleSaveDraw}
+          isAdmin={canAdmin} onSaveDraw={handleSaveDraw} numberHistory={numberHistory}
         />
       )}
       {tab === "winnings" && (
         <WinningsTab members={members} draws={draws} periods={periods} />
       )}
       {tab === "charts" && (
-        <ChartsTab members={members} draws={draws} periods={periods} />
+        <ChartsTab members={members} draws={draws} periods={periods} numberHistory={numberHistory} />
       )}
       {tab === "payments" && canAdmin && (
         <PaymentsTab
