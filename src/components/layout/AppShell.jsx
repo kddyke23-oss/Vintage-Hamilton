@@ -209,7 +209,12 @@ export default function AppShell({ children }) {
               </div>
             )}
 
-            {/* Clubhouse Reservations link — RCP staff / social committee only (app_access 'clubhouse') */}
+            {/* Clubhouse Reservations link — anyone with a 'clubhouse' app_access
+                row, either role (2026-09-03: 'admin' = RCP, full queue;
+                'user' = Social Committee, escalated-only — both need the
+                link; the page itself shows each their own narrower view via
+                its own role check + RLS, see ClubhouseReservationsPage.jsx
+                and clubhouse_committee_role.sql) */}
             {hasAppAccess('clubhouse') && (
               <div className="pt-1">
                 <Link

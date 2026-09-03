@@ -30,6 +30,28 @@ const notifyCommentOwner = async (commentType, commentId) => {
   }
 }
 
+// Fire-and-forget: let RCP know a new clubhouse reservation is waiting in
+// their queue (pending_rcp). Only called when a reservation actually lands
+// in that status — never blocks the resident's submission on an email hiccup.
+const notifyClubhouseRcp = async (reservationId) => {
+  try {
+    await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-clubhouse-rcp`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ reservationId }),
+      }
+    )
+  } catch (e) {
+    console.error('notify-clubhouse-rcp call failed:', e)
+  }
+}
+
 function formatDate(dateStr) {
   if (!dateStr) return ''
   const d = new Date(dateStr + 'T00:00:00')
@@ -236,7 +258,11 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
       } : {}),
     }
 
-    const { error: reservationError } = await supabase.from('clubhouse_reservations').insert(reservationPayload)
+    const { data: newReservation, error: reservationError } = await supabase
+      .from('clubhouse_reservations')
+      .insert(reservationPayload)
+      .select('id')
+      .single()
 
     if (reservationError) {
       await supabase.from('calendar_events').delete().eq('id', newEvent.id) // roll back the orphaned event
@@ -249,6 +275,8 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
       }
       return
     }
+
+    if (isPrivateOrUnsure && newReservation?.id) notifyClubhouseRcp(newReservation.id)
 
     setSaving(false)
     toast.success(isPrivateOrUnsure ? 'Reservation submitted — awaiting RCP review' : 'Reservation confirmed!')

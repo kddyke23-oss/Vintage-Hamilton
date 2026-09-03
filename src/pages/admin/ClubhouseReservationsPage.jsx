@@ -10,10 +10,14 @@ import LoadingSpinner from '@/components/LoadingSpinner'
 // RCP staff and committee volunteers only ever get access to this one thing,
 // not the rest of the admin panel. See Reservations/REQUIREMENTS.md §2.6/§2.13.
 //
-// Both RCP and the social committee share the same 'clubhouse' admin role —
-// the distinction ("committee only handles escalations") is enforced here by
-// which filter someone uses, not by a second role. See the migration's header
-// comment for the reasoning.
+// RCP and the Social Committee are two different 'clubhouse' app_access
+// roles (2026-09-03, replacing an earlier design where they shared one admin
+// role and "committee only touches escalations" was just a convention):
+//   role = 'admin' → RCP. Full queue, every action.
+//   role = 'user'  → Social Committee. Only ever sees/acts on escalated
+//                     reservations — enforced by RLS (see
+//                     clubhouse_committee_role.sql), reinforced here by only
+//                     rendering Confirm/Dismiss for them, nothing else.
 
 function formatDateTime(startsAt, endsAt) {
   const s = new Date(startsAt)
@@ -38,22 +42,28 @@ const STATUS_LABEL = {
 export default function ClubhouseReservationsPage() {
   const { user, isAdmin } = useAuth()
   const toast = useToast()
-  const [eligible, setEligible] = useState(null)
+  // 'admin' (RCP, full queue) | 'user' (Social Committee, escalated-only) |
+  // 'none' (no clubhouse access) | null (still checking)
+  const [myRole, setMyRole] = useState(null)
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState('needs_action') // needs_action | all
+  const [filter, setFilter] = useState('needs_action') // needs_action | all — RCP only
 
   useEffect(() => {
     if (!user) return
+    if (isAdmin) { setMyRole('admin'); return } // global super admin acts as RCP
     supabase
       .from('app_access')
-      .select('app_id, role')
+      .select('role')
       .eq('user_id', user.id)
       .eq('app_id', 'clubhouse')
-      .eq('role', 'admin')
       .maybeSingle()
-      .then(({ data }) => setEligible(isAdmin || !!data))
+      .then(({ data }) => setMyRole(data?.role || 'none'))
   }, [user, isAdmin])
+
+  const isRCP = myRole === 'admin'
+  const isCommittee = myRole === 'user'
+  const eligible = isRCP || isCommittee
 
   const fetchRows = useCallback(async () => {
     setLoading(true)
@@ -116,9 +126,30 @@ export default function ClubhouseReservationsPage() {
     act(row.id, { status: 'confirmed', check_received_at: new Date().toISOString(), check_received_by: user.id },
       'Check marked received — confirmed')
 
-  const escalate = row =>
-    act(row.id, { status: 'escalated', escalated_at: new Date().toISOString(), escalated_by: user.id },
+  const notifyCommittee = async (reservationId) => {
+    try {
+      await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-clubhouse-escalation`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ reservationId }),
+        }
+      )
+    } catch (e) {
+      console.error('notify-clubhouse-escalation call failed:', e)
+    }
+  }
+
+  const escalate = async row => {
+    await act(row.id, { status: 'escalated', escalated_at: new Date().toISOString(), escalated_by: user.id },
       'Escalated to the social committee')
+    notifyCommittee(row.id) // fire-and-forget — the escalation itself already succeeded
+  }
 
   const resolveEscalation = async (row, outcome) => {
     if (outcome === 'dismissed') {
@@ -154,7 +185,7 @@ export default function ClubhouseReservationsPage() {
   const markRefundIssued = row =>
     act(row.id, { refund_issued_at: new Date().toISOString(), refund_issued_by: user.id }, 'Refund marked issued')
 
-  if (eligible === null) return <LoadingSpinner label="Checking access…" />
+  if (myRole === null) return <LoadingSpinner label="Checking access…" />
 
   if (!eligible) {
     return (
@@ -166,19 +197,27 @@ export default function ClubhouseReservationsPage() {
     )
   }
 
-  const visibleRows = rows.filter(r => filter === 'all' || ['pending_rcp', 'pending_payment', 'escalated'].includes(r.status) ||
+  // Committee members only ever have escalated rows (+ their own bookings)
+  // in `rows` at all, via RLS — no client-side filtering needed for them.
+  const visibleRows = isCommittee ? rows : rows.filter(r => filter === 'all' || ['pending_rcp', 'pending_payment', 'escalated'].includes(r.status) ||
     (r.status === 'cancelled' && r.check_received_at && !r.refund_issued_at))
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
       <Link to="/apps/calendar" className="text-brand-400 hover:text-brand-600 text-sm">← Calendar</Link>
       <h1 className="text-2xl font-bold text-gray-900 mt-2">Clubhouse Reservations</h1>
-      <p className="text-gray-500 text-sm mt-1">Acknowledge requests, confirm payment received, escalate suspected-private bookings, and process cancellations/refunds.</p>
+      <p className="text-gray-500 text-sm mt-1">
+        {isCommittee
+          ? 'Bookings RCP believes may be private but weren\'t marked as such. Confirm or dismiss each one.'
+          : 'Acknowledge requests, confirm payment received, escalate suspected-private bookings, and process cancellations/refunds.'}
+      </p>
 
-      <div className="flex gap-2 my-4">
-        <button onClick={() => setFilter('needs_action')} className={`px-4 py-2 rounded-lg text-sm font-medium ${filter === 'needs_action' ? 'bg-brand-700 text-white' : 'bg-white border border-gray-200 text-gray-600'}`}>Needs action</button>
-        <button onClick={() => setFilter('all')} className={`px-4 py-2 rounded-lg text-sm font-medium ${filter === 'all' ? 'bg-brand-700 text-white' : 'bg-white border border-gray-200 text-gray-600'}`}>All</button>
-      </div>
+      {isRCP && (
+        <div className="flex gap-2 my-4">
+          <button onClick={() => setFilter('needs_action')} className={`px-4 py-2 rounded-lg text-sm font-medium ${filter === 'needs_action' ? 'bg-brand-700 text-white' : 'bg-white border border-gray-200 text-gray-600'}`}>Needs action</button>
+          <button onClick={() => setFilter('all')} className={`px-4 py-2 rounded-lg text-sm font-medium ${filter === 'all' ? 'bg-brand-700 text-white' : 'bg-white border border-gray-200 text-gray-600'}`}>All</button>
+        </div>
+      )}
 
       {loading ? (
         <LoadingSpinner label="Loading reservations…" />
@@ -205,28 +244,32 @@ export default function ClubhouseReservationsPage() {
                 </div>
 
                 <div className="flex gap-2 flex-wrap mt-3">
-                  {r.status === 'pending_rcp' && (
+                  {/* RCP-only actions — a committee member (role='user') never sees
+                      these, whether or not RLS would technically let them touch
+                      the row (it only would for an escalated one anyway). */}
+                  {isRCP && r.status === 'pending_rcp' && (
                     <>
                       <button onClick={() => acknowledgeFeeRequired(r)} className="text-xs font-medium bg-brand-700 text-white px-3 py-1.5 rounded-lg hover:bg-brand-800">Acknowledge — fee required</button>
                       <button onClick={() => acknowledgeNoFee(r)} className="text-xs font-medium border border-gray-200 text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-50">Acknowledge — no fee needed</button>
                     </>
                   )}
-                  {r.status === 'pending_payment' && (
+                  {isRCP && r.status === 'pending_payment' && (
                     <button onClick={() => markCheckReceived(r)} className="text-xs font-medium bg-brand-700 text-white px-3 py-1.5 rounded-lg hover:bg-brand-800">Mark check received</button>
                   )}
-                  {r.status === 'confirmed' && r.private_event_answer === 'no' && (
+                  {isRCP && r.status === 'confirmed' && r.private_event_answer === 'no' && (
                     <button onClick={() => escalate(r)} className="text-xs font-medium border border-purple-300 text-purple-700 px-3 py-1.5 rounded-lg hover:bg-purple-50">Escalate — I believe this is private</button>
                   )}
-                  {r.status === 'escalated' && (
+                  {/* The one action set the Social Committee gets, RCP too */}
+                  {r.status === 'escalated' && (isRCP || isCommittee) && (
                     <>
                       <button onClick={() => resolveEscalation(r, 'confirmed_private')} className="text-xs font-medium bg-purple-700 text-white px-3 py-1.5 rounded-lg hover:bg-purple-800">Confirm — this is private</button>
                       <button onClick={() => resolveEscalation(r, 'dismissed')} className="text-xs font-medium border border-gray-200 text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-50">Dismiss — not private</button>
                     </>
                   )}
-                  {needsRefund && (
+                  {isRCP && needsRefund && (
                     <button onClick={() => markRefundIssued(r)} className="text-xs font-medium bg-orange-600 text-white px-3 py-1.5 rounded-lg hover:bg-orange-700">Mark refund issued</button>
                   )}
-                  {r.status !== 'cancelled' && (
+                  {isRCP && r.status !== 'cancelled' && (
                     <button onClick={() => cancelReservation(r)} className="text-xs font-medium text-red-600 hover:text-red-700 px-3 py-1.5">Cancel</button>
                   )}
                 </div>
