@@ -71,6 +71,13 @@ function isFutureOrToday(dateStr) {
 // ─── Add/Edit Event Modal ────────────────────────────────────────────────────
 
 function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalendarAdmin, toast, user }) {
+  // TEST-PHASE GATE (2026-09-03): clubhouse/side-room booking is only shown to
+  // accounts with 'clubhouse' app access (RCP/committee/testers) until the
+  // board's Oct 1 cutover — see Reservations/REQUIREMENTS.md §2.13. Remove
+  // this single check (and canRequestClubhouse below) at cutover to open it
+  // to every resident, same as the rest of Add Event.
+  const { hasAppAccess } = useAuth()
+  const canRequestClubhouse = hasAppAccess('clubhouse')
   const today = new Date().toISOString().split('T')[0]
 
   // Filter categories based on profile tags — compute before form init
@@ -329,7 +336,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
             {/* Location */}
             <div>
               <label className="block text-sm font-medium text-brand-700 mb-1">Location <span className="text-brand-400">(optional)</span></label>
-              {!editEvent && (
+              {!editEvent && canRequestClubhouse && (
                 <div className="flex gap-2 mb-2">
                   <button
                     type="button"
