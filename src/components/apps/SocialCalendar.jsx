@@ -1252,6 +1252,7 @@ export default function SocialCalendar() {
     return !!params.get('openEvent') // show past events if arriving from a blog link
   })
   const [showAll, setShowAll] = useState(false) // list view: ignore date bounds entirely
+  const [filterMine, setFilterMine] = useState(false) // "Show my events" — only events this resident created
 
   const [categories, setCategories] = useState([])
   const [events, setEvents] = useState([])
@@ -1348,6 +1349,10 @@ export default function SocialCalendar() {
       query = query.eq('category_id', parseInt(filterCategory))
     }
 
+    if (filterMine && user) {
+      query = query.eq('created_by', user.id)
+    }
+
     const { data: evData } = await query
 
     // Fetch RSVP counts + author names separately
@@ -1404,7 +1409,7 @@ export default function SocialCalendar() {
     }
 
     setLoading(false)
-  }, [viewMode, currentYear, currentMonth, filterCategory, showPast, showAll, user])
+  }, [viewMode, currentYear, currentMonth, filterCategory, showPast, showAll, filterMine, user])
 
   useEffect(() => { fetchEvents() }, [fetchEvents])
 
@@ -1492,6 +1497,24 @@ export default function SocialCalendar() {
     setCurrentMonth(now.getMonth())
   }
 
+  // "Show my events" — switches into list view filtered to this resident's
+  // own events, resetting to the same "today forward" starting point as the
+  // default list view. Show past / Show All / month nav all keep working
+  // normally on top of it, same as the unfiltered list.
+  function toggleMine() {
+    setFilterMine(m => {
+      const next = !m
+      if (next) {
+        setViewMode('list')
+        setShowAll(false)
+        setShowPast(false)
+        setCurrentYear(now.getFullYear())
+        setCurrentMonth(now.getMonth())
+      }
+      return next
+    })
+  }
+
   // ── Can current user create events ───────────────────────────────────────
   const canCreate = isCalendarAdmin || !!profile
 
@@ -1565,6 +1588,16 @@ export default function SocialCalendar() {
             <option key={cat.id} value={cat.id}>{cat.name}</option>
           ))}
         </select>
+
+        {/* My events toggle — always visible; switches into list view */}
+        <button
+          onClick={toggleMine}
+          className={`text-sm px-3 py-1.5 rounded-lg border transition-colors ${
+            filterMine ? 'bg-gold-100 border-gold-400 text-brand-800 font-medium' : 'border-brand-200 text-brand-500 hover:bg-brand-50'
+          }`}
+        >
+          {filterMine ? '✓ My Events' : 'My Events'}
+        </button>
 
         {/* Show past toggle (list only) — moot once "Show All" is on */}
         {viewMode === 'list' && !showAll && (

@@ -175,10 +175,18 @@ export default function ClubhouseReservationsPage() {
     }, 'Escalation confirmed — fee now due')
   }
 
-  const cancelReservation = row => {
+  const cancelReservation = async row => {
     const reason = window.prompt('Reason for cancelling (shown to the resident)?')
     if (reason === null) return
-    act(row.id, { status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: user.id, cancellation_reason: reason || null },
+    // Cancelling the reservation record alone leaves the booking sitting on
+    // the shared calendar looking exactly as before — residents (and RCP)
+    // would still see it as a live event. Pull it off the calendar the same
+    // way a resident's own "Remove event" does: flip removed=true, not a
+    // hard delete — clubhouse_reservations.calendar_event_id is ON DELETE
+    // CASCADE, so deleting the calendar_events row would destroy this
+    // reservation (and its cancellation/refund history) along with it.
+    await supabase.from('calendar_events').update({ removed: true }).eq('id', row.calendar_event_id)
+    await act(row.id, { status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: user.id, cancellation_reason: reason || null },
       'Reservation cancelled')
   }
 
