@@ -513,6 +513,108 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
 
 // ─── Event Detail Modal ──────────────────────────────────────────────────────
 
+// Status labels shown to the resident/admin viewing their own booking's
+// detail panel — a small local copy of ClubhouseReservationsPage.jsx's
+// STATUS_LABEL, kept separate since this file doesn't share code with the
+// admin page and the wording here is resident-facing, not RCP-facing.
+const CLUBHOUSE_STATUS_INFO = {
+  pending_rcp: { label: 'Submitted — awaiting RCP review', color: 'bg-amber-100 text-amber-700' },
+  pending_payment: { label: 'Payment due', color: 'bg-orange-100 text-orange-700' },
+  confirmed: { label: 'Confirmed', color: 'bg-green-100 text-green-700' },
+  escalated: { label: 'Under review by the Social Committee', color: 'bg-purple-100 text-purple-700' },
+  cancelled: { label: 'Cancelled', color: 'bg-gray-200 text-gray-600' },
+}
+
+function money(n) {
+  return n == null ? null : `$${Number(n).toFixed(2)}`
+}
+
+// On-screen counterpart to the "booking processed" email (notify-clubhouse-
+// resident-status) — same payment info, shown right on the event so a
+// resident doesn't have to go dig up the email. Only rendered for the
+// event's creator or a calendar admin (canView), and only when the event is
+// actually a clubhouse reservation (a linked clubhouse_reservations row
+// exists) — most calendar events aren't.
+function ClubhouseReservationPanel({ eventId, canView }) {
+  const [reservation, setReservation] = useState(null)
+  const [settings, setSettings] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!canView) { setLoading(false); return }
+    let cancelledEffect = false
+    ;(async () => {
+      const { data } = await supabase
+        .from('clubhouse_reservations')
+        .select('status, fee_main, fee_side_room, fee_tables_chairs, deposit_amount, total_due, payment_deadline_date, cancellation_reason, check_received_at')
+        .eq('calendar_event_id', eventId)
+        .maybeSingle()
+      if (cancelledEffect) return
+      setReservation(data)
+      if (data?.status === 'pending_payment') {
+        const { data: s } = await supabase
+          .from('community_settings')
+          .select('clubhouse_check_payable_to, clubhouse_check_mailing_address')
+          .eq('id', 1)
+          .maybeSingle()
+        if (!cancelledEffect) setSettings(s)
+      }
+      setLoading(false)
+    })()
+    return () => { cancelledEffect = true }
+  }, [eventId, canView])
+
+  if (!canView || loading || !reservation) return null
+
+  const info = CLUBHOUSE_STATUS_INFO[reservation.status]
+
+  return (
+    <div className="mt-4 bg-brand-50 border border-brand-100 rounded-xl p-4">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-sm font-semibold text-brand-800">Clubhouse Reservation</p>
+        {info && (
+          <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${info.color}`}>{info.label}</span>
+        )}
+      </div>
+
+      {reservation.status === 'pending_payment' && (
+        <div className="text-sm text-brand-700 space-y-1.5">
+          <div className="space-y-0.5">
+            {reservation.fee_main != null && <p>Main Clubhouse fee: {money(reservation.fee_main)}</p>}
+            {reservation.fee_side_room != null && <p>Side Room fee: {money(reservation.fee_side_room)}</p>}
+            {reservation.fee_tables_chairs != null && <p>Tables &amp; Chairs fee: {money(reservation.fee_tables_chairs)}</p>}
+            {reservation.deposit_amount != null && <p>Security deposit: {money(reservation.deposit_amount)}</p>}
+            <p className="font-semibold">Total due: {money(reservation.total_due)}</p>
+          </div>
+          {reservation.payment_deadline_date && (
+            <p>Due by <span className="font-medium">{formatDate(reservation.payment_deadline_date)}</span></p>
+          )}
+          <div className="mt-2 pt-2 border-t border-brand-200">
+            {settings?.clubhouse_check_payable_to || settings?.clubhouse_check_mailing_address ? (
+              <>
+                {settings.clubhouse_check_payable_to && <p>Make check payable to: <span className="font-medium">{settings.clubhouse_check_payable_to}</span></p>}
+                {settings.clubhouse_check_mailing_address && <p>Mail to: <span className="font-medium">{settings.clubhouse_check_mailing_address}</span></p>}
+              </>
+            ) : (
+              <p className="text-brand-500 italic">Payment instructions haven&apos;t been posted yet — RCP will follow up directly.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {reservation.status === 'confirmed' && (
+        <p className="text-sm text-brand-700">
+          {reservation.check_received_at ? 'Payment received — you\'re all set.' : 'No payment required — you\'re all set.'}
+        </p>
+      )}
+
+      {reservation.status === 'cancelled' && reservation.cancellation_reason && (
+        <p className="text-sm text-brand-700">Reason: {reservation.cancellation_reason}</p>
+      )}
+    </div>
+  )
+}
+
 function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, onClose, onEdit, onRemove, onReport, onRsvp, onRepeat, userRsvp, toast }) {
   const cat = categories.find(c => c.id === event.category_id)
   const canModify = isCalendarAdmin || event.created_by === currentUserId
@@ -696,6 +798,8 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, o
           {event.description && (
             <p className="mt-4 text-sm text-brand-700 leading-relaxed">{event.description}</p>
           )}
+
+          <ClubhouseReservationPanel eventId={event.id} canView={canModify} />
 
           {/* External link */}
           {event.external_url && (

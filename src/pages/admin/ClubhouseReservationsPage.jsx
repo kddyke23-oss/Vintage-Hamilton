@@ -112,20 +112,26 @@ export default function ClubhouseReservationsPage() {
     fetchRows()
   }
 
-  const acknowledgeFeeRequired = row =>
-    act(row.id, { status: 'pending_payment', acknowledged_at: new Date().toISOString(), acknowledged_by: user.id },
+  const acknowledgeFeeRequired = async row => {
+    await act(row.id, { status: 'pending_payment', acknowledged_at: new Date().toISOString(), acknowledged_by: user.id },
       'Acknowledged — fee required')
+    notifyResident(row.id) // fire-and-forget — the acknowledgment itself already succeeded
+  }
 
-  const acknowledgeNoFee = row =>
-    act(row.id, {
+  const acknowledgeNoFee = async row => {
+    await act(row.id, {
       status: 'confirmed', acknowledged_at: new Date().toISOString(), acknowledged_by: user.id,
       fee_main: null, fee_side_room: null, fee_tables_chairs: null, deposit_amount: null,
     }, 'Acknowledged — no fee needed, confirmed')
+    notifyResident(row.id)
+  }
 
   const markCheckReceived = row =>
     act(row.id, { status: 'confirmed', check_received_at: new Date().toISOString(), check_received_by: user.id },
       'Check marked received — confirmed')
 
+  // Fire-and-forget notifiers — a notification hiccup should never look like
+  // a failed action to RCP, so none of these are awaited before the toast.
   const notifyCommittee = async (reservationId) => {
     try {
       await fetch(
@@ -145,6 +151,29 @@ export default function ClubhouseReservationsPage() {
     }
   }
 
+  // Emails the resident once RCP has processed their request — approved with
+  // a fee due (includes the check payee/address, per Keith 2026-09-03), or
+  // confirmed outright with no fee. The function itself no-ops for any other
+  // status, so it's safe to call after any acknowledge/resolve action.
+  const notifyResident = async (reservationId) => {
+    try {
+      await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-clubhouse-resident-status`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ reservationId }),
+        }
+      )
+    } catch (e) {
+      console.error('notify-clubhouse-resident-status call failed:', e)
+    }
+  }
+
   const escalate = async row => {
     await act(row.id, { status: 'escalated', escalated_at: new Date().toISOString(), escalated_by: user.id },
       'Escalated to the social committee')
@@ -153,10 +182,12 @@ export default function ClubhouseReservationsPage() {
 
   const resolveEscalation = async (row, outcome) => {
     if (outcome === 'dismissed') {
-      return act(row.id, {
+      await act(row.id, {
         status: 'confirmed', escalation_resolved_at: new Date().toISOString(),
         escalation_resolved_by: user.id, escalation_outcome: 'dismissed',
       }, 'Escalation dismissed — booking stands')
+      notifyResident(row.id)
+      return
     }
     // confirmed_private: now owes a fee that wasn't snapshotted at submission (it was a 'no' answer)
     const { data: settings } = await supabase
@@ -173,6 +204,7 @@ export default function ClubhouseReservationsPage() {
       deposit_amount: settings?.clubhouse_security_deposit,
       payment_deadline_days_snapshot: settings?.clubhouse_payment_deadline_days,
     }, 'Escalation confirmed — fee now due')
+    notifyResident(row.id)
   }
 
   const cancelReservation = async row => {
