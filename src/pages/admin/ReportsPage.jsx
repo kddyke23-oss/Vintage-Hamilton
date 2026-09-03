@@ -1158,6 +1158,12 @@ const CLUBHOUSE_FIELDS = [
   { key: 'clubhouse_tables_chairs_fee', label: 'Extra Tables & Chairs fee ($)', type: 'number', allowEmpty: true },
   { key: 'clubhouse_security_deposit', label: 'Security deposit ($)', type: 'number', allowEmpty: false },
   { key: 'clubhouse_payment_deadline_days', label: 'Payment deadline (days before event)', type: 'integer', allowEmpty: false },
+  // Text, not fee/deposit numbers — who the check is made out to and where it's
+  // mailed. Kept as settings (not hardcoded copy) so this can be updated
+  // without a code change if the booking contact ever changes from RCP.
+  // Blank until RCP confirms an answer (Reservations/REQUIREMENTS.md §2.12).
+  { key: 'clubhouse_check_payable_to', label: 'Check payable to', type: 'text', allowEmpty: true },
+  { key: 'clubhouse_check_mailing_address', label: 'Mail check to (address)', type: 'text', allowEmpty: true },
 ]
 
 function ClubhouseSettingsCard() {
@@ -1173,7 +1179,7 @@ function ClubhouseSettingsCard() {
     setLoading(true)
     const { data, error } = await supabase
       .from('community_settings')
-      .select('clubhouse_main_fee, clubhouse_side_room_fee, clubhouse_tables_chairs_fee, clubhouse_security_deposit, clubhouse_payment_deadline_days, clubhouse_side_room_available')
+      .select('clubhouse_main_fee, clubhouse_side_room_fee, clubhouse_tables_chairs_fee, clubhouse_security_deposit, clubhouse_payment_deadline_days, clubhouse_side_room_available, clubhouse_check_payable_to, clubhouse_check_mailing_address')
       .eq('id', 1)
       .maybeSingle()
     if (!error && data) {
@@ -1202,7 +1208,11 @@ function ClubhouseSettingsCard() {
     setSaving(true)
     const update = { clubhouse_side_room_available: sideRoomAvailable }
     for (const f of CLUBHOUSE_FIELDS) {
-      update[f.key] = values[f.key] === '' ? null : (f.type === 'integer' ? parseInt(values[f.key], 10) : parseFloat(values[f.key]))
+      if (f.type === 'text') {
+        update[f.key] = values[f.key] === '' ? null : values[f.key].trim()
+      } else {
+        update[f.key] = values[f.key] === '' ? null : (f.type === 'integer' ? parseInt(values[f.key], 10) : parseFloat(values[f.key]))
+      }
     }
     const { error } = await supabase.from('community_settings').update(update).eq('id', 1)
     setSaving(false)
@@ -1230,11 +1240,15 @@ function ClubhouseSettingsCard() {
                 <div key={f.key}>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}</label>
                   <input
-                    type="number"
-                    step={f.type === 'integer' ? '1' : '0.01'}
+                    type={f.type === 'text' ? 'text' : 'number'}
+                    step={f.type === 'integer' ? '1' : f.type === 'number' ? '0.01' : undefined}
                     value={values[f.key] ?? ''}
                     onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value }))}
-                    placeholder={f.allowEmpty ? 'Not yet set — resource can\'t be booked until priced' : ''}
+                    placeholder={
+                      f.type === 'text'
+                        ? 'Not yet confirmed with RCP'
+                        : (f.allowEmpty ? 'Not yet set — resource can\'t be booked until priced' : '')
+                    }
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
                   />
                 </div>
