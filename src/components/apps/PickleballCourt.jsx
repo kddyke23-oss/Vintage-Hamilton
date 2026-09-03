@@ -6,17 +6,22 @@ import LoadingSpinner from '@/components/LoadingSpinner'
 
 // ─── Court configuration ────────────────────────────────────────────────────
 // NOT YET CONFIRMED with Keith: actual court operating hours. This is a
-// placeholder 8am–8pm window producing eight 1.5h slots/day — change this one
-// constant to adjust; the database doesn't care what the slot times are (see
-// pickleball_reservations.sql), it only prevents double-booking a given slot.
+// placeholder 8am–8pm window — change this one constant to adjust; the
+// database doesn't care what the actual times are (see
+// pickleball_reservations.sql), it only enforces the fixed 1.5h length and
+// prevents any two active reservations from overlapping.
 const COURT_OPEN_MINUTES  = 8 * 60   // 8:00 AM
 const COURT_CLOSE_MINUTES = 20 * 60  // 8:00 PM
-const SLOT_MINUTES = 90              // fixed 1.5-hour reservation block
+const SLOT_MINUTES = 90              // fixed 1.5-hour reservation length
+const START_STEP_MINUTES = 30        // granularity a resident can pick a start time at
+                                      // (2026-09-03, Keith: any start time should be
+                                      // choosable, e.g. 9:00–10:30, not just the original
+                                      // fixed 8:00/9:30/11:00… grid)
 const BOOKING_WINDOW_DAYS = 8         // can book up to 8 days ahead (confirmed)
 
 const COURT_RULES = [
   'There is no fee to use the pickleball court.',
-  'You can reserve a 1.5-hour block in advance, up to 8 days ahead, as long as no one else has booked it.',
+  'You can reserve a 1.5-hour block in advance, starting at any available time, up to 8 days ahead, as long as it doesn\'t overlap someone else\'s reservation.',
   "You can turn up to play without a booking, but if other residents are also waiting to play without a booking, you're limited to 1 hour before giving up the court.",
   'Guests are welcome to play, but at least one resident must remain at the court for the entire time guests are playing.',
 ]
@@ -35,13 +40,25 @@ function formatTimeLabel(hhmm) {
   return `${hour}${mins}${suffix}`
 }
 
-const COURT_SLOTS = (() => {
-  const slots = []
-  for (let start = COURT_OPEN_MINUTES; start + SLOT_MINUTES <= COURT_CLOSE_MINUTES; start += SLOT_MINUTES) {
-    slots.push({ start: minutesToTime(start), end: minutesToTime(start + SLOT_MINUTES) })
+// Every start time a resident could possibly pick, at START_STEP_MINUTES
+// granularity — availability against existing bookings is computed per date,
+// per candidate, in the component below (rangesOverlap).
+const CANDIDATE_STARTS_MIN = (() => {
+  const starts = []
+  for (let start = COURT_OPEN_MINUTES; start + SLOT_MINUTES <= COURT_CLOSE_MINUTES; start += START_STEP_MINUTES) {
+    starts.push(start)
   }
-  return slots
+  return starts
 })()
+
+function timeToMinutes(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number)
+  return h * 60 + m
+}
+
+function rangesOverlap(aStart, aEnd, bStart, bEnd) {
+  return aStart < bEnd && aEnd > bStart
+}
 
 function toISODate(d) {
   const y = d.getFullYear()
@@ -179,10 +196,12 @@ export default function PickleballCourt() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  const reservationBySlot = useMemo(() => {
+  // Active reservations grouped by date, so the grid below can check each
+  // candidate start time for a real overlap rather than an exact-slot match.
+  const reservationsByDate = useMemo(() => {
     const map = {}
     for (const r of reservations) {
-      map[`${r.play_date}_${r.start_time.slice(0, 5)}`] = r
+      (map[r.play_date] ||= []).push(r)
     }
     return map
   }, [reservations])
@@ -212,8 +231,8 @@ export default function PickleballCourt() {
     setSaving(false)
 
     if (error) {
-      if (error.message?.includes('idx_pickleball_slot_unique')) {
-        toast.error('That slot was just booked by someone else — please pick another.')
+      if (error.message?.includes('no_double_book_pickleball_court')) {
+        toast.error('That time was just booked by someone else — please pick another.')
       } else if (error.message?.includes('idx_pickleball_household_per_day')) {
         toast.error('Your household already has a reservation for that day.')
       } else {
@@ -254,7 +273,7 @@ export default function PickleballCourt() {
     <div className="space-y-6">
       <div>
         <h1 className="font-display text-2xl text-brand-800 mb-1">Pickleball Court</h1>
-        <p className="text-brand-500 text-sm">Free to use. Reserve a 1.5-hour block up to 8 days ahead, or just walk up.</p>
+        <p className="text-brand-500 text-sm">Free to use. Reserve any available 1.5-hour block (in 30-minute increments) up to 8 days ahead, or just walk up.</p>
       </div>
 
       {!hasAddress && (
@@ -293,49 +312,68 @@ export default function PickleballCourt() {
         </div>
       )}
 
-      {/* Schedule */}
+      {/* Schedule — any 30-minute mark is a valid start time for a 1.5-hour
+          booking; a candidate is blocked if that window would overlap any
+          active reservation for the day, not just an exact-slot match. */}
       <div className="space-y-4">
-        {BOOKING_DATES.map(date => (
-          <div key={date} className="bg-white border border-brand-100 rounded-2xl p-5">
-            <p className="font-medium text-brand-800 mb-3">{formatDateLabel(date)}</p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {COURT_SLOTS.map(slot => {
-                const booking = reservationBySlot[`${date}_${slot.start}`]
-                const isMine = booking?.reserved_by === user.id
-                const label = `${formatTimeLabel(slot.start)}–${formatTimeLabel(slot.end)}`
+        {BOOKING_DATES.map(date => {
+          const dayReservations = reservationsByDate[date] || []
+          return (
+            <div key={date} className="bg-white border border-brand-100 rounded-2xl p-5">
+              <p className="font-medium text-brand-800 mb-3">{formatDateLabel(date)}</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {CANDIDATE_STARTS_MIN.map(startMin => {
+                  const endMin = startMin + SLOT_MINUTES
+                  const startStr = minutesToTime(startMin)
+                  const endStr = minutesToTime(endMin)
+                  const label = `${formatTimeLabel(startStr)}–${formatTimeLabel(endStr)}`
 
-                if (!booking) {
+                  const conflict = dayReservations.find(r => rangesOverlap(
+                    startMin, endMin, timeToMinutes(r.start_time.slice(0, 5)), timeToMinutes(r.end_time.slice(0, 5))
+                  ))
+
+                  if (!conflict) {
+                    return (
+                      <button
+                        key={startMin}
+                        onClick={() => openBooking(date, { start: startStr, end: endStr })}
+                        className="border border-brand-200 rounded-lg py-2 text-xs font-medium text-brand-600 hover:bg-brand-50 hover:border-brand-400 transition-colors"
+                      >
+                        {label}
+                      </button>
+                    )
+                  }
+
+                  const isMine = conflict.reserved_by === user.id
+                  const isExactMatch = timeToMinutes(conflict.start_time.slice(0, 5)) === startMin
+
                   return (
-                    <button
-                      key={slot.start}
-                      onClick={() => openBooking(date, slot)}
-                      className="border border-brand-200 rounded-lg py-2 text-xs font-medium text-brand-600 hover:bg-brand-50 hover:border-brand-400 transition-colors"
+                    <div
+                      key={startMin}
+                      title={
+                        isExactMatch
+                          ? (isMine ? 'Your reservation' : `Booked by ${conflict.bookedByName}`)
+                          : 'Overlaps an existing reservation'
+                      }
+                      className={`rounded-lg py-2 text-xs font-medium text-center ${
+                        isMine
+                          ? 'bg-gold-100 text-brand-800 border border-gold-300'
+                          : 'bg-brand-100 text-brand-400 border border-brand-100'
+                      }`}
                     >
                       {label}
-                    </button>
-                  )
-                }
-
-                return (
-                  <div
-                    key={slot.start}
-                    title={isMine ? 'Your reservation' : `Booked by ${booking.bookedByName}`}
-                    className={`rounded-lg py-2 text-xs font-medium text-center ${
-                      isMine
-                        ? 'bg-gold-100 text-brand-800 border border-gold-300'
-                        : 'bg-brand-100 text-brand-400 border border-brand-100'
-                    }`}
-                  >
-                    {label}
-                    <div className="text-[10px] mt-0.5 truncate px-1">
-                      {isMine ? 'Yours' : booking.bookedByName}
+                      {isExactMatch && (
+                        <div className="text-[10px] mt-0.5 truncate px-1">
+                          {isMine ? 'Yours' : conflict.bookedByName}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                )
-              })}
+                  )
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       {pendingSlot && (
