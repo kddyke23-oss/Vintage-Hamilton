@@ -12,6 +12,7 @@ import RequestAccessPage from '@/pages/auth/RequestAccessPage'
 import HomePage from '@/pages/HomePage'
 import DirectoryPage from '@/pages/apps/DirectoryPage'
 import CalendarPage from '@/pages/apps/CalendarPage'
+import PickleballPage from '@/pages/apps/PickleballPage'
 import LottoPage from '@/pages/apps/LottoPage'
 import BlogPage from '@/pages/apps/BlogPage'
 import RecommendationsPage from '@/pages/apps/RecommendationsPage'
@@ -19,6 +20,7 @@ import BudgetPage from '@/pages/apps/BudgetPage'
 import AccessPage from '@/pages/admin/AccessPage'
 import AccessRequestsPage from '@/pages/admin/AccessRequestsPage'
 import ReportsPage from '@/pages/admin/ReportsPage'
+import ClubhouseReservationsPage from '@/pages/admin/ClubhouseReservationsPage'
 
 function ResidentShell({ children }) {
   return (
@@ -65,6 +67,7 @@ export default function App() {
               <Route path="/" element={<ResidentShell><HomePage /></ResidentShell>} />
               <Route path="/apps/directory" element={<ResidentShell><DirectoryPage /></ResidentShell>} />
               <Route path="/apps/calendar" element={<ResidentShell><CalendarPage /></ResidentShell>} />
+              <Route path="/apps/pickleball" element={<ResidentShell><PickleballPage /></ResidentShell>} />
               <Route path="/apps/lotto" element={<ResidentShell><LottoPage /></ResidentShell>} />
               <Route path="/apps/blog" element={<ResidentShell><BlogPage /></ResidentShell>} />
               <Route path="/apps/recommendations" element={<ResidentShell><RecommendationsPage /></ResidentShell>} />
@@ -75,6 +78,7 @@ export default function App() {
               <Route path="/admin/access" element={<AdminRoute><AccessPage /></AdminRoute>} />
               <Route path="/admin/requests" element={<AdminRoute><AccessRequestsPage /></AdminRoute>} />
               <Route path="/admin/reports" element={<ReportsRoute><ReportsPage /></ReportsRoute>} />
+              <Route path="/admin/reservations" element={<ReportsRoute><ClubhouseReservationsPage /></ReportsRoute>} />
 
               {/* Fallback */}
               <Route path="*" element={<Navigate to="/" replace />} />

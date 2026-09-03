@@ -89,8 +89,31 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
     event_time: editEvent?.event_time?.slice(0, 5) || '',
     category_id: editEvent?.category_id || (allowedCategories[0]?.id ?? ''),
     external_url: editEvent?.external_url || '',
+    event_end_time: '',
+    wantsMainClubhouse: false,
+    wantsSideRoom: false,
+    wantsTablesChairs: false,
+    privateAnswer: '', // 'yes' | 'no' | 'not_sure'
   })
   const [saving, setSaving] = useState(false)
+
+  // Clubhouse reservation settings (fees, deposit, deadline, side-room
+  // availability) — only relevant for NEW events (editing an existing
+  // clubhouse reservation isn't supported from this modal; see
+  // Reservations/REQUIREMENTS.md §2.1). Fetched once so the resident sees
+  // real prices before submitting, not just after.
+  const [clubhouseSettings, setClubhouseSettings] = useState(null)
+  useEffect(() => {
+    if (editEvent) return // editing an existing event never shows the reservation panel
+    supabase
+      .from('community_settings')
+      .select('clubhouse_main_fee, clubhouse_side_room_fee, clubhouse_tables_chairs_fee, clubhouse_security_deposit, clubhouse_payment_deadline_days, clubhouse_side_room_available')
+      .eq('id', 1)
+      .maybeSingle()
+      .then(({ data }) => setClubhouseSettings(data || null))
+  }, [editEvent])
+
+  const wantsAnyClubhouseResource = form.wantsMainClubhouse || form.wantsSideRoom || form.wantsTablesChairs
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -102,7 +125,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
   }, [allowedCategories.length])
 
   async function handleSubmit() {
-    if (!form.title.trim()) return toast.error('Please enter a title')
+    if (!wantsAnyClubhouseResource && !form.title.trim()) return toast.error('Please enter a title')
     if (!form.event_date) return toast.error('Please select a date')
     if (!form.category_id) return toast.error('Please select a category')
 
@@ -117,11 +140,29 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
       }
     }
 
+    // ── Clubhouse reservation validation (new events only) ──────────────────
+    if (wantsAnyClubhouseResource) {
+      if (!form.privateAnswer) return toast.error('Please answer whether this is a private event')
+      if (!form.event_time || !form.event_end_time) return toast.error('Please enter a start and end time for the reservation')
+      if (form.event_end_time <= form.event_time) return toast.error('End time must be after the start time')
+      if (form.wantsSideRoom && !clubhouseSettings?.clubhouse_side_room_available) return toast.error('The Side Room is not yet available to book')
+      if (form.wantsTablesChairs && clubhouseSettings?.clubhouse_tables_chairs_fee == null) return toast.error('Extra Tables & Chairs pricing has not been set yet — contact an administrator')
+    }
+
+    const displayName = `${profile?.names || ''} ${profile?.surname || ''}`.trim() || 'A resident'
+    const isMasked = wantsAnyClubhouseResource && (form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure')
+
     setSaving(true)
+
+    const resourceLabel = [
+      form.wantsMainClubhouse && 'Main Clubhouse',
+      form.wantsSideRoom && 'Side Room',
+    ].filter(Boolean).join(' + ')
+
     const payload = {
-      title: form.title.trim(),
-      description: form.description.trim(),
-      location: form.location.trim(),
+      title: isMasked ? `Private Event — ${displayName}` : (wantsAnyClubhouseResource ? form.title.trim() || resourceLabel : form.title.trim()),
+      description: isMasked ? '' : form.description.trim(), // never store free text for a masked private booking
+      location: wantsAnyClubhouseResource ? resourceLabel : form.location.trim(),
       event_date: form.event_date,
       event_time: form.event_time || null,
       category_id: parseInt(form.category_id),
@@ -130,21 +171,82 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
         : null,
     }
 
-    let error
     if (editEvent) {
-      ;({ error } = await supabase.from('calendar_events').update(payload).eq('id', editEvent.id))
-    } else {
-      ;({ error } = await supabase.from('calendar_events').insert({ ...payload, created_by: user.id }))
+      // Editing never touches the clubhouse reservation flow — unchanged behavior.
+      const { error } = await supabase.from('calendar_events').update(payload).eq('id', editEvent.id)
+      setSaving(false)
+      if (error) { toast.error('Failed to save event'); return }
+      toast.success('Event updated')
+      onSaved()
+      onClose()
+      return
+    }
+
+    // ── New event, not a clubhouse reservation: unchanged behavior ──────────
+    if (!wantsAnyClubhouseResource) {
+      const { error } = await supabase.from('calendar_events').insert({ ...payload, created_by: user.id })
+      setSaving(false)
+      if (error) { toast.error('Failed to save event'); return }
+      toast.success('Event added!')
+      onSaved()
+      onClose()
+      return
+    }
+
+    // ── New clubhouse reservation: create the calendar event, then the
+    // linked reservation row. If the reservation insert fails (e.g. the slot
+    // was just booked by someone else), delete the calendar event we just
+    // created so we don't leave an orphaned entry on the shared calendar. ──
+    const { data: newEvent, error: eventError } = await supabase
+      .from('calendar_events')
+      .insert({ ...payload, created_by: user.id })
+      .select('id')
+      .single()
+
+    if (eventError) {
+      setSaving(false)
+      toast.error('Failed to save event')
+      return
+    }
+
+    const isPrivateOrUnsure = form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure'
+    const reservationPayload = {
+      calendar_event_id: newEvent.id,
+      reserved_by: user.id,
+      wants_main_clubhouse: form.wantsMainClubhouse,
+      wants_side_room: form.wantsSideRoom,
+      wants_tables_chairs: form.wantsTablesChairs,
+      starts_at: `${form.event_date}T${form.event_time}:00`,
+      ends_at: `${form.event_date}T${form.event_end_time}:00`,
+      private_event_answer: form.privateAnswer,
+      status: isPrivateOrUnsure ? 'pending_rcp' : 'confirmed',
+      ...(isPrivateOrUnsure ? {
+        fee_main: form.wantsMainClubhouse ? clubhouseSettings.clubhouse_main_fee : null,
+        fee_side_room: form.wantsSideRoom ? clubhouseSettings.clubhouse_side_room_fee : null,
+        fee_tables_chairs: form.wantsTablesChairs ? clubhouseSettings.clubhouse_tables_chairs_fee : null,
+        deposit_amount: clubhouseSettings.clubhouse_security_deposit,
+        payment_deadline_days_snapshot: clubhouseSettings.clubhouse_payment_deadline_days,
+      } : {}),
+    }
+
+    const { error: reservationError } = await supabase.from('clubhouse_reservations').insert(reservationPayload)
+
+    if (reservationError) {
+      await supabase.from('calendar_events').delete().eq('id', newEvent.id) // roll back the orphaned event
+      setSaving(false)
+      if (reservationError.message?.includes('no_double_book')) {
+        toast.error('That time was just booked by someone else for this space — please pick another time.')
+      } else {
+        console.error('Failed to create clubhouse reservation', reservationError)
+        toast.error('Failed to create the reservation')
+      }
+      return
     }
 
     setSaving(false)
-    if (error) {
-      toast.error('Failed to save event')
-    } else {
-      toast.success(editEvent ? 'Event updated' : 'Event added!')
-      onSaved()
-      onClose()
-    }
+    toast.success(isPrivateOrUnsure ? 'Reservation submitted — awaiting RCP review' : 'Reservation confirmed!')
+    onSaved()
+    onClose()
   }
 
   return (
@@ -158,16 +260,22 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
 
           <div className="space-y-4">
             {/* Title */}
-            <div>
-              <label className="block text-sm font-medium text-brand-700 mb-1">Title *</label>
-              <input
-                className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
-                value={form.title}
-                onChange={e => set('title', e.target.value)}
-                placeholder="Event title"
-                maxLength={100}
-              />
-            </div>
+            {wantsAnyClubhouseResource && (form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure') ? (
+              <div className="bg-brand-50 border border-brand-100 rounded-lg px-3 py-2 text-sm text-brand-600">
+                Shown on the shared calendar as <strong>&quot;Private Event&quot;</strong> plus your name — not a custom title, so other residents can see the space is taken without the details being public.
+              </div>
+            ) : (
+              <div>
+                <label className="block text-sm font-medium text-brand-700 mb-1">Title {wantsAnyClubhouseResource ? <span className="text-brand-400">(optional)</span> : '*'}</label>
+                <input
+                  className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                  value={form.title}
+                  onChange={e => set('title', e.target.value)}
+                  placeholder="Event title"
+                  maxLength={100}
+                />
+              </div>
+            )}
 
             {/* Category */}
             <div>
@@ -195,7 +303,9 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-brand-700 mb-1">Time <span className="text-brand-400">(optional)</span></label>
+                <label className="block text-sm font-medium text-brand-700 mb-1">
+                  {wantsAnyClubhouseResource ? 'Start time *' : <>Time <span className="text-brand-400">(optional)</span></>}
+                </label>
                 <input
                   type="time"
                   className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
@@ -204,36 +314,131 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
                 />
               </div>
             </div>
+            {wantsAnyClubhouseResource && (
+              <div>
+                <label className="block text-sm font-medium text-brand-700 mb-1">End time *</label>
+                <input
+                  type="time"
+                  className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                  value={form.event_end_time}
+                  onChange={e => set('event_end_time', e.target.value)}
+                />
+              </div>
+            )}
 
             {/* Location */}
             <div>
               <label className="block text-sm font-medium text-brand-700 mb-1">Location <span className="text-brand-400">(optional)</span></label>
-              <input
-                className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
-                value={form.location}
-                onChange={e => set('location', e.target.value)}
-                placeholder="e.g. Clubhouse, Pool deck…"
-                maxLength={100}
-              />
-              {form.location.trim() && (
+              {!editEvent && (
+                <div className="flex gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => set('wantsMainClubhouse', !form.wantsMainClubhouse)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      form.wantsMainClubhouse ? 'bg-brand-700 text-white border-brand-700' : 'border-brand-200 text-brand-600 hover:bg-brand-50'
+                    }`}
+                  >
+                    🏛️ Main Clubhouse
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!clubhouseSettings?.clubhouse_side_room_available}
+                    onClick={() => set('wantsSideRoom', !form.wantsSideRoom)}
+                    title={clubhouseSettings?.clubhouse_side_room_available ? '' : 'Coming soon — not yet available to book'}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      form.wantsSideRoom ? 'bg-brand-700 text-white border-brand-700' : 'border-brand-200 text-brand-600 hover:bg-brand-50'
+                    } ${!clubhouseSettings?.clubhouse_side_room_available ? 'opacity-40 cursor-not-allowed' : ''}`}
+                  >
+                    🚪 Side Room{!clubhouseSettings?.clubhouse_side_room_available ? ' (coming soon)' : ''}
+                  </button>
+                </div>
+              )}
+              {!wantsAnyClubhouseResource && (
+                <input
+                  className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                  value={form.location}
+                  onChange={e => set('location', e.target.value)}
+                  placeholder="e.g. Pool deck, off-site…"
+                  maxLength={100}
+                />
+              )}
+              {!wantsAnyClubhouseResource && form.location.trim() && (
                 <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
-                  ⚠️ Adding a location here does not book or reserve it — please make a separate reservation for the Clubhouse or Pickleball Court if required.
+                  ⚠️ Adding a location here does not book or reserve it — please make a separate reservation for the Pickleball Court if required, or use the Main Clubhouse / Side Room buttons above to reserve the clubhouse.
                 </p>
               )}
             </div>
 
-            {/* Description */}
-            <div>
-              <label className="block text-sm font-medium text-brand-700 mb-1">Description <span className="text-brand-400">(optional)</span></label>
-              <textarea
-                className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 resize-none"
-                rows={3}
-                value={form.description}
-                onChange={e => set('description', e.target.value)}
-                placeholder="More details about the event…"
-                maxLength={500}
-              />
-            </div>
+            {/* Clubhouse reservation panel — only for a NEW event with a resource selected */}
+            {wantsAnyClubhouseResource && (
+              <div className="bg-brand-50 border border-brand-100 rounded-xl p-4 space-y-3">
+                <label className="flex items-center gap-2 text-sm text-brand-700">
+                  <input
+                    type="checkbox"
+                    checked={form.wantsTablesChairs}
+                    disabled={clubhouseSettings?.clubhouse_tables_chairs_fee == null}
+                    onChange={e => set('wantsTablesChairs', e.target.checked)}
+                  />
+                  Extra Tables &amp; Chairs
+                  {clubhouseSettings?.clubhouse_tables_chairs_fee == null && (
+                    <span className="text-brand-400 text-xs">(pricing not yet set)</span>
+                  )}
+                </label>
+
+                <div>
+                  <label className="block text-sm font-medium text-brand-700 mb-1">Is this a private event? *</label>
+                  <div className="flex gap-4 text-sm text-brand-700">
+                    {[['yes', 'Yes'], ['no', 'No'], ['not_sure', 'Not sure']].map(([val, label]) => (
+                      <label key={val} className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="privateAnswer"
+                          checked={form.privateAnswer === val}
+                          onChange={() => set('privateAnswer', val)}
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                  {(form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure') && (
+                    <p className="text-xs text-brand-500 mt-1">This goes to RCP for review, and a fee/deposit applies. Not confirmed until payment is received.</p>
+                  )}
+                </div>
+
+                {clubhouseSettings && (form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure') && (
+                  <div className="text-xs text-brand-600 bg-white rounded-lg border border-brand-100 px-3 py-2 space-y-0.5">
+                    {form.wantsMainClubhouse && <div>Main Clubhouse: ${Number(clubhouseSettings.clubhouse_main_fee).toFixed(2)}</div>}
+                    {form.wantsSideRoom && clubhouseSettings.clubhouse_side_room_fee != null && <div>Side Room: ${Number(clubhouseSettings.clubhouse_side_room_fee).toFixed(2)}</div>}
+                    {form.wantsTablesChairs && clubhouseSettings.clubhouse_tables_chairs_fee != null && <div>Extra Tables &amp; Chairs: ${Number(clubhouseSettings.clubhouse_tables_chairs_fee).toFixed(2)}</div>}
+                    <div>Security deposit: ${Number(clubhouseSettings.clubhouse_security_deposit).toFixed(2)}</div>
+                    <div className="font-semibold pt-1 border-t border-brand-100 mt-1">
+                      Total due: ${(
+                        (form.wantsMainClubhouse ? Number(clubhouseSettings.clubhouse_main_fee) : 0) +
+                        (form.wantsSideRoom && clubhouseSettings.clubhouse_side_room_fee != null ? Number(clubhouseSettings.clubhouse_side_room_fee) : 0) +
+                        (form.wantsTablesChairs && clubhouseSettings.clubhouse_tables_chairs_fee != null ? Number(clubhouseSettings.clubhouse_tables_chairs_fee) : 0) +
+                        Number(clubhouseSettings.clubhouse_security_deposit)
+                      ).toFixed(2)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Description — hidden for a masked private/not-sure clubhouse reservation,
+                since it would otherwise be visible to every resident just like the title. */}
+            {!(wantsAnyClubhouseResource && (form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure')) && (
+              <div>
+                <label className="block text-sm font-medium text-brand-700 mb-1">Description <span className="text-brand-400">(optional)</span></label>
+                <textarea
+                  className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 resize-none"
+                  rows={3}
+                  value={form.description}
+                  onChange={e => set('description', e.target.value)}
+                  placeholder="More details about the event…"
+                  maxLength={500}
+                />
+              </div>
+            )}
 
             {/* External URL */}
             <div>

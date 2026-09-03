@@ -11,7 +11,7 @@ const SITE_URL = 'https://vintageathamilton.com'
 
 // Apps granted by default on approve-request (2026-08-23, per Keith).
 // Lotto and Budget stay opt-in / admin-granted.
-const DEFAULT_APPROVED_APPS = ['directory', 'calendar', 'blog', 'recommendations']
+const DEFAULT_APPROVED_APPS = ['directory', 'calendar', 'blog', 'recommendations', 'pickleball']
 
 // ── Welcome email HTML ──────────────────────────────────────────────────────
 function buildWelcomeEmail(names: string): string {

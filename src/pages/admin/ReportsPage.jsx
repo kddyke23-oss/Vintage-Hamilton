@@ -1148,6 +1148,120 @@ function CommunitySettingsCard() {
   )
 }
 
+// ─── Tab: Clubhouse reservation settings ──────────────────────────────────────
+// Board-editable — feeds the Add Event / clubhouse reservation flow in
+// SocialCalendar.jsx. See Reservations/REQUIREMENTS.md §2.5.
+
+const CLUBHOUSE_FIELDS = [
+  { key: 'clubhouse_main_fee', label: 'Main Clubhouse fee ($)', type: 'number', allowEmpty: false },
+  { key: 'clubhouse_side_room_fee', label: 'Side Room fee ($)', type: 'number', allowEmpty: true },
+  { key: 'clubhouse_tables_chairs_fee', label: 'Extra Tables & Chairs fee ($)', type: 'number', allowEmpty: true },
+  { key: 'clubhouse_security_deposit', label: 'Security deposit ($)', type: 'number', allowEmpty: false },
+  { key: 'clubhouse_payment_deadline_days', label: 'Payment deadline (days before event)', type: 'integer', allowEmpty: false },
+]
+
+function ClubhouseSettingsCard() {
+  const toast = useToast()
+  const [values, setValues] = useState({})
+  const [saved, setSaved] = useState({})
+  const [sideRoomAvailable, setSideRoomAvailable] = useState(false)
+  const [savedSideRoomAvailable, setSavedSideRoomAvailable] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  const fetchSettings = useCallback(async () => {
+    setLoading(true)
+    const { data, error } = await supabase
+      .from('community_settings')
+      .select('clubhouse_main_fee, clubhouse_side_room_fee, clubhouse_tables_chairs_fee, clubhouse_security_deposit, clubhouse_payment_deadline_days, clubhouse_side_room_available')
+      .eq('id', 1)
+      .maybeSingle()
+    if (!error && data) {
+      const next = {}
+      for (const f of CLUBHOUSE_FIELDS) next[f.key] = data[f.key] ?? ''
+      setValues(next)
+      setSaved(next)
+      setSideRoomAvailable(!!data.clubhouse_side_room_available)
+      setSavedSideRoomAvailable(!!data.clubhouse_side_room_available)
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { fetchSettings() }, [fetchSettings])
+
+  const dirty = JSON.stringify(values) !== JSON.stringify(saved) || sideRoomAvailable !== savedSideRoomAvailable
+
+  const save = async () => {
+    // Required fields can't be saved blank — they gate whether a resource can be booked at all.
+    for (const f of CLUBHOUSE_FIELDS) {
+      if (!f.allowEmpty && (values[f.key] === '' || values[f.key] === null || values[f.key] === undefined)) {
+        toast.error(`${f.label} is required.`)
+        return
+      }
+    }
+    setSaving(true)
+    const update = { clubhouse_side_room_available: sideRoomAvailable }
+    for (const f of CLUBHOUSE_FIELDS) {
+      update[f.key] = values[f.key] === '' ? null : (f.type === 'integer' ? parseInt(values[f.key], 10) : parseFloat(values[f.key]))
+    }
+    const { error } = await supabase.from('community_settings').update(update).eq('id', 1)
+    setSaving(false)
+    if (error) { toast.error('Could not save clubhouse settings.'); return }
+    setSaved(values)
+    setSavedSideRoomAvailable(sideRoomAvailable)
+    toast.success('Clubhouse reservation settings updated.')
+  }
+
+  return (
+    <div className="mb-8">
+      <div className="mb-4">
+        <h2 className="text-lg font-bold text-gray-900">Clubhouse Reservation Settings</h2>
+        <p className="text-sm text-gray-500 mt-0.5">
+          Fees, deposit, and payment deadline used by the clubhouse reservation flow (Add Event → Main Clubhouse / Side Room). Each reservation snapshots these at booking time, so a change here never retroactively affects an existing booking.
+        </p>
+      </div>
+      <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+        {loading ? (
+          <div className="text-sm text-gray-400 py-2">Loading…</div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {CLUBHOUSE_FIELDS.map(f => (
+                <div key={f.key}>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}</label>
+                  <input
+                    type="number"
+                    step={f.type === 'integer' ? '1' : '0.01'}
+                    value={values[f.key] ?? ''}
+                    onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value }))}
+                    placeholder={f.allowEmpty ? 'Not yet set — resource can\'t be booked until priced' : ''}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                  />
+                </div>
+              ))}
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={sideRoomAvailable}
+                onChange={e => setSideRoomAvailable(e.target.checked)}
+              />
+              Side Room is available for booking (leave unchecked while it&apos;s still coming soon)
+            </label>
+            <button
+              onClick={save}
+              disabled={saving || !dirty}
+              className="bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-800 disabled:opacity-50 transition-colors"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function UsefulLinksTab() {
   const toast = useToast()
   const [links, setLinks] = useState([])
@@ -1222,6 +1336,7 @@ function UsefulLinksTab() {
   return (
     <div className="space-y-6">
       <CommunitySettingsCard />
+      <ClubhouseSettingsCard />
 
       <div className="flex items-center justify-between">
         <div>

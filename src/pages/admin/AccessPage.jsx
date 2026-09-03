@@ -13,6 +13,8 @@ const APPS = [
   { id: 'blog', label: 'Blog', icon: '📝' },
   { id: 'recommendations', label: 'Recommendations', icon: '⭐' },
   { id: 'budget', label: 'Budget', icon: '💰' },
+  { id: 'pickleball', label: 'Pickleball', icon: '🏓' },
+  { id: 'clubhouse', label: 'Clubhouse (RCP/committee)', icon: '🏛️' },
 ]
 
 // Cycle: none → user → admin → none (regular apps only)

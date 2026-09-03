@@ -143,6 +143,7 @@ function ClubhouseInfo() {
 const ALL_APPS = [
   { id: 'directory',       label: 'Resident Directory',         description: 'Find and connect with your neighbors',   icon: '👥', path: '/apps/directory' },
   { id: 'calendar',        label: 'Social Calendar',            description: 'Community events and activities',         icon: '📅', path: '/apps/calendar' },
+  { id: 'pickleball',      label: 'Pickleball Court',            description: 'Reserve the court or check who\'s playing', icon: '🏓', path: '/apps/pickleball' },
   { id: 'lotto',           label: 'Lotto Tracker',              description: 'Community lottery pools and results',     icon: '🎟️', path: '/apps/lotto' },
   { id: 'blog',            label: 'Community Blog',             description: 'News, stories, and announcements',        icon: '📝', path: '/apps/blog' },
   { id: 'recommendations', label: "Residents' Recommendations", description: 'Tips, recommendations and warnings',      icon: '⭐', path: '/apps/recommendations' },
