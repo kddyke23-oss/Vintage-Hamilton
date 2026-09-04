@@ -52,6 +52,31 @@ const notifyClubhouseRcp = async (reservationId) => {
   }
 }
 
+// Fire-and-forget: called after a resident cancels their OWN clubhouse
+// reservation (handleRemove, below) when a fee had already been collected
+// on it — tells RCP a refund needs processing. Not called for a booking
+// that was never paid; those just quietly drop out of RCP's queue. Also
+// reused by ClubhouseReservationsPage.jsx when RCP cancels one instead —
+// same function, it figures out the right audience from who cancelled it.
+const notifyClubhouseCancellation = async (reservationId) => {
+  try {
+    await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-clubhouse-cancellation`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ reservationId }),
+      }
+    )
+  } catch (e) {
+    console.error('notify-clubhouse-cancellation call failed:', e)
+  }
+}
+
 function formatDate(dateStr) {
   if (!dateStr) return ''
   const d = new Date(dateStr + 'T00:00:00')
@@ -1541,6 +1566,37 @@ export default function SocialCalendar() {
   // ── Remove event ──────────────────────────────────────────────────────────
   async function handleRemove(event) {
     if (!window.confirm(`Remove "${event.title}"? This cannot be undone.`)) return
+
+    // If this is a clubhouse reservation, cancelling it needs to update the
+    // reservation record too, not just pull the event off the calendar — see
+    // Reservations/REQUIREMENTS.md 2.9. A resident can cancel their own
+    // booking either before or after the fee's been paid: before, it just
+    // cancels (and drops out of RCP's queue on its own, nothing further
+    // needed); after, RCP is notified a refund needs processing.
+    const { data: reservation } = await supabase
+      .from('clubhouse_reservations')
+      .select('id, status, check_received_at')
+      .eq('calendar_event_id', event.id)
+      .maybeSingle()
+
+    if (reservation && reservation.status !== 'cancelled') {
+      const reason = window.prompt('Any reason you\'d like to share with RCP? (optional)')
+      const { error: cancelError } = await supabase
+        .from('clubhouse_reservations')
+        .update({
+          status: 'cancelled',
+          cancelled_at: new Date().toISOString(),
+          cancelled_by: user.id,
+          cancellation_reason: reason || null,
+        })
+        .eq('id', reservation.id)
+      if (cancelError) {
+        toast.error('Failed to cancel the reservation')
+        return
+      }
+      if (reservation.check_received_at) notifyClubhouseCancellation(reservation.id) // fire-and-forget — RCP needs to process a refund
+    }
+
     const { error } = await supabase.from('calendar_events').update({ removed: true }).eq('id', event.id)
     if (error) {
       toast.error('Failed to remove event')

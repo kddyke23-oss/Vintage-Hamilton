@@ -174,6 +174,30 @@ export default function ClubhouseReservationsPage() {
     }
   }
 
+  // Fires after ANY cancellation (RCP's own cancelReservation below, or a
+  // resident's self-cancel in SocialCalendar.jsx) — the Edge Function itself
+  // figures out who to email and what to say based on who cancelled it and
+  // whether a fee had already been collected. See notify-clubhouse-
+  // cancellation/index.ts and Reservations/REQUIREMENTS.md 2.9.
+  const notifyCancellation = async (reservationId) => {
+    try {
+      await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-clubhouse-cancellation`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ reservationId }),
+        }
+      )
+    } catch (e) {
+      console.error('notify-clubhouse-cancellation call failed:', e)
+    }
+  }
+
   const escalate = async row => {
     await act(row.id, { status: 'escalated', escalated_at: new Date().toISOString(), escalated_by: user.id },
       'Escalated to the social committee')
@@ -207,6 +231,10 @@ export default function ClubhouseReservationsPage() {
     notifyResident(row.id)
   }
 
+  // RCP only ever cancels a reservation BEFORE a fee has been received (see
+  // the Cancel button's guard below, and Reservations/REQUIREMENTS.md 2.9) —
+  // once a check is in hand, cancelling is the resident's own action (via
+  // the calendar), which automatically starts the refund flow instead.
   const cancelReservation = async row => {
     const reason = window.prompt('Reason for cancelling (shown to the resident)?')
     if (reason === null) return
@@ -220,6 +248,7 @@ export default function ClubhouseReservationsPage() {
     await supabase.from('calendar_events').update({ removed: true }).eq('id', row.calendar_event_id)
     await act(row.id, { status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: user.id, cancellation_reason: reason || null },
       'Reservation cancelled')
+    notifyCancellation(row.id) // fire-and-forget — emails the resident with the reason
   }
 
   const markRefundIssued = row =>
@@ -309,7 +338,7 @@ export default function ClubhouseReservationsPage() {
                   {isRCP && needsRefund && (
                     <button onClick={() => markRefundIssued(r)} className="text-xs font-medium bg-orange-600 text-white px-3 py-1.5 rounded-lg hover:bg-orange-700">Mark refund issued</button>
                   )}
-                  {isRCP && r.status !== 'cancelled' && (
+                  {isRCP && r.status !== 'cancelled' && !r.check_received_at && (
                     <button onClick={() => cancelReservation(r)} className="text-xs font-medium text-red-600 hover:text-red-700 px-3 py-1.5">Cancel</button>
                   )}
                 </div>
