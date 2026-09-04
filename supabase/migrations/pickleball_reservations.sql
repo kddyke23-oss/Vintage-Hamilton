@@ -99,16 +99,10 @@ CREATE POLICY "Owner or admins can cancel pickleball reservations"
   );
 
 -- ─── Default app access ─────────────────────────────────────────────────────
--- Grant every current active resident access to the new app immediately.
--- Going forward, newly-approved residents need 'pickleball' added to
--- DEFAULT_APPROVED_APPS in supabase/functions/create-user/index.ts (a
--- separate code change — requires redeploying that function, see BRAIN/
--- reference_supabase_deploy.md re: --no-verify-jwt).
-INSERT INTO app_access (user_id, app_id, role, granted_at)
-SELECT id, 'pickleball', 'user', now()
-FROM profiles
-WHERE is_active = true
-  AND id IS NOT NULL -- skip profiles with no linked auth account yet (id is only
-                      -- set once someone actually creates/accepts a login — see
-                      -- calendar_comments.sql's note on profiles.id)
-ON CONFLICT (user_id, app_id) DO NOTHING;
+-- No blanket grant here on purpose (2026-09-04, per Keith): Pickleball is
+-- staying an individually-toggled app -- admins grant testers one at a time
+-- from Admin -> Access -- until it's added to General Functions, at which
+-- point general_functions_grouping.sql's backfill_general_app() grants it
+-- to everyone who already has General Functions access, in one step. See
+-- that migration for the mechanics and why this is safer than a blanket
+-- INSERT here.

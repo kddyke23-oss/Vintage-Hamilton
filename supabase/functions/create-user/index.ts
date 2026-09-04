@@ -9,9 +9,25 @@ const corsHeaders = {
 const FROM_EMAIL = 'noreply@vintageathamilton.com'
 const SITE_URL = 'https://vintageathamilton.com'
 
-// Apps granted by default on approve-request (2026-08-23, per Keith).
-// Lotto and Budget stay opt-in / admin-granted.
-const DEFAULT_APPROVED_APPS = ['directory', 'calendar', 'blog', 'recommendations', 'pickleball']
+// Apps granted by default on approve-request. Originally a fixed list
+// (2026-08-23, per Keith); as of 2026-09-04 it's read live from
+// app_group_config so admins can change the bundle from Admin -> Access
+// (General Functions) without a code deploy -- see
+// supabase/migrations/general_functions_grouping.sql. Directory is always
+// included on top of whatever's flagged general, since it's excluded from
+// that grouping on purpose.
+async function getDefaultApprovedApps(supabaseAdmin: any): Promise<string[]> {
+  const { data, error } = await supabaseAdmin
+    .from('app_group_config')
+    .select('app_id')
+    .eq('is_general', true)
+  if (error) {
+    console.error('Failed to load app_group_config, falling back to Calendar/Blog/Recommendations:', error.message)
+    return ['directory', 'calendar', 'blog', 'recommendations']
+  }
+  const generalIds = (data ?? []).map((r: { app_id: string }) => r.app_id)
+  return Array.from(new Set(['directory', ...generalIds]))
+}
 
 // ── Welcome email HTML ──────────────────────────────────────────────────────
 function buildWelcomeEmail(names: string): string {
@@ -276,10 +292,11 @@ Deno.serve(async (req) => {
               // auth user already existed (e.g. re-approving after an earlier
               // partial run), so it needs the same default grants as the
               // freshly-created path below.
+              const defaultApprovedApps = await getDefaultApprovedApps(supabaseAdmin)
               await supabaseAdmin
                 .from('app_access')
                 .upsert(
-                  DEFAULT_APPROVED_APPS.map(app_id => ({
+                  defaultApprovedApps.map(app_id => ({
                     user_id: existing.id,
                     app_id,
                     role: 'user',
@@ -304,12 +321,13 @@ Deno.serve(async (req) => {
             .update({ id: authData.user.id, password_set: false })
             .eq('resident_id', profileResidentId)
 
-          // 5. Grant default app access: Directory, Calendar, Blog, Recommendations
-          //    (Lotto and Budget stay opt-in / admin-granted.)
+          // 5. Grant default app access -- Directory plus whatever's currently
+          //    flagged General Functions (see getDefaultApprovedApps above).
+          const defaultApprovedApps = await getDefaultApprovedApps(supabaseAdmin)
           await supabaseAdmin
             .from('app_access')
             .upsert(
-              DEFAULT_APPROVED_APPS.map(app_id => ({
+              defaultApprovedApps.map(app_id => ({
                 user_id: authData.user.id,
                 app_id,
                 role: 'user',

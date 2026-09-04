@@ -17,6 +17,22 @@ const APPS = [
   { id: 'clubhouse', label: 'Clubhouse (RCP/committee)', icon: '🏛️' },
 ]
 
+// Apps that can never join the General Functions bundle, regardless of the
+// admin checkbox in the Configure panel -- enforced here AND at the database
+// level (app_group_config's CHECK constraint + backfill_general_app's guard
+// in general_functions_grouping.sql), so this isn't just a hidden checkbox.
+//   - directory: kept separate per Keith's original request (and a possible
+//     future reciprocal-visibility rule).
+//   - clubhouse: 'admin'/'user' mean RCP / Social Committee, not "can book"
+//     -- bundling it would silently hand every general resident a
+//     committee seat. See clubhouse_committee_role.sql.
+//   - budget, lotto: 2026-09-04, per Keith -- both have functionality that
+//     shouldn't be handed to everybody by default; access to either should
+//     stay an explicit, individual grant/revoke, same as directory/clubhouse.
+const GENERAL_INELIGIBLE_APP_IDS = ['directory', 'clubhouse', 'budget', 'lotto']
+
+const GENERAL_COLUMN = { id: '__general__', label: 'General Functions', icon: '🧩', isGeneral: true }
+
 // Cycle: none → user → admin → none (regular apps only)
 const NEXT_STATE = { none: 'user', user: 'admin', admin: 'none' }
 
@@ -511,8 +527,12 @@ export default function AccessPage() {
   const [editingEntry, setEditingEntry] = useState(null) // resident object for edit form
 
   const [colFilters, setColFilters] = useState(
-    Object.fromEntries(APPS.map(a => [a.id, 'all']))
+    Object.fromEntries([...APPS.map(a => a.id), GENERAL_COLUMN.id].map(id => [id, 'all']))
   )
+
+  // General Functions grouping: { app_id: boolean is_general }
+  const [groupConfig, setGroupConfig] = useState({})
+  const [showGroupConfig, setShowGroupConfig] = useState(false)
 
   // Pending access requests count
   const [pendingRequestCount, setPendingRequestCount] = useState(0)
@@ -524,17 +544,23 @@ export default function AccessPage() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [{ data: profiles, error: pError }, { data: accessRows, error: aError }, authData] = await Promise.all([
+      const [{ data: profiles, error: pError }, { data: accessRows, error: aError }, authData, { data: groupRows, error: gError }] = await Promise.all([
         supabase
           .from('profiles')
           .select('resident_id, id, surname, names, emails, phones, address, tags, directory_visible, notify_digest, photo_url, is_active, is_admin')
           .order('surname'),
         supabase.from('app_access').select('user_id, app_id, role'),
         supabase.rpc('get_resident_auth_info').then(r => r),
+        supabase.from('app_group_config').select('app_id, is_general'),
       ])
 
       if (pError) throw pError
       if (aError) throw aError
+      if (gError) throw gError
+
+      const groupMap = {}
+      groupRows?.forEach(g => { groupMap[g.app_id] = g.is_general })
+      setGroupConfig(groupMap)
 
       // Build access map
       const map = {}
@@ -571,21 +597,49 @@ export default function AccessPage() {
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
+  // ── General Functions grouping ─────────────────────────────────────────────
+  // Apps currently bundled under General Functions (never includes Directory
+  // or Clubhouse -- see GENERAL_INELIGIBLE_APP_IDS).
+  const generalAppIds = APPS
+    .filter(a => groupConfig[a.id] && !GENERAL_INELIGIBLE_APP_IDS.includes(a.id))
+    .map(a => a.id)
+
+  // Columns to render: individual apps not in the bundle, plus one combined
+  // General Functions column when the bundle is non-empty.
+  const displayColumns = generalAppIds.length
+    ? [GENERAL_COLUMN, ...APPS.filter(a => !generalAppIds.includes(a.id))]
+    : APPS
+
+  // A resident's state for one column, general or individual. For the
+  // General Functions column this is the *highest* role found across the
+  // bundled apps (admin > user > none) -- self-healing if any of the
+  // underlying rows ever drift apart.
+  const getColumnState = (residentId, col) => {
+    if (!residentId) return 'none'
+    if (col.isGeneral) {
+      const roles = generalAppIds.map(id => access[residentId]?.[id] ?? 'none')
+      if (roles.includes('admin')) return 'admin'
+      if (roles.includes('user')) return 'user'
+      return 'none'
+    }
+    return access[residentId]?.[col.id] ?? 'none'
+  }
+
   // ── Filter logic ─────────────────────────────────────────────────────────────
   const hasActiveFilters = Object.values(colFilters).some(v => v !== 'all')
 
   const filteredResidents = residents.filter(r => {
-    return APPS.every(app => {
-      const filterVal = colFilters[app.id]
+    return displayColumns.every(col => {
+      const filterVal = colFilters[col.id]
       if (filterVal === 'all') return true
-      const state = r.id ? (access[r.id]?.[app.id] ?? 'none') : 'none'
+      const state = getColumnState(r.id, col)
       if (filterVal === 'any') return state !== 'none'
       return state === filterVal
     })
   })
 
   const setColFilter = (appId, value) => setColFilters(prev => ({ ...prev, [appId]: value }))
-  const clearAllFilters = () => setColFilters(Object.fromEntries(APPS.map(a => [a.id, 'all'])))
+  const clearAllFilters = () => setColFilters(Object.fromEntries([...APPS.map(a => a.id), GENERAL_COLUMN.id].map(id => [id, 'all'])))
 
   // ── Access mutations ──────────────────────────────────────────────────────────
   const cycleAccess = async (userId, appId, currentState, name) => {
@@ -612,6 +666,62 @@ export default function AccessPage() {
       toast.error('Failed to update access: ' + e.message)
     }
     setSaving(null)
+  }
+
+  // Same none → user → admin → none cycle as cycleAccess, but writes every
+  // app currently bundled into General Functions together, so the column
+  // always shows one consistent state.
+  const cycleGeneralAccess = async (userId, currentState, name) => {
+    if (!userId || generalAppIds.length === 0) return
+    const nextState = NEXT_STATE[currentState]
+    setSaving(`${userId}-${GENERAL_COLUMN.id}`)
+    try {
+      if (nextState === 'none') {
+        const { error } = await supabase.from('app_access').delete().eq('user_id', userId).in('app_id', generalAppIds)
+        if (error) throw error
+        toast.info(`General Functions access removed for ${name}`)
+      } else {
+        const rows = generalAppIds.map(app_id => ({
+          user_id: userId, app_id, role: nextState, granted_at: new Date().toISOString(),
+        }))
+        const { error } = await supabase.from('app_access').upsert(rows, { onConflict: 'user_id,app_id' })
+        if (error) throw error
+        toast.success(`${name} is now ${nextState === 'admin' ? 'an admin' : 'a user'} for General Functions`)
+      }
+      setAccess(prev => {
+        const updated = { ...prev[userId] }
+        generalAppIds.forEach(id => { updated[id] = nextState })
+        return { ...prev, [userId]: updated }
+      })
+    } catch (e) {
+      toast.error('Failed to update General Functions access: ' + e.message)
+    }
+    setSaving(null)
+  }
+
+  // Flip whether one app is part of General Functions. Turning it ON first
+  // backfills everyone who already has General Functions access onto the
+  // new app (see backfill_general_app in
+  // supabase/migrations/general_functions_grouping.sql) using the bundle as
+  // it stood *before* this app joined; turning it OFF just reclassifies the
+  // column going forward and touches no access rows.
+  const toggleGeneralApp = async (appId, nextValue) => {
+    const appLabel = APPS.find(a => a.id === appId)?.label
+    if (nextValue) {
+      const { data, error: rpcError } = await supabase.rpc('backfill_general_app', {
+        p_new_app_id: appId,
+        p_existing_general_ids: generalAppIds,
+      })
+      if (rpcError) { toast.error(`Failed to add ${appLabel} to General Functions: ` + rpcError.message); return }
+      toast.success(`${appLabel} added to General Functions — granted to ${data ?? 0} resident(s) who already had it`)
+    } else {
+      toast.info(`${appLabel} removed from General Functions — existing access is unchanged, now individually controlled`)
+    }
+    const { error } = await supabase.from('app_group_config')
+      .upsert({ app_id: appId, is_general: nextValue, updated_at: new Date().toISOString() }, { onConflict: 'app_id' })
+    if (error) { toast.error('Failed to save General Functions setting: ' + error.message); return }
+    setGroupConfig(prev => ({ ...prev, [appId]: nextValue }))
+    await fetchAll()
   }
 
   const grantAll = async (userId, name) => {
@@ -727,9 +837,14 @@ export default function AccessPage() {
         }
       `}</style>
 
-      <div>
-        <h1 className="font-display text-3xl text-brand-800 mb-1">Admin Portal</h1>
-        <p className="text-brand-500">Manage resident app access. Click a resident's name to view their profile.</p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="font-display text-3xl text-brand-800 mb-1">Admin Portal</h1>
+          <p className="text-brand-500">Manage resident app access. Click a resident's name to view their profile.</p>
+        </div>
+        <button onClick={() => setShowGroupConfig(true)} style={btnOutline}>
+          ⚙️ Configure General Functions
+        </button>
       </div>
 
       {/* Pending access requests banner */}
@@ -766,7 +881,7 @@ export default function AccessPage() {
       {hasActiveFilters && (
         <div className="flex items-center gap-3 bg-brand-50 border border-brand-200 rounded-lg px-4 py-2.5 text-sm flex-wrap">
           <span className="font-semibold text-brand-700">Filters active:</span>
-          {APPS.filter(a => colFilters[a.id] !== 'all').map(a => (
+          {displayColumns.filter(a => colFilters[a.id] !== 'all').map(a => (
             <span key={a.id} className="inline-flex items-center gap-1.5 bg-brand-700 text-white text-xs px-2.5 py-1 rounded-full font-medium">
               {a.icon} {a.label}
               <span className="opacity-60">→</span>
@@ -799,14 +914,14 @@ export default function AccessPage() {
                 <th className="text-center px-3 py-3 text-brand-600 font-semibold text-xs">Active</th>
                 <th className="text-center px-3 py-3 text-brand-600 font-semibold text-xs whitespace-nowrap">Has Account</th>
                 <th className="text-center px-3 py-3 text-brand-600 font-semibold text-xs whitespace-nowrap">Last Access</th>
-                {APPS.map(app => {
-                  const isFiltered = colFilters[app.id] !== 'all'
+                {displayColumns.map(col => {
+                  const isFiltered = colFilters[col.id] !== 'all'
                   return (
-                    <th key={app.id} className={`text-center px-3 py-3 text-brand-600 font-semibold transition-colors ${isFiltered ? 'bg-brand-100' : ''}`}>
+                    <th key={col.id} className={`text-center px-3 py-3 text-brand-600 font-semibold transition-colors ${isFiltered ? 'bg-brand-100' : ''} ${col.isGeneral ? 'bg-blue-50' : ''}`}>
                       <div className="flex flex-col items-center gap-1">
-                        <div>{app.icon}</div>
-                        <div className="text-xs font-normal">{app.label}</div>
-                        <ColumnFilterDropdown appId={app.id} value={colFilters[app.id]} onChange={setColFilter} />
+                        <div>{col.icon}</div>
+                        <div className="text-xs font-normal">{col.label}</div>
+                        <ColumnFilterDropdown appId={col.id} value={colFilters[col.id]} onChange={setColFilter} />
                       </div>
                     </th>
                   )
@@ -863,16 +978,16 @@ export default function AccessPage() {
                     </td>
 
                     {/* App toggles */}
-                    {APPS.map(app => {
-                      const state = hasAccount ? (access[r.id]?.[app.id] ?? 'none') : 'none'
-                      const key = `${r.id}-${app.id}`
+                    {displayColumns.map(col => {
+                      const state = hasAccount ? getColumnState(r.id, col) : 'none'
+                      const key = `${r.id}-${col.id}`
                       const display = STATE_DISPLAY[state]
-                      const isFiltered = colFilters[app.id] !== 'all'
+                      const isFiltered = colFilters[col.id] !== 'all'
                       return (
-                        <td key={app.id} className={`text-center px-3 py-3 transition-colors ${isFiltered ? 'bg-brand-50' : ''}`}>
+                        <td key={col.id} className={`text-center px-3 py-3 transition-colors ${isFiltered ? 'bg-brand-50' : ''} ${col.isGeneral ? 'bg-blue-50/40' : ''}`}>
                           <button
                             onClick={() => hasAccount
-                              ? cycleAccess(r.id, app.id, state, name)
+                              ? (col.isGeneral ? cycleGeneralAccess(r.id, state, name) : cycleAccess(r.id, col.id, state, name))
                               : toast.info(`${name} hasn't logged in yet — access will unlock after their first login`)
                             }
                             disabled={saving === key}
@@ -880,7 +995,7 @@ export default function AccessPage() {
                               saving === key ? 'opacity-50 cursor-wait' :
                                 display.className
                               }`}
-                            title={!hasAccount ? 'Awaiting first login' : `${name}: ${display.label} — click to change`}
+                            title={!hasAccount ? 'Awaiting first login' : col.isGeneral ? `${name}: General Functions — ${display.label} — click to change` : `${name}: ${display.label} — click to change`}
                           >
                             {saving === key ? '…' : hasAccount ? display.icon : '🔒'}
                           </button>
@@ -944,6 +1059,43 @@ export default function AccessPage() {
           onClose={() => setEditingEntry(null)}
           isSaving={isSaving}
         />
+      )}
+
+      {/* ── Configure General Functions ── */}
+      {showGroupConfig && (
+        <div style={overlayStyle} onClick={() => setShowGroupConfig(false)}>
+          <div style={{ background: 'white', borderRadius: '12px', maxWidth: '480px', width: '100%', padding: '1.5rem', maxHeight: '85vh', overflowY: 'auto' }}
+            onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontFamily: 'var(--font-display)', color: '#1e4976', fontSize: '1.15rem', marginBottom: '0.35rem' }}>
+              🧩 General Functions
+            </h3>
+            <p style={{ fontSize: '0.8rem', color: '#6b7280', marginBottom: '1rem', lineHeight: 1.5 }}>
+              Apps checked below share one column and one access state in the grid — grant or revoke once, it applies to all of them.
+              Checking a new app here immediately grants it to everyone who currently has General Functions access, at their current level (User or Admin).
+              Unchecking an app leaves everyone's existing access exactly as it is — it just goes back to being its own column.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {APPS.filter(a => !GENERAL_INELIGIBLE_APP_IDS.includes(a.id)).map(app => (
+                <label key={app.id} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.45rem 0', cursor: 'pointer', borderBottom: '1px solid #f3f4f6' }}>
+                  <input
+                    type="checkbox"
+                    checked={!!groupConfig[app.id]}
+                    onChange={e => toggleGeneralApp(app.id, e.target.checked)}
+                    style={{ width: '15px', height: '15px', accentColor: '#1e4976', cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>{app.icon} {app.label}</span>
+                </label>
+              ))}
+            </div>
+            <p style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: '0.85rem', lineHeight: 1.5 }}>
+              Directory and Clubhouse aren't offered here on purpose: Directory stays independently controllable, and Clubhouse's User/Admin
+              levels mean Social Committee / RCP — not "can book" — so bundling it would hand every General Functions resident a committee seat.
+            </p>
+            <button onClick={() => setShowGroupConfig(false)} style={{ ...btnSec, width: '100%', justifyContent: 'center', marginTop: '1rem' }}>
+              Close
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )
