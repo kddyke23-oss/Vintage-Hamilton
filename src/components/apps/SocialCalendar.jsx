@@ -1682,15 +1682,21 @@ export default function SocialCalendar() {
   }
 
   // "Show my events" — switches into list view filtered to this resident's
-  // own events, resetting to the same "today forward" starting point as the
-  // default list view. Show past / Show All / month nav all keep working
-  // normally on top of it, same as the unfiltered list.
+  // own events. Also turns "Show All" on (Keith, 2026-09-05): a resident's
+  // own bookings can sit months out (a clubhouse/pickleball reservation,
+  // say), and the default "today + 3 months" list window was hiding those
+  // until the calendar was manually scrolled out to that month — My Events
+  // is specifically the "everything that's mine" view, so it shouldn't
+  // have a hidden date cap. Turning My Events back off turns Show All back
+  // off too, so it doesn't silently leave the whole community calendar
+  // unbounded — same "today forward" default as before. Month nav still
+  // exits both, same as it already exits Show All elsewhere.
   function toggleMine() {
     setFilterMine(m => {
       const next = !m
+      setShowAll(next)
       if (next) {
         setViewMode('list')
-        setShowAll(false)
         setShowPast(false)
         setCurrentYear(now.getFullYear())
         setCurrentMonth(now.getMonth())
