@@ -208,6 +208,20 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
       if (!form.privateAnswer) return toast.error('Please answer whether this is a private event')
       if (!form.event_time || !form.event_end_time) return toast.error('Please enter a start and end time for the reservation')
       if (form.event_end_time <= form.event_time) return toast.error('End time must be after the start time')
+      // Board policy (Keith, 2026-09-05, found while testing Scenario 1): every
+      // clubhouse reservation must end by 10:00 PM; a PRIVATE (or not-sure) one
+      // additionally can't run longer than 6 hours — a non-private/baseline
+      // booking has no duration cap. Time values here are plain 'HH:MM' (24-hour)
+      // strings from <input type="time">, always same-day, so string comparison
+      // against '22:00' is safe. 'yes'/'not_sure' is the same private-or-unsure
+      // bucket used everywhere else in this file (masking, RCP notification).
+      if (form.event_end_time > '22:00') return toast.error('Clubhouse reservations must end by 10:00 PM')
+      if (form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure') {
+        const [startH, startM] = form.event_time.split(':').map(Number)
+        const [endH, endM] = form.event_end_time.split(':').map(Number)
+        const reservationMinutes = (endH * 60 + endM) - (startH * 60 + startM)
+        if (reservationMinutes > 360) return toast.error('Private clubhouse reservations can be at most 6 hours long')
+      }
       if (form.wantsSideRoom && !clubhouseSettings?.clubhouse_side_room_available) return toast.error('The Side Room is not yet available to book')
       if (form.wantsTablesChairs && clubhouseSettings?.clubhouse_tables_chairs_fee == null) return toast.error('Extra Tables & Chairs pricing has not been set yet — contact an administrator')
     }
@@ -392,6 +406,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
                   value={form.event_end_time}
                   onChange={e => set('event_end_time', e.target.value)}
                 />
+                <p className="text-xs text-brand-400 mt-1">Must end by 10:00 PM. Private events: maximum 6 hours.</p>
               </div>
             )}
 
