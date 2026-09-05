@@ -621,7 +621,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
                     ))}
                   </div>
                   {(form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure') && (
-                    <p className="text-xs text-brand-500 mt-1">This goes to RCP for review, and a fee/deposit applies. Not confirmed until payment is received.</p>
+                    <p className="text-xs text-brand-500 mt-1">This goes to RCP for review, and a fee/deposit applies. Once approved, you&apos;ll get a message with the payment details — it&apos;s not confirmed until payment is received.</p>
                   )}
                 </div>
 
