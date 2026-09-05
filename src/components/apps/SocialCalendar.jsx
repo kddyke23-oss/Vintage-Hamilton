@@ -425,7 +425,17 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
       .single()
 
     if (reservationError) {
-      await supabase.from('calendar_events').delete().eq('id', newEvent.id) // roll back the orphaned event
+      // Roll back the orphaned event. Bug found by Keith testing Scenario 7
+      // (2026-09-05): this used to be a hard DELETE with its result never
+      // checked — if RLS didn't allow a resident to hard-delete a
+      // calendar_events row (likely, since every other removal in this app
+      // goes through the same soft-delete flag instead), it failed silently,
+      // leaving the rejected attempt's calendar entry fully visible — which
+      // looked exactly like a second real booking at the same time, even
+      // though the actual clubhouse_reservations row was correctly never
+      // created. Same removed=true pattern as every other removal here.
+      const { error: rollbackError } = await supabase.from('calendar_events').update({ removed: true }).eq('id', newEvent.id)
+      if (rollbackError) console.error('Failed to roll back orphaned calendar event', rollbackError)
       setSaving(false)
       if (reservationError.message?.includes('no_double_book')) {
         toast.error('That time was just booked by someone else for this space — please pick another time.')
