@@ -118,13 +118,22 @@ function isFutureOrToday(dateStr) {
 // ─── Add/Edit Event Modal ────────────────────────────────────────────────────
 
 function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalendarAdmin, toast, user }) {
-  // TEST-PHASE GATE (2026-09-03): clubhouse/side-room booking is only shown to
-  // accounts with 'clubhouse' app access (RCP/committee/testers) until the
-  // board's Oct 1 cutover — see Reservations/REQUIREMENTS.md §2.13. Remove
-  // this single check (and canRequestClubhouse below) at cutover to open it
-  // to every resident, same as the rest of Add Event.
+  // TEST-PHASE GATE (2026-09-03, revised 2026-09-05): clubhouse/side-room
+  // booking is only shown to RCP/committee accounts OR an explicitly-listed
+  // resident tester, until the board's Oct 1 cutover — see
+  // Reservations/REQUIREMENTS.md §2.13. A plain resident tester can't be
+  // modeled as an app_access row: app_access.role is DB-constrained to just
+  // 'admin'/'user' (app_access_role_check), which mean RCP/Social Committee
+  // here — not "can book" — and granting either would also hand the tester
+  // committee/RCP powers and escalation emails they shouldn't get. So this
+  // is a short-lived hardcoded allowlist instead, checked ONLY here.
+  // At cutover: delete TEST_PHASE_TESTER_IDS and this comment, and change
+  // canRequestClubhouse to simply `true`.
+  const TEST_PHASE_TESTER_IDS = [
+    'a61a5768-a710-4fc3-9d41-087605b58dd3', // Keith — kddyke23@gmail.com (plain-resident test account)
+  ]
   const { hasAppAccess } = useAuth()
-  const canRequestClubhouse = hasAppAccess('clubhouse')
+  const canRequestClubhouse = hasAppAccess('clubhouse') || TEST_PHASE_TESTER_IDS.includes(user?.id)
   const today = new Date().toISOString().split('T')[0]
 
   // Filter categories based on profile tags — compute before form init
