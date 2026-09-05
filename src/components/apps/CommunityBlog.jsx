@@ -87,8 +87,8 @@ function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, o
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow">
       {/* Photo thumbnail */}
       {post.photo_url && (
-        <div className="w-full h-40 overflow-hidden rounded-lg mb-4 cursor-pointer" onClick={() => onOpen(post)}>
-          <img src={post.photo_url} alt={post.title} loading="lazy" className="w-full h-full object-cover" />
+        <div className="w-full h-40 overflow-hidden rounded-lg mb-4 bg-gray-100 cursor-pointer" onClick={() => onOpen(post)}>
+          <img src={post.photo_url} alt={post.title} loading="lazy" className="w-full h-full object-contain" />
         </div>
       )}
       {/* Header */}
@@ -368,7 +368,7 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
             <img
               src={post.photo_url}
               alt={post.title}
-              className="w-full max-h-72 object-cover rounded-xl mb-4"
+              className="w-full max-h-72 object-contain rounded-xl mb-4 bg-gray-100"
             />
           )}
           <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">{post.body}</p>
