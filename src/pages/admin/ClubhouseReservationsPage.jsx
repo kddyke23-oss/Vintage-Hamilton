@@ -73,7 +73,7 @@ export default function ClubhouseReservationsPage() {
         id, calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs,
         starts_at, ends_at, private_event_answer, fee_main, fee_side_room, fee_tables_chairs, deposit_amount, total_due,
         payment_deadline_date, status, acknowledged_at, check_received_at, escalated_at, escalation_outcome,
-        cancelled_at, refund_issued_at, is_test,
+        cancelled_at, refund_issued_at, is_test, actual_title,
         calendar_events ( title )
       `)
       .order('starts_at', { ascending: true })
@@ -307,6 +307,11 @@ export default function ClubhouseReservationsPage() {
                     </div>
                     <div className="text-sm text-gray-500">{formatDateTime(r.starts_at, r.ends_at)} · {resourceLabel(r)}</div>
                     <div className="text-sm text-gray-500">{r.requester.name}{r.requester.address ? ` · ${r.requester.address}` : ''} · Private: {r.private_event_answer}</div>
+                    {/* The resident's own reference title for a masked booking (Keith,
+                        2026-09-05) — the calendar itself only ever shows "Private Event
+                        — Name", so this is the only place RCP/committee can see what a
+                        resident actually called it (e.g. a test-plan "Test scenario 1"). */}
+                    {r.actual_title && <div className="text-sm text-gray-500 italic">Ref: {r.actual_title}</div>}
                     {r.total_due > 0 && <div className="text-sm text-gray-700 mt-1">Due: {money(r.total_due)}{r.payment_deadline_date ? ` by ${r.payment_deadline_date}` : ''}</div>}
                   </div>
                   <span className={`text-xs font-medium px-2 py-1 rounded-full ${st.color}`}>{st.label}</span>

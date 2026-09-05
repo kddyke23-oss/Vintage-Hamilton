@@ -161,20 +161,69 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
   const [saving, setSaving] = useState(false)
 
   // Clubhouse reservation settings (fees, deposit, deadline, side-room
-  // availability) — only relevant for NEW events (editing an existing
-  // clubhouse reservation isn't supported from this modal; see
-  // Reservations/REQUIREMENTS.md §2.1). Fetched once so the resident sees
-  // real prices before submitting, not just after.
+  // availability) — fetched for both a new booking and an editable existing
+  // one, so the resident sees real prices before submitting either way.
   const [clubhouseSettings, setClubhouseSettings] = useState(null)
   useEffect(() => {
-    if (editEvent) return // editing an existing event never shows the reservation panel
     supabase
       .from('community_settings')
       .select('clubhouse_main_fee, clubhouse_side_room_fee, clubhouse_tables_chairs_fee, clubhouse_security_deposit, clubhouse_payment_deadline_days, clubhouse_side_room_available')
       .eq('id', 1)
       .maybeSingle()
       .then(({ data }) => setClubhouseSettings(data || null))
+  }, [])
+
+  // If we're editing an existing event, find out whether it's linked to a
+  // clubhouse reservation, and if so, in what state (Keith, 2026-09-05: a
+  // resident should be able to change the end time / resources / private
+  // answer on their own reservation — but only before RCP has accepted it
+  // or a fee has been paid; see reservationEditable below and the matching
+  // handleSubmit branch).
+  const [existingReservation, setExistingReservation] = useState(null)
+  const [reservationLoaded, setReservationLoaded] = useState(!editEvent)
+  useEffect(() => {
+    if (!editEvent) { setReservationLoaded(true); return }
+    setReservationLoaded(false)
+    supabase
+      .from('clubhouse_reservations')
+      .select('id, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, private_event_answer, status, check_received_at, actual_title')
+      .eq('calendar_event_id', editEvent.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        setExistingReservation(data || null)
+        setReservationLoaded(true)
+      })
   }, [editEvent])
+
+  // Once the reservation loads, seed the fields calendar_events doesn't
+  // carry (end time, which resources, the private answer) — event_date/
+  // event_time are already seeded from editEvent above.
+  useEffect(() => {
+    if (!existingReservation) return
+    // A masked booking's real title never lived in calendar_events.title
+    // (that's the "Private Event — Name" placeholder everyone else sees) —
+    // it's in actual_title instead, so pull the real one in for a masked
+    // reservation specifically. A non-masked one already has its real
+    // title seeded from editEvent above; leave it alone.
+    const wasMasked = existingReservation.private_event_answer === 'yes' || existingReservation.private_event_answer === 'not_sure'
+    setForm(f => ({
+      ...f,
+      wantsMainClubhouse: existingReservation.wants_main_clubhouse,
+      wantsSideRoom: existingReservation.wants_side_room,
+      wantsTablesChairs: existingReservation.wants_tables_chairs,
+      event_end_time: existingReservation.ends_at.slice(11, 16),
+      privateAnswer: existingReservation.private_event_answer,
+      ...(wasMasked ? { title: existingReservation.actual_title || '' } : {}),
+    }))
+  }, [existingReservation])
+
+  // Editable only before RCP has accepted it (still pending_rcp) or before a
+  // fee's been paid (check_received_at null) — matches the resident/RCP
+  // cancellation split already in place (Reservations/REQUIREMENTS.md §2.9):
+  // once money's changed hands, this modal won't touch the reservation
+  // record; cancelling (which starts a refund) and rebooking is the path.
+  const reservationEditable = !!existingReservation && existingReservation.status !== 'cancelled' && !existingReservation.check_received_at
+  const isClubhouseReservationEdit = !!editEvent && !!existingReservation
 
   const wantsAnyClubhouseResource = form.wantsMainClubhouse || form.wantsSideRoom || form.wantsTablesChairs
 
@@ -188,6 +237,10 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
   }, [allowedCategories.length])
 
   async function handleSubmit() {
+    if (editEvent && !reservationLoaded) return toast.error('Still loading — please try again in a moment')
+    if (isClubhouseReservationEdit && reservationEditable && !wantsAnyClubhouseResource) {
+      return toast.error('A clubhouse reservation needs at least one space selected — cancel the reservation instead if you no longer need it.')
+    }
     if (!wantsAnyClubhouseResource && !form.title.trim()) return toast.error('Please enter a title')
     if (!form.event_date) return toast.error('Please select a date')
     if (!form.category_id) return toast.error('Please select a category')
@@ -249,7 +302,65 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
     }
 
     if (editEvent) {
-      // Editing never touches the clubhouse reservation flow — unchanged behavior.
+      if (isClubhouseReservationEdit && reservationEditable) {
+        // A materially changed reservation (time/resources/private answer)
+        // starts over — same status/fee logic a brand-new submission would
+        // get, and any prior RCP acknowledgement or committee escalation is
+        // cleared, since it was based on facts that no longer hold (Keith,
+        // 2026-09-05). Reuses `isMasked` for "private or not sure", same
+        // condition the new-booking path calls isPrivateOrUnsure.
+        const { error: reservationError } = await supabase
+          .from('clubhouse_reservations')
+          .update({
+            wants_main_clubhouse: form.wantsMainClubhouse,
+            wants_side_room: form.wantsSideRoom,
+            wants_tables_chairs: form.wantsTablesChairs,
+            starts_at: `${form.event_date}T${form.event_time}:00`,
+            ends_at: `${form.event_date}T${form.event_end_time}:00`,
+            private_event_answer: form.privateAnswer,
+            status: isMasked ? 'pending_rcp' : 'confirmed',
+            actual_title: isMasked ? (form.title.trim() || null) : null,
+            fee_main: isMasked && form.wantsMainClubhouse ? clubhouseSettings?.clubhouse_main_fee : null,
+            fee_side_room: isMasked && form.wantsSideRoom ? clubhouseSettings?.clubhouse_side_room_fee : null,
+            fee_tables_chairs: isMasked && form.wantsTablesChairs ? clubhouseSettings?.clubhouse_tables_chairs_fee : null,
+            deposit_amount: isMasked ? clubhouseSettings?.clubhouse_security_deposit : null,
+            payment_deadline_days_snapshot: isMasked ? clubhouseSettings?.clubhouse_payment_deadline_days : null,
+            acknowledged_at: null, acknowledged_by: null,
+            escalated_at: null, escalated_by: null,
+            escalation_resolved_at: null, escalation_resolved_by: null, escalation_outcome: null,
+            late_notice_sent_at: null,
+          })
+          .eq('id', existingReservation.id)
+
+        if (reservationError) {
+          setSaving(false)
+          if (reservationError.message?.includes('no_double_book')) {
+            toast.error('That time was just booked by someone else for this space — please pick another time.')
+          } else {
+            console.error('Failed to update clubhouse reservation', reservationError)
+            toast.error('Failed to save changes')
+          }
+          return
+        }
+
+        const { error: eventUpdateError } = await supabase.from('calendar_events').update(payload).eq('id', editEvent.id)
+        setSaving(false)
+        if (eventUpdateError) { toast.error('Failed to save event'); return }
+        if (isMasked) notifyClubhouseRcp(existingReservation.id) // fresh review, same as a brand-new submission
+        toast.success(isMasked ? 'Reservation updated — awaiting RCP review' : 'Reservation updated and confirmed!')
+        onSaved()
+        onClose()
+        return
+      }
+
+      // Plain event edit, or a clubhouse reservation that's already paid or
+      // cancelled — never touches the reservation's workflow fields. The
+      // resident's own reference title (actual_title) is the one exception:
+      // it's never shown to anyone but the owner/RCP and carries no workflow
+      // weight, so it can still be changed regardless of payment status.
+      if (isClubhouseReservationEdit && isMasked) {
+        await supabase.from('clubhouse_reservations').update({ actual_title: form.title.trim() || null }).eq('id', existingReservation.id)
+      }
       const { error } = await supabase.from('calendar_events').update(payload).eq('id', editEvent.id)
       setSaving(false)
       if (error) { toast.error('Failed to save event'); return }
@@ -297,6 +408,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
       ends_at: `${form.event_date}T${form.event_end_time}:00`,
       private_event_answer: form.privateAnswer,
       status: isPrivateOrUnsure ? 'pending_rcp' : 'confirmed',
+      actual_title: isPrivateOrUnsure ? (form.title.trim() || null) : null,
       ...(isPrivateOrUnsure ? {
         fee_main: form.wantsMainClubhouse ? clubhouseSettings.clubhouse_main_fee : null,
         fee_side_room: form.wantsSideRoom ? clubhouseSettings.clubhouse_side_room_fee : null,
@@ -344,8 +456,18 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
           <div className="space-y-4">
             {/* Title */}
             {wantsAnyClubhouseResource && (form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure') ? (
-              <div className="bg-brand-50 border border-brand-100 rounded-lg px-3 py-2 text-sm text-brand-600">
-                Shown on the shared calendar as <strong>&quot;Private Event&quot;</strong> plus your name — not a custom title, so other residents can see the space is taken without the details being public.
+              <div>
+                <div className="bg-brand-50 border border-brand-100 rounded-lg px-3 py-2 text-sm text-brand-600 mb-2">
+                  Everyone else sees this on the shared calendar as <strong>&quot;Private Event&quot;</strong> plus your name. The title below is just for you and RCP — it&apos;s never shown anywhere else.
+                </div>
+                <label className="block text-sm font-medium text-brand-700 mb-1">Your title <span className="text-brand-400">(optional — just for you and RCP)</span></label>
+                <input
+                  className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                  value={form.title}
+                  onChange={e => set('title', e.target.value)}
+                  placeholder={'e.g. "Test scenario 1" or "Mom\'s 70th"'}
+                  maxLength={100}
+                />
               </div>
             ) : (
               <div>
@@ -380,7 +502,8 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
                 <label className="block text-sm font-medium text-brand-700 mb-1">Date *</label>
                 <input
                   type="date"
-                  className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                  disabled={isClubhouseReservationEdit && !reservationEditable}
+                  className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 disabled:bg-brand-50 disabled:text-brand-400"
                   value={form.event_date}
                   onChange={e => set('event_date', e.target.value)}
                 />
@@ -391,18 +514,30 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
                 </label>
                 <input
                   type="time"
-                  className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                  disabled={isClubhouseReservationEdit && !reservationEditable}
+                  className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 disabled:bg-brand-50 disabled:text-brand-400"
                   value={form.event_time}
                   onChange={e => set('event_time', e.target.value)}
                 />
               </div>
             </div>
+            {isClubhouseReservationEdit && !reservationEditable && (
+              <div className="bg-brand-50 border border-brand-200 rounded-lg p-3 text-sm text-brand-700">
+                <p className="font-medium mb-1">🔒 This reservation can no longer be changed here.</p>
+                <p>
+                  {existingReservation.status === 'cancelled'
+                    ? 'This reservation has been cancelled.'
+                    : 'Payment has already been received. To change the date, time, resources, or privacy answer now, cancel this reservation first (which starts a refund), then create a new booking.'}
+                </p>
+              </div>
+            )}
             {wantsAnyClubhouseResource && (
               <div>
                 <label className="block text-sm font-medium text-brand-700 mb-1">End time *</label>
                 <input
                   type="time"
-                  className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                  disabled={isClubhouseReservationEdit && !reservationEditable}
+                  className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 disabled:bg-brand-50 disabled:text-brand-400"
                   value={form.event_end_time}
                   onChange={e => set('event_end_time', e.target.value)}
                 />
@@ -413,7 +548,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
             {/* Location */}
             <div>
               <label className="block text-sm font-medium text-brand-700 mb-1">Location <span className="text-brand-400">(optional)</span></label>
-              {!editEvent && canRequestClubhouse && (
+              {(!editEvent ? canRequestClubhouse : reservationEditable) && (
                 <div className="flex gap-2 mb-2">
                   <button
                     type="button"
@@ -460,7 +595,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
                   <input
                     type="checkbox"
                     checked={form.wantsTablesChairs}
-                    disabled={clubhouseSettings?.clubhouse_tables_chairs_fee == null}
+                    disabled={clubhouseSettings?.clubhouse_tables_chairs_fee == null || (isClubhouseReservationEdit && !reservationEditable)}
                     onChange={e => set('wantsTablesChairs', e.target.checked)}
                   />
                   Extra Tables &amp; Chairs
@@ -478,6 +613,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
                           type="radio"
                           name="privateAnswer"
                           checked={form.privateAnswer === val}
+                          disabled={isClubhouseReservationEdit && !reservationEditable}
                           onChange={() => set('privateAnswer', val)}
                         />
                         {label}
