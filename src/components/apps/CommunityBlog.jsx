@@ -186,6 +186,7 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
   const [showReport, setShowReport] = useState(false)
   const [reportTargetType, setReportTargetType] = useState(null)
   const [reportTargetId, setReportTargetId] = useState(null)
+  const [lightboxUrl, setLightboxUrl] = useState(null)
 
   // Comment photo upload
   const [commentPhotoFile, setCommentPhotoFile] = useState(null)
@@ -368,7 +369,8 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
             <img
               src={post.photo_url}
               alt={post.title}
-              className="w-full max-h-72 object-contain rounded-xl mb-4 bg-gray-100"
+              className="w-full max-h-72 object-contain rounded-xl mb-4 bg-gray-100 cursor-pointer"
+              onClick={() => setLightboxUrl(post.photo_url)}
             />
           )}
           <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">{post.body}</p>
@@ -427,7 +429,13 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
                         </div>
                         <p className="text-sm text-gray-800 whitespace-pre-wrap">{comment.body}</p>
                         {comment.photo_url && (
-                          <img src={comment.photo_url} alt="Comment attachment" loading="lazy" className="mt-2 rounded-lg max-h-48 object-cover w-full" />
+                          <img
+                            src={comment.photo_url}
+                            alt="Comment attachment"
+                            loading="lazy"
+                            className="mt-2 rounded-lg max-h-48 object-contain w-full bg-gray-100 cursor-pointer"
+                            onClick={() => setLightboxUrl(comment.photo_url)}
+                          />
                         )}
                       </div>
                       <div className="flex items-center gap-3 mt-1.5 pl-1">
@@ -474,7 +482,7 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
               {/* Comment photo preview */}
               {commentPhotoPreview && (
                 <div className="relative mt-2 rounded-lg overflow-hidden border border-gray-200 w-32">
-                  <img src={commentPhotoPreview} alt="Preview" className="w-full h-20 object-cover" />
+                  <img src={commentPhotoPreview} alt="Preview" className="w-full h-20 object-contain bg-gray-100" />
                   <button
                     onClick={() => { setCommentPhotoFile(null); URL.revokeObjectURL(commentPhotoPreview); setCommentPhotoPreview(null); if (commentPhotoRef.current) commentPhotoRef.current.value = '' }}
                     className="absolute top-1 right-1 bg-white bg-opacity-90 rounded-full w-5 h-5 flex items-center justify-center text-gray-700 text-xs font-bold shadow"
@@ -544,6 +552,29 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Photo lightbox */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 flex items-center justify-center p-4"
+          style={{ zIndex: 1700, backgroundColor: 'rgba(0,0,0,0.9)' }}
+          onClick={() => setLightboxUrl(null)}
+        >
+          <button
+            onClick={() => setLightboxUrl(null)}
+            aria-label="Close photo"
+            className="absolute top-4 right-4 text-white text-3xl leading-none hover:text-gray-300"
+          >
+            ✕
+          </button>
+          <img
+            src={lightboxUrl}
+            alt="Full size"
+            className="max-w-full max-h-full object-contain"
+            onClick={e => e.stopPropagation()}
+          />
         </div>
       )}
     </div>
@@ -720,7 +751,7 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
             <label className="block text-sm font-medium text-gray-700 mb-1">Photo <span className="text-gray-400 font-normal">(optional)</span></label>
             {photoPreview ? (
               <div className="relative rounded-lg overflow-hidden border border-gray-200">
-                <img src={photoPreview} alt="Preview" className="w-full max-h-48 object-cover" />
+                <img src={photoPreview} alt="Preview" className="w-full max-h-48 object-contain bg-gray-100" />
                 <button
                   type="button"
                   onClick={() => { setPhotoFile(null); if (photoPreview && photoPreview !== existingPhotoUrl) URL.revokeObjectURL(photoPreview); setPhotoPreview(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
