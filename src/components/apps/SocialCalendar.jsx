@@ -720,6 +720,19 @@ const CLUBHOUSE_STATUS_INFO = {
   cancelled: { label: 'Cancelled', color: 'bg-gray-200 text-gray-600' },
 }
 
+// The owner of a masked (private/not-sure) clubhouse reservation sees their
+// own reference title everywhere; everyone else sees the calendar's actual,
+// masked title (event.title itself — "Private Event — Name"). Falls back to
+// the masked title if the owner never set one. See fetchEvents' reservation_*
+// fields above (Keith, 2026-09-05).
+function displayTitle(event, currentUserId) {
+  const isMasked = event.reservation_private_answer === 'yes' || event.reservation_private_answer === 'not_sure'
+  if (isMasked && event.created_by === currentUserId && event.reservation_actual_title) {
+    return event.reservation_actual_title
+  }
+  return event.title
+}
+
 function money(n) {
   return n == null ? null : `$${Number(n).toFixed(2)}`
 }
@@ -962,7 +975,7 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, o
             </span>
           )}
 
-          <h2 className="font-display text-2xl text-brand-800 mb-1">{event.title}</h2>
+          <h2 className="font-display text-2xl text-brand-800 mb-1">{displayTitle(event, currentUserId)}</h2>
 
           <div className="space-y-2 mt-3 text-sm text-brand-600">
             <div className="flex items-center gap-2">
@@ -1233,7 +1246,7 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, o
 
 // ─── Event Card (List View) ──────────────────────────────────────────────────
 
-function EventCard({ event, categories, onSelect }) {
+function EventCard({ event, categories, onSelect, currentUserId }) {
   const cat = categories.find(c => c.id === event.category_id)
   const upcoming = isFutureOrToday(event.event_date)
 
@@ -1277,7 +1290,7 @@ function EventCard({ event, categories, onSelect }) {
               </span>
             )}
           </div>
-          <h3 className="font-semibold text-brand-800 text-sm leading-snug truncate">{event.title}</h3>
+          <h3 className="font-semibold text-brand-800 text-sm leading-snug truncate">{displayTitle(event, currentUserId)}</h3>
           <div className="flex items-center gap-3 mt-1 text-xs text-brand-500 flex-wrap">
             {event.event_time && <span>{formatTime(event.event_time)}</span>}
             {event.location && <span>📍 {event.location}</span>}
@@ -1297,7 +1310,7 @@ function EventCard({ event, categories, onSelect }) {
 
 // ─── Grid View ──────────────────────────────────────────────────────────────
 
-function CalendarGrid({ events, categories, year, month, onSelect }) {
+function CalendarGrid({ events, categories, year, month, onSelect, currentUserId }) {
   const daysInMonth = getDaysInMonth(year, month)
   const firstDay = getFirstDayOfMonth(year, month)
 
@@ -1350,7 +1363,7 @@ function CalendarGrid({ events, categories, year, month, onSelect }) {
                         onClick={() => onSelect(ev)}
                         className="w-full text-left text-xs px-1.5 py-0.5 rounded truncate font-medium leading-tight"
                         style={{ backgroundColor: (cat?.color || '#2C5F8A') + '22', color: cat?.color || '#2C5F8A' }}
-                        title={ev.title}
+                        title={displayTitle(ev, currentUserId)}
                       >
                         {ev.external_url && '🔗 '}{ev.title}
                       </button>
@@ -1697,10 +1710,25 @@ export default function SocialCalendar() {
         authorMap[p.id] = [p.names, p.surname].filter(Boolean).join(' ')
       })
 
+      // A masked booking's real title (Keith, 2026-09-05): the owner should
+      // still see their own reference title everywhere — the list card, the
+      // detail card, not just the Edit modal — while everyone else keeps
+      // seeing the "Private Event — Name" placeholder that's actually
+      // stored in calendar_events.title. Fetched here so displayTitle()
+      // below can decide per-viewer at render time.
+      const { data: reservationRows } = await supabase
+        .from('clubhouse_reservations')
+        .select('calendar_event_id, actual_title, private_event_answer')
+        .in('calendar_event_id', eventIds)
+      const reservationMap = {}
+      reservationRows?.forEach(r => { reservationMap[r.calendar_event_id] = r })
+
       setEvents(evData.map(ev => ({
         ...ev,
         rsvp_count: rsvpCounts[ev.id] || 0,
         author_name: authorMap[ev.created_by] || 'Resident',
+        reservation_actual_title: reservationMap[ev.id]?.actual_title || null,
+        reservation_private_answer: reservationMap[ev.id]?.private_event_answer || null,
       })))
     } else {
       setEvents([])
@@ -1970,6 +1998,7 @@ export default function SocialCalendar() {
           year={currentYear}
           month={currentMonth}
           onSelect={setSelectedEvent}
+          currentUserId={user?.id}
         />
       ) : (
         <div className="space-y-3">
@@ -1993,6 +2022,7 @@ export default function SocialCalendar() {
                 event={ev}
                 categories={categories}
                 onSelect={setSelectedEvent}
+                currentUserId={user?.id}
               />
             ))
           )}
