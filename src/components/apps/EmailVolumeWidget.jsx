@@ -187,8 +187,23 @@ export default function EmailVolumeWidget() {
     )
   }
 
-  // No rows yet (e.g. brand new setup, nothing queued/sent yet) — stay quiet.
-  if (!latest) return null
+  // No rows yet — most likely explanation: no comments/clubhouse/access-request
+  // activity has happened since this went live, so send-daily-notifications
+  // ran with an empty queue and never called bump_email_volume. Say so
+  // explicitly rather than just vanishing, which looks identical to "broken."
+  if (!latest) {
+    return (
+      <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-5 py-4">
+        <span className="text-2xl">📧</span>
+        <div>
+          <p className="font-medium text-gray-700 text-sm">Email Volume — no data yet</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            This fills in once the daily notification flush actually sends something (it only logs a day when at least one email goes out).
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   const colors = statusColor(latest.sent_count)
   const dayDate = new Date(latest.day + 'T00:00:00')
