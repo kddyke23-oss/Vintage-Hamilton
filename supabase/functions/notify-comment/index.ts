@@ -1,8 +1,13 @@
 // notify-comment
 // Called (fire-and-forget, authenticated) right after a new blog_comments or
-// calendar_comments row is inserted. Emails the ORIGINAL post/event author
-// (not the commenter) that a new comment is waiting for them. Never sent when
-// someone comments on their own post/event.
+// calendar_comments row is inserted. Queues a notification for the ORIGINAL
+// post/event author (not the commenter) that a new comment is waiting for
+// them. Never queued when someone comments on their own post/event.
+//
+// As of the notification-queue rework, this no longer emails immediately —
+// it inserts into `pending_notifications`, which `send-daily-notifications`
+// flushes once a day into one combined email per resident. See
+// supabase/functions/_shared/notify-queue.ts for why.
 //
 // Deploy with: supabase functions deploy notify-comment --no-verify-jwt
 // (per BRAIN "Supabase deploy gotcha" — Vintage@Hamilton functions called from
@@ -10,13 +15,13 @@
 // plain `deploy` re-enables legacy-secret JWT verification and 401s the call.)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { enqueueNotifications } from '../_shared/notify-queue.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const FROM_EMAIL = 'noreply@vintageathamilton.com'
 const SITE_URL = 'https://vintageathamilton.com'
 
 function truncate(text: string, max: number): string {
@@ -24,93 +29,18 @@ function truncate(text: string, max: number): string {
   return clean.length > max ? clean.slice(0, max).trim() + '…' : clean
 }
 
-function buildCommentEmail(opts: {
+function buildCommentFragment(opts: {
   commenterName: string
   parentLabel: string   // "Calendar Event" or "Blog Post"
-  parentTitle: string
   bodySnippet: string
-  linkUrl: string
 }): string {
-  const { commenterName, parentLabel, parentTitle, bodySnippet, linkUrl } = opts
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>New Comment — Vintage @ Hamilton</title>
-</head>
-<body style="margin:0;padding:0;background:#F5F7FA;font-family:'Lato',Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;padding:32px 0;">
-    <tr>
-      <td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
-          <tr>
-            <td style="background:#2C5F8A;padding:28px 32px;text-align:center;">
-              <h1 style="margin:0;color:#ffffff;font-family:Georgia,serif;font-size:24px;letter-spacing:0.5px;">
-                Vintage @ Hamilton
-              </h1>
-              <p style="margin:6px 0 0;color:#EAF0F7;font-size:13px;">${parentLabel} Comment</p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:36px 32px;">
-              <p style="margin:0 0 8px;font-size:13px;color:#C9922A;font-weight:700;text-transform:uppercase;letter-spacing:1px;">
-                💬 New Comment
-              </p>
-              <h2 style="margin:0 0 16px;color:#1A3F5C;font-family:Georgia,serif;font-size:22px;">
-                ${parentTitle}
-              </h2>
-              <p style="margin:0 0 8px;font-size:14px;color:#666;">
-                <strong>${commenterName}</strong> commented:
-              </p>
-              <p style="margin:0 0 20px;padding:14px 16px;background:#F5F7FA;border-left:3px solid #C9922A;border-radius:4px;color:#444;font-size:15px;line-height:1.6;">
-                “${bodySnippet}”
-              </p>
-              <a href="${linkUrl}"
-                 style="display:inline-block;background:#C9922A;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:6px;font-size:15px;font-weight:700;">
-                View & Reply →
-              </a>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:20px 32px 28px;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#888;line-height:1.6;">
-                You're receiving this because you posted the ${parentLabel.toLowerCase()} this comment was left on.
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`
-}
-
-async function sendEmail(email: string, subject: string, html: string) {
-  const RESEND_API_KEY = (Deno.env.get('RESEND_API_KEY') ?? '').trim()
-  if (!RESEND_API_KEY) {
-    console.log('RESEND_API_KEY not set, skipping comment notification email')
-    return
-  }
-  try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ from: FROM_EMAIL, to: email, subject, html }),
-    })
-    if (!res.ok) {
-      const errText = await res.text()
-      console.error('Resend error for ' + email + ':', errText)
-    } else {
-      console.log('Comment notification sent to ' + email)
-    }
-  } catch (e) {
-    console.error('Failed to send comment notification to ' + email + ':', e.message)
-  }
+  const { commenterName, parentLabel, bodySnippet } = opts
+  return `<p style="margin:0 0 6px;font-size:14px;color:#666;">
+      <strong>${commenterName}</strong> commented on your ${parentLabel.toLowerCase()}:
+    </p>
+    <p style="margin:0;padding:12px 14px;background:#F5F7FA;border-left:3px solid #C9922A;border-radius:4px;color:#444;font-size:14px;line-height:1.5;">
+      "${bodySnippet}"
+    </p>`
 }
 
 Deno.serve(async (req) => {
@@ -160,7 +90,7 @@ Deno.serve(async (req) => {
 
     // Never notify someone about their own comment on their own post/event
     if (!parent.created_by || parent.created_by === comment.created_by) {
-      return new Response(JSON.stringify({ success: true, notified: 0, reason: 'own_content' }), {
+      return new Response(JSON.stringify({ success: true, queued: 0, reason: 'own_content' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
@@ -182,25 +112,32 @@ Deno.serve(async (req) => {
     const ownerEmails: string[] = ownerProfile?.emails || []
     if (ownerEmails.length === 0) {
       console.log('No email found for post/event owner, skipping notification')
-      return new Response(JSON.stringify({ success: true, notified: 0, reason: 'no_owner_email' }), {
+      return new Response(JSON.stringify({ success: true, queued: 0, reason: 'no_owner_email' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
 
-    // 4. Send
-    const html = buildCommentEmail({
+    // 4. Queue one item per owner email
+    const subjectLine = `New comment on your ${isBlog ? 'post' : 'event'} — ${parent.title || '(untitled)'}`
+    const bodyHtml = buildCommentFragment({
       commenterName,
       parentLabel,
-      parentTitle: parent.title || '(untitled)',
       bodySnippet: truncate(comment.body, 200),
-      linkUrl: `${SITE_URL}${linkPath}${parentId}`,
     })
-    const subject = `💬 New comment on your ${isBlog ? 'post' : 'event'} — Vintage @ Hamilton`
-    for (const email of ownerEmails) {
-      await sendEmail(email, subject, html)
-    }
+    const linkUrl = `${SITE_URL}${linkPath}${parentId}`
 
-    return new Response(JSON.stringify({ success: true, notified: ownerEmails.length }), {
+    const { inserted } = await enqueueNotifications(
+      supabaseAdmin,
+      ownerEmails.map((email) => ({
+        recipientEmail: email,
+        category: 'comment' as const,
+        subjectLine,
+        bodyHtml,
+        linkUrl,
+      }))
+    )
+
+    return new Response(JSON.stringify({ success: true, queued: inserted }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
   } catch (error) {

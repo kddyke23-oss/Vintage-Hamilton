@@ -8,31 +8,37 @@
 // already set when it was cancelled):
 //
 //   RCP cancelled (cancelled_by !== reserved_by)
-//     -> emails the resident with RCP's cancellation_reason. Per policy,
-//        RCP only ever cancels before a fee is received (see
+//     -> queues a notification to the resident with RCP's cancellation_reason.
+//        Per policy, RCP only ever cancels before a fee is received (see
 //        ClubhouseReservationsPage.jsx — the Cancel button itself is hidden
 //        once check_received_at is set), so this is always a "nothing was
 //        collected, nothing to refund" message. Handles a paid case
 //        defensively anyway in case that restriction is ever relaxed.
 //
 //   Resident cancelled their own booking (cancelled_by === reserved_by)
-//     -> if no fee had been collected yet, no email at all: the booking is
-//        just cancelled and drops out of RCP's queue on its own (see
-//        Reservations/REQUIREMENTS.md 2.9).
-//     -> if a fee HAD already been collected (check_received_at set), emails
-//        every clubhouse role='admin' reviewer that a refund now needs
-//        processing (mirrors notify-clubhouse-rcp's recipient lookup).
+//     -> if no fee had been collected yet, no notification at all: the
+//        booking is just cancelled and drops out of RCP's queue on its own
+//        (see Reservations/REQUIREMENTS.md 2.9).
+//     -> if a fee HAD already been collected (check_received_at set), queues
+//        a notification to every clubhouse role='admin' reviewer that a
+//        refund now needs processing (mirrors notify-clubhouse-rcp's
+//        recipient lookup).
+//
+// As of the notification-queue rework, this no longer emails immediately —
+// it inserts into `pending_notifications`, which `send-daily-notifications`
+// flushes once a day into one combined email per recipient. See
+// supabase/functions/_shared/notify-queue.ts for why.
 //
 // Deploy with: supabase functions deploy notify-clubhouse-cancellation --no-verify-jwt
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { enqueueNotifications } from '../_shared/notify-queue.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const FROM_EMAIL = 'noreply@vintageathamilton.com'
 const SITE_URL = 'https://vintageathamilton.com'
 
 function resourceList(r: { wants_main_clubhouse: boolean; wants_side_room: boolean; wants_tables_chairs: boolean }): string {
@@ -53,64 +59,6 @@ function formatDateTime(startsAt: string, endsAt: string): string {
 
 function money(n: number | null): string {
   return n == null ? '$0.00' : `$${Number(n).toFixed(2)}`
-}
-
-function wrapEmail(opts: { headline: string; subtitle: string; bodyHtml: string; linkUrl: string; linkLabel: string }): string {
-  const { headline, subtitle, bodyHtml, linkUrl, linkLabel } = opts
-  return `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>${headline} — Vintage @ Hamilton</title></head>
-<body style="margin:0;padding:0;background:#F5F7FA;font-family:'Lato',Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;padding:32px 0;">
-    <tr>
-      <td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
-          <tr>
-            <td style="background:#2C5F8A;padding:28px 32px;text-align:center;">
-              <h1 style="margin:0;color:#ffffff;font-family:Georgia,serif;font-size:24px;letter-spacing:0.5px;">Vintage @ Hamilton</h1>
-              <p style="margin:6px 0 0;color:#EAF0F7;font-size:13px;">${subtitle}</p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:36px 32px;">
-              <h2 style="margin:0 0 16px;color:#1A3F5C;font-family:Georgia,serif;font-size:22px;">${headline}</h2>
-              ${bodyHtml}
-              <a href="${linkUrl}" style="display:inline-block;background:#C9922A;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:6px;font-size:15px;font-weight:700;margin-top:8px;">${linkLabel} →</a>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:20px 32px 28px;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#888;line-height:1.6;">Vintage @ Hamilton — Community Portal</p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`
-}
-
-async function sendEmail(email: string, subject: string, html: string) {
-  const RESEND_API_KEY = (Deno.env.get('RESEND_API_KEY') ?? '').trim()
-  if (!RESEND_API_KEY) {
-    console.log('RESEND_API_KEY not set, skipping cancellation email')
-    return
-  }
-  try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: FROM_EMAIL, to: email, subject, html }),
-    })
-    if (!res.ok) {
-      console.error('Resend error for ' + email + ':', await res.text())
-    } else {
-      console.log('Cancellation notification sent to ' + email)
-    }
-  } catch (e) {
-    console.error('Failed to send cancellation notification to ' + email + ':', e.message)
-  }
 }
 
 Deno.serve(async (req) => {
@@ -137,7 +85,7 @@ Deno.serve(async (req) => {
     if (resErr) throw resErr
     if (!reservation) throw new Error('Reservation not found')
     if (reservation.status !== 'cancelled') {
-      return new Response(JSON.stringify({ success: true, notified: 0, reason: 'not_cancelled' }), {
+      return new Response(JSON.stringify({ success: true, queued: 0, reason: 'not_cancelled' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
@@ -146,7 +94,7 @@ Deno.serve(async (req) => {
     // NOT an ?openEvent= deep link: a cancelled reservation's calendar_events
     // row is removed=true, and the calendar's fetchEvents always filters
     // removed=false — that link would just silently fail to open anything.
-    const linkUrl = `${SITE_URL}/apps/calendar`
+    const calendarLinkUrl = `${SITE_URL}/apps/calendar`
     const when = formatDateTime(reservation.starts_at, reservation.ends_at)
     const resources = resourceList(reservation)
 
@@ -159,7 +107,7 @@ Deno.serve(async (req) => {
       if (!reservation.check_received_at) {
         // No fee had been collected — nothing to refund, and the booking
         // already dropped out of RCP's queue by virtue of status=cancelled.
-        return new Response(JSON.stringify({ success: true, notified: 0, reason: 'no_refund_needed' }), {
+        return new Response(JSON.stringify({ success: true, queued: 0, reason: 'no_refund_needed' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         })
       }
@@ -169,7 +117,7 @@ Deno.serve(async (req) => {
       if (rcpErr) throw rcpErr
       const rcpIds = (rcpAccess || []).map(r => r.user_id)
       if (rcpIds.length === 0) {
-        return new Response(JSON.stringify({ success: true, notified: 0, reason: 'no_rcp' }), {
+        return new Response(JSON.stringify({ success: true, queued: 0, reason: 'no_rcp' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         })
       }
@@ -181,29 +129,34 @@ Deno.serve(async (req) => {
       const residentName = resident ? `${resident.names ?? ''} ${resident.surname ?? ''}`.trim() || 'A resident' : 'A resident'
       const rcpEmails: string[] = (rcpProfiles || []).flatMap(p => p.emails || [])
       if (rcpEmails.length === 0) {
-        return new Response(JSON.stringify({ success: true, notified: 0, reason: 'no_rcp_email' }), {
+        return new Response(JSON.stringify({ success: true, queued: 0, reason: 'no_rcp_email' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         })
       }
 
       const bodyHtml = `
-        <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#444;">
+        <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#444;">
           ${residentName} cancelled a reservation that had already been paid. Please process the refund and mark it issued once it's sent.
         </p>
-        <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;border-radius:6px;padding:16px;margin:0 0 24px;">
-          <tr><td style="padding:4px 16px;font-size:14px;color:#666;">Resident</td><td style="padding:4px 16px;font-size:14px;color:#1A3F5C;font-weight:700;">${residentName}</td></tr>
-          <tr><td style="padding:4px 16px;font-size:14px;color:#666;">When</td><td style="padding:4px 16px;font-size:14px;color:#1A3F5C;">${when}</td></tr>
-          <tr><td style="padding:4px 16px;font-size:14px;color:#666;">Resources</td><td style="padding:4px 16px;font-size:14px;color:#1A3F5C;">${resources}</td></tr>
-          <tr><td style="padding:4px 16px;font-size:14px;color:#666;">Amount collected</td><td style="padding:4px 16px;font-size:14px;color:#1A3F5C;">${money(reservation.total_due)}</td></tr>
-          ${reservation.cancellation_reason ? `<tr><td style="padding:4px 16px;font-size:14px;color:#666;">Resident's reason</td><td style="padding:4px 16px;font-size:14px;color:#1A3F5C;">${reservation.cancellation_reason}</td></tr>` : ''}
+        <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;border-radius:6px;padding:12px;margin:0;">
+          <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Resident</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;font-weight:700;">${residentName}</td></tr>
+          <tr><td style="padding:3px 12px;font-size:13px;color:#666;">When</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${when}</td></tr>
+          <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Resources</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${resources}</td></tr>
+          <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Amount collected</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(reservation.total_due)}</td></tr>
+          ${reservation.cancellation_reason ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Resident's reason</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${reservation.cancellation_reason}</td></tr>` : ''}
         </table>`
-      const html = wrapEmail({
-        headline: eventTitle, subtitle: 'Cancelled Reservation — Refund Needed',
-        bodyHtml, linkUrl: `${SITE_URL}/admin/reservations`, linkLabel: 'Process This Refund',
-      })
-      const subject = `↩ Refund needed — ${eventTitle}`
-      for (const email of rcpEmails) await sendEmail(email, subject, html)
-      return new Response(JSON.stringify({ success: true, notified: rcpEmails.length }), {
+
+      const { inserted } = await enqueueNotifications(
+        supabaseAdmin,
+        rcpEmails.map((email) => ({
+          recipientEmail: email,
+          category: 'clubhouse_cancellation' as const,
+          subjectLine: `Refund needed — ${eventTitle}`,
+          bodyHtml,
+          linkUrl: `${SITE_URL}/admin/reservations`,
+        }))
+      )
+      return new Response(JSON.stringify({ success: true, queued: inserted }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
@@ -213,7 +166,7 @@ Deno.serve(async (req) => {
       .from('profiles').select('names, surname, emails').eq('id', reservation.reserved_by).maybeSingle()
     const residentEmails: string[] = residentProfile?.emails || []
     if (residentEmails.length === 0) {
-      return new Response(JSON.stringify({ success: true, notified: 0, reason: 'no_resident_email' }), {
+      return new Response(JSON.stringify({ success: true, queued: 0, reason: 'no_resident_email' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
@@ -222,23 +175,28 @@ Deno.serve(async (req) => {
       ? `We had already received your payment for this reservation — RCP will process a refund separately.`
       : `No payment had been collected for this reservation, so there's nothing further needed on your end.`
     const reasonLine = reservation.cancellation_reason
-      ? `<p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#444;"><strong>Reason given:</strong> ${reservation.cancellation_reason}</p>`
-      : `<p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#444;">No specific reason was given.</p>`
+      ? `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#444;"><strong>Reason given:</strong> ${reservation.cancellation_reason}</p>`
+      : `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#444;">No specific reason was given.</p>`
     const bodyHtml = `
-      <p style="margin:0 0 8px;font-size:15px;line-height:1.6;color:#444;">Your reservation below has been cancelled by RCP.</p>
+      <p style="margin:0 0 6px;font-size:14px;line-height:1.6;color:#444;">Your reservation below has been cancelled by RCP.</p>
       ${reasonLine}
-      <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#444;">${refundLine}</p>
-      <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;border-radius:6px;padding:16px;margin:0 0 24px;">
-        <tr><td style="padding:4px 16px;font-size:14px;color:#666;">When</td><td style="padding:4px 16px;font-size:14px;color:#1A3F5C;">${when}</td></tr>
-        <tr><td style="padding:4px 16px;font-size:14px;color:#666;">Resources</td><td style="padding:4px 16px;font-size:14px;color:#1A3F5C;">${resources}</td></tr>
+      <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#444;">${refundLine}</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;border-radius:6px;padding:12px;margin:0;">
+        <tr><td style="padding:3px 12px;font-size:13px;color:#666;">When</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${when}</td></tr>
+        <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Resources</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${resources}</td></tr>
       </table>`
-    const html = wrapEmail({
-      headline: eventTitle, subtitle: 'Reservation Cancelled',
-      bodyHtml, linkUrl, linkLabel: 'Go To The Calendar',
-    })
-    const subject = `Reservation cancelled — ${eventTitle}`
-    for (const email of residentEmails) await sendEmail(email, subject, html)
-    return new Response(JSON.stringify({ success: true, notified: residentEmails.length }), {
+
+    const { inserted } = await enqueueNotifications(
+      supabaseAdmin,
+      residentEmails.map((email) => ({
+        recipientEmail: email,
+        category: 'clubhouse_cancellation' as const,
+        subjectLine: `Reservation cancelled — ${eventTitle}`,
+        bodyHtml,
+        linkUrl: calendarLinkUrl,
+      }))
+    )
+    return new Response(JSON.stringify({ success: true, queued: inserted }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
   } catch (error) {

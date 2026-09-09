@@ -3,9 +3,9 @@
 // notify-clubhouse-escalation / notify-clubhouse-rcp) right after RCP
 // processes a booking request — acknowledging it (with or without a fee) or
 // resolving an escalation. Answers Keith's ask, 2026-09-03: a confirmation
-// email to the resident, including the check payee/mailing address when a
-// fee is actually due. The on-screen counterpart (same information, shown
-// right on the event) is ClubhouseReservationPanel in SocialCalendar.jsx.
+// to the resident, including the check payee/mailing address when a fee is
+// actually due. The on-screen counterpart (same information, shown right on
+// the event) is ClubhouseReservationPanel in SocialCalendar.jsx.
 //
 // Only fires for the two outcomes RCP's acknowledge/resolve actions produce:
 //   status = 'pending_payment' — fee now due, needs the payment instructions
@@ -14,16 +14,21 @@
 // have their own notifications (notify-clubhouse-rcp, notify-clubhouse-
 // escalation) or don't need a resident email.
 //
+// As of the notification-queue rework, this no longer emails immediately —
+// it inserts into `pending_notifications`, which `send-daily-notifications`
+// flushes once a day into one combined email per resident. See
+// supabase/functions/_shared/notify-queue.ts for why.
+//
 // Deploy with: supabase functions deploy notify-clubhouse-resident-status --no-verify-jwt
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { enqueueNotifications } from '../_shared/notify-queue.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const FROM_EMAIL = 'noreply@vintageathamilton.com'
 const SITE_URL = 'https://vintageathamilton.com'
 
 function resourceList(r: { wants_main_clubhouse: boolean; wants_side_room: boolean; wants_tables_chairs: boolean }): string {
@@ -52,9 +57,8 @@ function money(n: number | null): string {
   return n == null ? '' : `$${Number(n).toFixed(2)}`
 }
 
-function buildEmail(opts: {
+function buildStatusFragment(opts: {
   status: 'pending_payment' | 'confirmed'
-  eventTitle: string
   when: string
   resources: string
   feeMain: number | null
@@ -65,36 +69,29 @@ function buildEmail(opts: {
   deadline: string
   payableTo: string | null
   mailingAddress: string | null
-  linkUrl: string
-}): { subject: string; html: string } {
-  const { status, eventTitle, when, resources, feeMain, feeSideRoom, feeTablesChairs, deposit, totalDue, deadline, payableTo, mailingAddress, linkUrl } = opts
-
-  const headerColor = status === 'pending_payment' ? '#C9922A' : '#2F7D5C'
-  const headerLabel = status === 'pending_payment' ? 'Payment Due' : 'Booking Confirmed'
-  const subject = status === 'pending_payment'
-    ? `Payment due for your clubhouse booking — ${eventTitle}`
-    : `Your clubhouse booking is confirmed — ${eventTitle}`
+}): { subjectLine: string; bodyHtml: string } {
+  const { status, when, resources, feeMain, feeSideRoom, feeTablesChairs, deposit, totalDue, deadline, payableTo, mailingAddress } = opts
 
   const feeRows = status === 'pending_payment'
     ? [
-        feeMain != null ? `<tr><td style="padding:4px 16px;font-size:14px;color:#666;">Main Clubhouse fee</td><td style="padding:4px 16px;font-size:14px;color:#1A3F5C;">${money(feeMain)}</td></tr>` : '',
-        feeSideRoom != null ? `<tr><td style="padding:4px 16px;font-size:14px;color:#666;">Side Room fee</td><td style="padding:4px 16px;font-size:14px;color:#1A3F5C;">${money(feeSideRoom)}</td></tr>` : '',
-        feeTablesChairs != null ? `<tr><td style="padding:4px 16px;font-size:14px;color:#666;">Tables &amp; Chairs fee</td><td style="padding:4px 16px;font-size:14px;color:#1A3F5C;">${money(feeTablesChairs)}</td></tr>` : '',
-        deposit != null ? `<tr><td style="padding:4px 16px;font-size:14px;color:#666;">Security deposit</td><td style="padding:4px 16px;font-size:14px;color:#1A3F5C;">${money(deposit)}</td></tr>` : '',
-        `<tr><td style="padding:8px 16px 4px;font-size:14px;color:#1A3F5C;font-weight:700;">Total due</td><td style="padding:8px 16px 4px;font-size:14px;color:#1A3F5C;font-weight:700;">${money(totalDue)}</td></tr>`,
-        deadline ? `<tr><td style="padding:4px 16px;font-size:14px;color:#666;">Due by</td><td style="padding:4px 16px;font-size:14px;color:#1A3F5C;font-weight:700;">${deadline}</td></tr>` : '',
+        feeMain != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Main Clubhouse fee</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(feeMain)}</td></tr>` : '',
+        feeSideRoom != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Side Room fee</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(feeSideRoom)}</td></tr>` : '',
+        feeTablesChairs != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Tables &amp; Chairs fee</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(feeTablesChairs)}</td></tr>` : '',
+        deposit != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Security deposit</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(deposit)}</td></tr>` : '',
+        `<tr><td style="padding:6px 12px 3px;font-size:13px;color:#1A3F5C;font-weight:700;">Total due</td><td style="padding:6px 12px 3px;font-size:13px;color:#1A3F5C;font-weight:700;">${money(totalDue)}</td></tr>`,
+        deadline ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Due by</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;font-weight:700;">${deadline}</td></tr>` : '',
       ].filter(Boolean).join('')
     : ''
 
   const paymentInstructions = status === 'pending_payment'
     ? (payableTo || mailingAddress
-        ? `<table width="100%" cellpadding="0" cellspacing="0" style="background:#FBF3E4;border-radius:6px;padding:16px;margin:0 0 24px;">
-             <tr><td style="padding:12px 16px;font-size:14px;line-height:1.7;color:#5C4419;">
+        ? `<table width="100%" cellpadding="0" cellspacing="0" style="background:#FBF3E4;border-radius:6px;padding:12px;margin:8px 0 0;">
+             <tr><td style="padding:8px 12px;font-size:13px;line-height:1.6;color:#5C4419;">
                ${payableTo ? `Make your check payable to <strong>${payableTo}</strong>.<br/>` : ''}
                ${mailingAddress ? `Mail to: <strong>${mailingAddress}</strong>` : ''}
              </td></tr>
            </table>`
-        : `<p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#888;font-style:italic;">
+        : `<p style="margin:8px 0 0;font-size:13px;line-height:1.5;color:#888;font-style:italic;">
              Payment instructions haven't been posted yet — RCP will follow up with you directly.
            </p>`)
     : ''
@@ -103,91 +100,19 @@ function buildEmail(opts: {
     ? `RCP has reviewed and approved your clubhouse booking request. A fee is due before your event — see the details below.`
     : `RCP has reviewed your clubhouse booking request and confirmed it — no fee is required. You're all set.`
 
-  return {
-    subject,
-    html: `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>${headerLabel} — Vintage @ Hamilton</title>
-</head>
-<body style="margin:0;padding:0;background:#F5F7FA;font-family:'Lato',Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;padding:32px 0;">
-    <tr>
-      <td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
-          <tr>
-            <td style="background:#2C5F8A;padding:28px 32px;text-align:center;">
-              <h1 style="margin:0;color:#ffffff;font-family:Georgia,serif;font-size:24px;letter-spacing:0.5px;">
-                Vintage @ Hamilton
-              </h1>
-              <p style="margin:6px 0 0;color:#EAF0F7;font-size:13px;">${headerLabel}</p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:36px 32px;">
-              <p style="margin:0 0 8px;font-size:13px;color:${headerColor};font-weight:700;text-transform:uppercase;letter-spacing:1px;">
-                Clubhouse Reservation
-              </p>
-              <h2 style="margin:0 0 16px;color:#1A3F5C;font-family:Georgia,serif;font-size:22px;">
-                ${eventTitle}
-              </h2>
-              <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#444;">
-                ${intro}
-              </p>
-              <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;border-radius:6px;padding:16px;margin:0 0 24px;">
-                <tr><td style="padding:4px 16px;font-size:14px;color:#666;">When</td><td style="padding:4px 16px;font-size:14px;color:#1A3F5C;">${when}</td></tr>
-                <tr><td style="padding:4px 16px;font-size:14px;color:#666;">Resources</td><td style="padding:4px 16px;font-size:14px;color:#1A3F5C;">${resources}</td></tr>
-                ${feeRows}
-              </table>
-              ${paymentInstructions}
-              <a href="${linkUrl}"
-                 style="display:inline-block;background:#2C5F8A;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:6px;font-size:15px;font-weight:700;">
-                View on the Calendar →
-              </a>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:20px 32px 28px;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#888;line-height:1.6;">
-                You're receiving this because you requested a clubhouse reservation at Vintage @ Hamilton.
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`,
-  }
-}
+  const subjectLine = status === 'pending_payment'
+    ? `Payment due for your clubhouse booking`
+    : `Your clubhouse booking is confirmed`
 
-async function sendEmail(email: string, subject: string, html: string) {
-  const RESEND_API_KEY = (Deno.env.get('RESEND_API_KEY') ?? '').trim()
-  if (!RESEND_API_KEY) {
-    console.log('RESEND_API_KEY not set, skipping resident status email')
-    return
-  }
-  try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ from: FROM_EMAIL, to: email, subject, html }),
-    })
-    if (!res.ok) {
-      const errText = await res.text()
-      console.error('Resend error for ' + email + ':', errText)
-    } else {
-      console.log('Resident status notification sent to ' + email)
-    }
-  } catch (e) {
-    console.error('Failed to send resident status notification to ' + email + ':', e.message)
-  }
+  const bodyHtml = `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#444;">${intro}</p>
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;border-radius:6px;padding:12px;margin:0;">
+      <tr><td style="padding:3px 12px;font-size:13px;color:#666;">When</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${when}</td></tr>
+      <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Resources</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${resources}</td></tr>
+      ${feeRows}
+    </table>
+    ${paymentInstructions}`
+
+  return { subjectLine, bodyHtml }
 }
 
 Deno.serve(async (req) => {
@@ -214,7 +139,7 @@ Deno.serve(async (req) => {
     if (!reservation) throw new Error('Reservation not found')
 
     if (reservation.status !== 'pending_payment' && reservation.status !== 'confirmed') {
-      return new Response(JSON.stringify({ success: true, notified: 0, reason: 'not_applicable_status' }), {
+      return new Response(JSON.stringify({ success: true, queued: 0, reason: 'not_applicable_status' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
@@ -229,16 +154,15 @@ Deno.serve(async (req) => {
 
     const residentEmails: string[] = resident?.emails || []
     if (residentEmails.length === 0) {
-      return new Response(JSON.stringify({ success: true, notified: 0, reason: 'no_resident_email' }), {
+      return new Response(JSON.stringify({ success: true, queued: 0, reason: 'no_resident_email' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
 
     const eventTitle = event?.title || '(untitled reservation)'
 
-    const { subject, html } = buildEmail({
+    const { subjectLine, bodyHtml } = buildStatusFragment({
       status: reservation.status,
-      eventTitle,
       when: formatDateTime(reservation.starts_at, reservation.ends_at),
       resources: resourceList(reservation),
       feeMain: reservation.fee_main,
@@ -249,14 +173,20 @@ Deno.serve(async (req) => {
       deadline: formatDeadline(reservation.payment_deadline_date),
       payableTo: settingsResult?.data?.clubhouse_check_payable_to ?? null,
       mailingAddress: settingsResult?.data?.clubhouse_check_mailing_address ?? null,
-      linkUrl: `${SITE_URL}/apps/calendar?openEvent=${reservation.calendar_event_id}`,
     })
 
-    for (const email of residentEmails) {
-      await sendEmail(email, subject, html)
-    }
+    const { inserted } = await enqueueNotifications(
+      supabaseAdmin,
+      residentEmails.map((email) => ({
+        recipientEmail: email,
+        category: 'clubhouse_resident_status' as const,
+        subjectLine: `${subjectLine} — ${eventTitle}`,
+        bodyHtml,
+        linkUrl: `${SITE_URL}/apps/calendar?openEvent=${reservation.calendar_event_id}`,
+      }))
+    )
 
-    return new Response(JSON.stringify({ success: true, notified: residentEmails.length }), {
+    return new Response(JSON.stringify({ success: true, queued: inserted }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
   } catch (error) {

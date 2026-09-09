@@ -1,8 +1,13 @@
 // notify-access-request
 // Called (anonymously, right after insert) by the public Request Access form.
 // Looks up everyone flagged as a Directory admin (app_access role='admin' for
-// app_id='directory') plus super admins, and emails them that a new access
-// request is waiting for review.
+// app_id='directory') plus super admins, and queues a notification that a new
+// access request is waiting for review.
+//
+// As of the notification-queue rework, this no longer emails immediately —
+// it inserts into `pending_notifications`, which `send-daily-notifications`
+// flushes once a day into one combined email per admin. See
+// supabase/functions/_shared/notify-queue.ts for why.
 //
 // Deploy with: supabase functions deploy notify-access-request --no-verify-jwt
 // (public/unauthenticated caller — see BRAIN "Supabase deploy gotcha": deploying
@@ -10,101 +15,22 @@
 // call will start 401ing.)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { enqueueNotifications } from '../_shared/notify-queue.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const FROM_EMAIL = 'noreply@vintageathamilton.com'
 const SITE_URL = 'https://vintageathamilton.com'
 
-function buildNotifyEmail(opts: { primaryName: string; address: string; hasSecondary: boolean }): string {
+function buildRequestFragment(opts: { primaryName: string; address: string; hasSecondary: boolean }): string {
   const { primaryName, address, hasSecondary } = opts
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>New Access Request — Vintage @ Hamilton</title>
-</head>
-<body style="margin:0;padding:0;background:#F5F7FA;font-family:'Lato',Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;padding:32px 0;">
-    <tr>
-      <td align="center">
-        <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
-          <tr>
-            <td style="background:#2C5F8A;padding:28px 32px;text-align:center;">
-              <h1 style="margin:0;color:#ffffff;font-family:Georgia,serif;font-size:24px;letter-spacing:0.5px;">
-                Vintage @ Hamilton
-              </h1>
-              <p style="margin:6px 0 0;color:#EAF0F7;font-size:13px;">Directory Admin Notice</p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:36px 32px;">
-              <p style="margin:0 0 8px;font-size:13px;color:#C9922A;font-weight:700;text-transform:uppercase;letter-spacing:1px;">
-                🆕 New Access Request
-              </p>
-              <h2 style="margin:0 0 16px;color:#1A3F5C;font-family:Georgia,serif;font-size:22px;">
-                ${primaryName}${hasSecondary ? ' & household' : ''}
-              </h2>
-              <p style="margin:0 0 16px;color:#444;font-size:15px;line-height:1.6;">
-                A resident at <strong>${address}</strong> has requested portal access and is waiting for review.
-              </p>
-              <a href="${SITE_URL}/apps/directory"
-                 style="display:inline-block;background:#C9922A;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:6px;font-size:15px;font-weight:700;">
-                Review Request →
-              </a>
-              <p style="margin:16px 0 0;font-size:13px;color:#888;">
-                Sign in, then open <strong>Access Requests</strong> from the Directory toolbar.
-              </p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:20px 32px 28px;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#888;line-height:1.6;">
-                You're receiving this because you're a Directory admin for Vintage @ Hamilton.
-              </p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`
-}
-
-async function sendEmail(email: string, html: string) {
-  const RESEND_API_KEY = (Deno.env.get('RESEND_API_KEY') ?? '').trim()
-  if (!RESEND_API_KEY) {
-    console.log('RESEND_API_KEY not set, skipping admin notification email')
-    return
-  }
-  try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: FROM_EMAIL,
-        to: email,
-        subject: '🆕 New access request — Vintage @ Hamilton',
-        html,
-      }),
-    })
-    if (!res.ok) {
-      const errText = await res.text()
-      console.error('Resend error for ' + email + ':', errText)
-    } else {
-      console.log('Admin notification sent to ' + email)
-    }
-  } catch (e) {
-    console.error('Failed to send admin notification to ' + email + ':', e.message)
-  }
+  return `<p style="margin:0;color:#444;font-size:14px;line-height:1.6;">
+      <strong>${primaryName}${hasSecondary ? ' & household' : ''}</strong> at <strong>${address}</strong>
+      has requested portal access and is waiting for review. Sign in, then open
+      <strong>Access Requests</strong> from the Directory toolbar.
+    </p>`
 }
 
 Deno.serve(async (req) => {
@@ -160,23 +86,31 @@ Deno.serve(async (req) => {
 
     if (emails.size === 0) {
       console.log('No Directory admin emails found to notify')
-      return new Response(JSON.stringify({ success: true, notified: 0 }), {
+      return new Response(JSON.stringify({ success: true, queued: 0 }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
 
-    // 3. Send
+    // 3. Queue one item per admin email
     const primaryName = `${reqRow.primary_names} ${reqRow.primary_surname}`.trim()
-    const html = buildNotifyEmail({
+    const bodyHtml = buildRequestFragment({
       primaryName,
       address: reqRow.address,
       hasSecondary: !!reqRow.secondary_names,
     })
-    for (const email of emails) {
-      await sendEmail(email, html)
-    }
 
-    return new Response(JSON.stringify({ success: true, notified: emails.size }), {
+    const { inserted } = await enqueueNotifications(
+      supabaseAdmin,
+      Array.from(emails).map((email) => ({
+        recipientEmail: email,
+        category: 'access_request' as const,
+        subjectLine: `New access request — ${primaryName}${reqRow.secondary_names ? ' & household' : ''}`,
+        bodyHtml,
+        linkUrl: `${SITE_URL}/apps/directory`,
+      }))
+    )
+
+    return new Response(JSON.stringify({ success: true, queued: inserted }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
   } catch (error) {

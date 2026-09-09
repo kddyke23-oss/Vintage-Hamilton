@@ -1,8 +1,21 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const FROM_EMAIL = "noreply@vintageathamilton.com";
 const SITE_URL = "https://vintageathamilton.com";
+const FROM_EMAIL = "noreply@vintageathamilton.com";
+
+// Resend contact "segments" are what Audiences used to be called (Resend
+// renamed Audiences -> Segments and moved to a global-contacts model — see
+// https://resend.com/docs/dashboard/segments/migrating-from-audiences-to-segments).
+// One Broadcast sent to this segment replaces the old "BCC up to 49
+// recipients per /emails call" loop.
+//
+// WHY: Broadcasts/Segments run on Resend's separate Marketing quota
+// ("unlimited emails to up to 1,000 contacts/month" on the free plan),
+// completely apart from the 100/day Transactional quota. The old BCC-loop
+// digest alone was burning 100+ of that 100/day allowance most nights it
+// sent — this moves it off that budget entirely. 2026-09-08.
+const DIGEST_SEGMENT_NAME = "Daily Digest Subscribers";
 
 // ── HTML digest email template ──────────────────────────────────────────────
 function buildDigestEmail(
@@ -117,10 +130,10 @@ function buildDigestEmail(
           <tr>
             <td style="padding:20px 32px 28px;text-align:center;">
               <p style="margin:0;font-size:12px;color:#888;line-height:1.6;">
-                You're receiving this because you opted in to the daily digest.<br/>
-                To stop, visit your
-                <a href="${SITE_URL}/apps/directory" style="color:#2C5F8A;">Resident Profile</a>
-                and turn off the Daily Digest option.
+                To unsubscribe, update your notification settings in your
+                <a href="${SITE_URL}/apps/directory" style="color:#2C5F8A;">Vintage @ Hamilton Directory</a> profile —
+                turn off the Daily Digest option there. Preferences set on the portal are what control your subscription;
+                if you're re-added later it's because that setting is back on.
               </p>
             </td>
           </tr>
@@ -144,6 +157,81 @@ function formatDate(dateStr: string): string {
   } catch {
     return dateStr;
   }
+}
+
+// ── Resend Segment/Contact sync helpers ──────────────────────────────────
+async function resendFetch(path: string, apiKey: string, init: RequestInit = {}) {
+  return fetch(`https://api.resend.com${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      ...(init.headers || {}),
+    },
+  });
+}
+
+/** Find the digest segment by name, or create it once if it doesn't exist yet. */
+async function getOrCreateSegmentId(apiKey: string): Promise<string> {
+  const listRes = await resendFetch("/segments", apiKey);
+  if (listRes.ok) {
+    const listJson = await listRes.json();
+    const existing = (listJson?.data || []).find((s: { name: string }) => s.name === DIGEST_SEGMENT_NAME);
+    if (existing?.id) return existing.id;
+  } else {
+    console.error("Failed to list Resend segments:", await listRes.text());
+  }
+
+  const createRes = await resendFetch("/segments", apiKey, {
+    method: "POST",
+    body: JSON.stringify({ name: DIGEST_SEGMENT_NAME }),
+  });
+  if (!createRes.ok) {
+    throw new Error(`Failed to create Resend segment: ${await createRes.text()}`);
+  }
+  const created = await createRes.json();
+  return created.id;
+}
+
+/**
+ * Make sure one email's Resend contact record matches our own opt-in state.
+ * `unsubscribed` is ALWAYS driven by `notify_digest` in our own database —
+ * never by anything a resident does directly in Resend — so the portal
+ * stays the single source of truth even if someone gets re-added later
+ * after opting back in. Tries update-by-email first (the common case, once
+ * everyone's synced at least once); falls back to create on a 404.
+ */
+async function syncContact(
+  apiKey: string,
+  segmentId: string,
+  email: string,
+  firstName: string | undefined,
+  unsubscribed: boolean
+): Promise<boolean> {
+  const updateRes = await resendFetch(`/contacts/${encodeURIComponent(email)}`, apiKey, {
+    method: "PATCH",
+    body: JSON.stringify({ unsubscribed, ...(firstName ? { firstName } : {}) }),
+  });
+
+  if (updateRes.ok) return true;
+
+  if (updateRes.status === 404) {
+    const createRes = await resendFetch("/contacts", apiKey, {
+      method: "POST",
+      body: JSON.stringify({
+        email,
+        unsubscribed,
+        ...(firstName ? { firstName } : {}),
+        segments: [{ id: segmentId }],
+      }),
+    });
+    if (createRes.ok) return true;
+    console.error(`Failed to create Resend contact ${email}:`, await createRes.text());
+    return false;
+  }
+
+  console.error(`Failed to update Resend contact ${email}:`, await updateRes.text());
+  return false;
 }
 
 // ── Main handler ─────────────────────────────────────────────────────────────
@@ -232,112 +320,115 @@ serve(async (_req) => {
       location: e.location,
     }));
 
-    // 3. If nothing new, skip sending
-    if (blogPosts.length === 0 && calendarEvents.length === 0) {
-      console.log("No new content today — skipping digest.");
-      return new Response(
-        JSON.stringify({ skipped: true, reason: "no_new_content" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    // 4. Fetch opted-in residents (notify_digest = true, has email addresses)
-    const { data: residents, error: resErr } = await supabase
+    // 3. Sync every active resident's email(s) into the Resend segment,
+    //    regardless of today's content — this keeps Resend's subscription
+    //    state converged with `notify_digest` even on quiet days, and is
+    //    cheap (one PATCH/POST per email, not per send).
+    const { data: allResidents, error: residentsErr } = await supabase
       .from("profiles")
-      .select("emails")
-      .eq("notify_digest", true)
+      .select("names, emails, notify_digest")
       .eq("is_active", true)
       .not("emails", "is", null);
 
-    if (resErr) throw resErr;
+    if (residentsErr) throw residentsErr;
 
-    const allEmails: string[] = (residents || [])
-      .flatMap((r) => r.emails ?? [])
-      .filter(Boolean);
+    let optedInCount = 0;
+    let syncFailures = 0;
 
-    if (allEmails.length === 0) {
-      console.log("No opted-in residents with emails.");
+    if (RESEND_API_KEY) {
+      try {
+        const segmentId = await getOrCreateSegmentId(RESEND_API_KEY);
+
+        for (const resident of allResidents || []) {
+          const optedIn = !!resident.notify_digest;
+          for (const email of resident.emails ?? []) {
+            if (!email) continue;
+            if (optedIn) optedInCount++;
+            const ok = await syncContact(RESEND_API_KEY, segmentId, email, resident.names, !optedIn);
+            if (!ok) syncFailures++;
+          }
+        }
+
+        console.log(`Resend segment sync: ${optedInCount} subscribed, ${syncFailures} sync failures.`);
+
+        // 4. If nothing new, skip sending the broadcast (sync above still ran).
+        if (blogPosts.length === 0 && calendarEvents.length === 0) {
+          console.log("No new content today — skipping digest broadcast.");
+          return new Response(
+            JSON.stringify({ skipped: true, reason: "no_new_content", synced: optedInCount, syncFailures }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+
+        // 5. Build and send the digest as a Broadcast to the segment.
+        //    Broadcasts run on Resend's separate Marketing quota, not the
+        //    100/day Transactional cap — see the comment on
+        //    DIGEST_SEGMENT_NAME above for why that matters here.
+        const html = buildDigestEmail(blogPosts, calendarEvents);
+        const itemSummary = [
+          blogPosts.length > 0 ? `${blogPosts.length} blog post${blogPosts.length > 1 ? "s" : ""}` : "",
+          calendarEvents.length > 0 ? `${calendarEvents.length} new event${calendarEvents.length > 1 ? "s" : ""}` : "",
+        ].filter(Boolean).join(" & ");
+        const subject = `📬 Vintage @ Hamilton — ${itemSummary}`;
+
+        const broadcastRes = await resendFetch("/broadcasts", RESEND_API_KEY, {
+          method: "POST",
+          body: JSON.stringify({
+            segmentId,
+            from: FROM_EMAIL,
+            subject,
+            html,
+            name: `Daily Digest — ${new Date().toISOString().slice(0, 10)}`,
+            send: true,
+          }),
+        });
+
+        if (!broadcastRes.ok) {
+          throw new Error(`Broadcast send failed: ${await broadcastRes.text()}`);
+        }
+        const broadcast = await broadcastRes.json();
+
+        const { error: logErr } = await supabase.from("digest_log").insert({
+          blog_count: blogPosts.length,
+          event_count: calendarEvents.length,
+          recipient_count: optedInCount,
+          status: syncFailures > 0 ? "partial" : "success",
+        });
+        if (logErr) console.error("digest_log insert FAILED:", JSON.stringify(logErr));
+
+        console.log(
+          `Daily digest broadcast sent (id ${broadcast.id}): ${optedInCount} subscribed recipients, ` +
+          `${syncFailures} sync failures. Content: ${blogPosts.length} blog posts, ${calendarEvents.length} events.`
+        );
+
+        return new Response(
+          JSON.stringify({
+            broadcastId: broadcast.id,
+            recipientCount: optedInCount,
+            syncFailures,
+            blog_count: blogPosts.length,
+            event_count: calendarEvents.length,
+            since,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      } catch (broadcastErr) {
+        console.error("daily-digest broadcast error:", broadcastErr);
+        await supabase.from("digest_log").insert({
+          blog_count: blogPosts.length,
+          event_count: calendarEvents.length,
+          recipient_count: optedInCount,
+          status: "error",
+        });
+        throw broadcastErr;
+      }
+    } else {
+      console.log("RESEND_API_KEY not set, skipping segment sync and digest send");
       return new Response(
-        JSON.stringify({ skipped: true, reason: "no_recipients" }),
+        JSON.stringify({ skipped: true, reason: "no_resend_key" }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     }
-
-    // 5. Build the digest email
-    const html = buildDigestEmail(blogPosts, calendarEvents);
-
-    const itemSummary = [
-      blogPosts.length > 0 ? `${blogPosts.length} blog post${blogPosts.length > 1 ? "s" : ""}` : "",
-      calendarEvents.length > 0 ? `${calendarEvents.length} new event${calendarEvents.length > 1 ? "s" : ""}` : "",
-    ].filter(Boolean).join(" & ");
-
-    const subject = `📬 Vintage @ Hamilton — ${itemSummary}`;
-
-    // 6. Send via BCC batches (Resend allows max 50 total recipients per email)
-    //    We send TO noreply (1) + BCC (up to 49) = 50 max
-    const BCC_BATCH_SIZE = 49;
-    let sent = 0;
-    let failed = 0;
-
-    for (let i = 0; i < allEmails.length; i += BCC_BATCH_SIZE) {
-      const bccBatch = allEmails.slice(i, i + BCC_BATCH_SIZE);
-
-      const res = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${RESEND_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from: FROM_EMAIL,
-          to: "keith_dyke@hotmail.com",  // real mailbox accepts; Hotmail rule deletes
-          bcc: bccBatch,                 // actual recipients via BCC
-          subject,
-          html,
-        }),
-      });
-
-      if (res.ok) {
-        sent += bccBatch.length;
-      } else {
-        const err = await res.text();
-        console.error(`BCC batch send failed: ${err}`);
-        failed += bccBatch.length;
-      }
-    }
-
-    // 7. Log the digest send.
-    //    IMPORTANT: surface the error if the insert fails. The previous
-    //    version ignored `error` entirely, which is how we ended up with
-    //    a digest_log silent for ~30 days while emails went out fine.
-    const { error: logErr } = await supabase.from("digest_log").insert({
-      blog_count: blogPosts.length,
-      event_count: calendarEvents.length,
-      recipient_count: sent,
-      status: failed > 0 ? "partial" : "success",
-    });
-
-    if (logErr) {
-      console.error("digest_log insert FAILED:", JSON.stringify(logErr));
-    }
-
-    console.log(
-      `Daily digest sent: ${sent} recipients, ${failed} failed. ` +
-      `Content: ${blogPosts.length} blog posts, ${calendarEvents.length} events. ` +
-      `Window since: ${since}. Log insert: ${logErr ? "FAILED" : "ok"}.`
-    );
-
-    return new Response(
-      JSON.stringify({
-        sent,
-        failed,
-        blog_count: blogPosts.length,
-        event_count: calendarEvents.length,
-        since,
-        log_insert_error: logErr ?? null,
-      }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
-    );
   } catch (err) {
     console.error("daily-digest error:", err);
     return new Response(
