@@ -5,6 +5,7 @@ import { useToast } from '@/components/ui/Toast'
 import { deleteStoragePhoto } from '@/lib/storage'
 import { useImageUpload } from '@/hooks/useImageUpload'
 import { STREETS } from '@/config/constants'
+import EmailVolumeWidget from '@/components/apps/EmailVolumeWidget'
 
 const APPS = [
   { id: 'directory', label: 'Directory', icon: '👥' },
@@ -846,6 +847,8 @@ export default function AccessPage() {
           ⚙️ Configure General Functions
         </button>
       </div>
+
+      <EmailVolumeWidget />
 
       {/* Pending access requests banner */}
       {pendingRequestCount > 0 && (

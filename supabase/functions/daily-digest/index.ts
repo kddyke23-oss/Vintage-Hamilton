@@ -160,8 +160,23 @@ function formatDate(dateStr: string): string {
 }
 
 // ── Resend Segment/Contact sync helpers ──────────────────────────────────
-async function resendFetch(path: string, apiKey: string, init: RequestInit = {}) {
-  return fetch(`https://api.resend.com${path}`, {
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Resend enforces a hard 10 requests/second cap per API key. Syncing ~100+
+ * resident contacts back-to-back can burst past that and knock the *next*
+ * call (often the actual broadcast send) into a 429 — so every call here
+ * transparently retries on rate-limit, honoring Retry-After when present.
+ */
+async function resendFetch(
+  path: string,
+  apiKey: string,
+  init: RequestInit = {},
+  retriesLeft = 3
+): Promise<Response> {
+  const res = await fetch(`https://api.resend.com${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -169,6 +184,16 @@ async function resendFetch(path: string, apiKey: string, init: RequestInit = {})
       ...(init.headers || {}),
     },
   });
+
+  if (res.status === 429 && retriesLeft > 0) {
+    const retryAfterHeader = res.headers.get("Retry-After");
+    const waitMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : 1500;
+    console.warn(`Resend rate limit hit on ${path}, retrying in ${waitMs}ms (${retriesLeft} retries left)`);
+    await sleep(waitMs);
+    return resendFetch(path, apiKey, init, retriesLeft - 1);
+  }
+
+  return res;
 }
 
 /** Find the digest segment by name, or create it once if it doesn't exist yet. */
@@ -210,7 +235,7 @@ async function syncContact(
 ): Promise<boolean> {
   const updateRes = await resendFetch(`/contacts/${encodeURIComponent(email)}`, apiKey, {
     method: "PATCH",
-    body: JSON.stringify({ unsubscribed, ...(firstName ? { firstName } : {}) }),
+    body: JSON.stringify({ unsubscribed, ...(firstName ? { first_name: firstName } : {}) }),
   });
 
   if (updateRes.ok) return true;
@@ -221,7 +246,7 @@ async function syncContact(
       body: JSON.stringify({
         email,
         unsubscribed,
-        ...(firstName ? { firstName } : {}),
+        ...(firstName ? { first_name: firstName } : {}),
         segments: [{ id: segmentId }],
       }),
     });
@@ -346,6 +371,7 @@ serve(async (_req) => {
             if (optedIn) optedInCount++;
             const ok = await syncContact(RESEND_API_KEY, segmentId, email, resident.names, !optedIn);
             if (!ok) syncFailures++;
+            await sleep(120); // stay comfortably under Resend's 10 req/sec cap
           }
         }
 
@@ -374,7 +400,7 @@ serve(async (_req) => {
         const broadcastRes = await resendFetch("/broadcasts", RESEND_API_KEY, {
           method: "POST",
           body: JSON.stringify({
-            segmentId,
+            segment_id: segmentId,
             from: FROM_EMAIL,
             subject,
             html,
