@@ -144,6 +144,7 @@ function EmailVolumeHistoryModal({ onClose }) {
 export default function EmailVolumeWidget() {
   const [latest, setLatest] = useState(null) // { day, sent_count } | null
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
   const [showHistory, setShowHistory] = useState(false)
 
   useEffect(() => {
@@ -156,7 +157,12 @@ export default function EmailVolumeWidget() {
         .limit(1)
         .maybeSingle()
       if (!cancelled) {
-        if (!error) setLatest(data)
+        if (error) {
+          console.error('EmailVolumeWidget: failed to read email_volume_log —', error.message)
+          setLoadError(error.message)
+        } else {
+          setLatest(data)
+        }
         setLoading(false)
       }
     }
@@ -165,6 +171,22 @@ export default function EmailVolumeWidget() {
   }, [])
 
   if (loading) return null
+
+  // Surface a read failure instead of silently vanishing — most likely cause
+  // is the "Admins can view email volume log" RLS policy not having been
+  // run yet (supabase/migrations/email_volume_log_admin_policy.sql).
+  if (loadError) {
+    return (
+      <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-5 py-4">
+        <span className="text-2xl">⚠️</span>
+        <div>
+          <p className="font-medium text-red-700 text-sm">Email Volume widget couldn't load</p>
+          <p className="text-xs text-red-500 mt-0.5">{loadError} — check that the admin RLS policy migration has been run.</p>
+        </div>
+      </div>
+    )
+  }
+
   // No rows yet (e.g. brand new setup, nothing queued/sent yet) — stay quiet.
   if (!latest) return null
 
