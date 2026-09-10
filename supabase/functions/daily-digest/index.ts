@@ -260,7 +260,23 @@ async function syncContact(
 }
 
 // ── Main handler ─────────────────────────────────────────────────────────────
+// Responds immediately and does the real work in the background via
+// EdgeRuntime.waitUntil(). The per-contact Resend sync (paced ~120ms/call
+// to respect Resend's rate limit) can take well past the external cron
+// caller's response timeout as the resident count grows — cron-job.org
+// marked a run "Failed (timeout)" on 2026-09-10 even though the underlying
+// work either completed or was about to. Returning fast avoids that
+// entirely; real status now lives in digest_log / function logs, not the
+// HTTP response body.
 serve(async (_req) => {
+  EdgeRuntime.waitUntil(runDigest());
+  return new Response(
+    JSON.stringify({ accepted: true }),
+    { status: 202, headers: { "Content-Type": "application/json" } }
+  );
+});
+
+async function runDigest(): Promise<void> {
   // Read env vars fresh inside the handler (avoid Deno caching)
   const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY")!;
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -360,7 +376,12 @@ serve(async (_req) => {
     let optedInCount = 0;
     let syncFailures = 0;
 
-    if (RESEND_API_KEY) {
+    if (!RESEND_API_KEY) {
+      console.log("RESEND_API_KEY not set, skipping segment sync and digest send");
+      return;
+    }
+
+    {
       try {
         const segmentId = await getOrCreateSegmentId(RESEND_API_KEY);
 
@@ -377,13 +398,19 @@ serve(async (_req) => {
 
         console.log(`Resend segment sync: ${optedInCount} subscribed, ${syncFailures} sync failures.`);
 
-        // 4. If nothing new, skip sending the broadcast (sync above still ran).
+        // 4. If nothing new, log a "skipped" row and stop (sync above still ran).
+        //    Logging this (rather than just returning silently) means the
+        //    Email Volume-style history stays honest about quiet days too.
         if (blogPosts.length === 0 && calendarEvents.length === 0) {
           console.log("No new content today — skipping digest broadcast.");
-          return new Response(
-            JSON.stringify({ skipped: true, reason: "no_new_content", synced: optedInCount, syncFailures }),
-            { status: 200, headers: { "Content-Type": "application/json" } }
-          );
+          const { error: skipLogErr } = await supabase.from("digest_log").insert({
+            blog_count: 0,
+            event_count: 0,
+            recipient_count: optedInCount,
+            status: "skipped",
+          });
+          if (skipLogErr) console.error("digest_log insert (skipped) FAILED:", JSON.stringify(skipLogErr));
+          return;
         }
 
         // 5. Build and send the digest as a Broadcast to the segment.
@@ -426,18 +453,6 @@ serve(async (_req) => {
           `Daily digest broadcast sent (id ${broadcast.id}): ${optedInCount} subscribed recipients, ` +
           `${syncFailures} sync failures. Content: ${blogPosts.length} blog posts, ${calendarEvents.length} events.`
         );
-
-        return new Response(
-          JSON.stringify({
-            broadcastId: broadcast.id,
-            recipientCount: optedInCount,
-            syncFailures,
-            blog_count: blogPosts.length,
-            event_count: calendarEvents.length,
-            since,
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        );
       } catch (broadcastErr) {
         console.error("daily-digest broadcast error:", broadcastErr);
         await supabase.from("digest_log").insert({
@@ -446,20 +461,9 @@ serve(async (_req) => {
           recipient_count: optedInCount,
           status: "error",
         });
-        throw broadcastErr;
       }
-    } else {
-      console.log("RESEND_API_KEY not set, skipping segment sync and digest send");
-      return new Response(
-        JSON.stringify({ skipped: true, reason: "no_resend_key" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
     }
   } catch (err) {
     console.error("daily-digest error:", err);
-    return new Response(
-      JSON.stringify({ error: String(err) }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
   }
-});
+}
