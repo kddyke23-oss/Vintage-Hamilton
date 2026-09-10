@@ -132,7 +132,7 @@ Deno.serve(async (req) => {
 
     const { data: reservation, error: resErr } = await supabaseAdmin
       .from('clubhouse_reservations')
-      .select('calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, status, fee_main, fee_side_room, fee_tables_chairs, deposit_amount, total_due, payment_deadline_date')
+      .select('calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, status, fee_main, fee_side_room, fee_tables_chairs, deposit_amount, total_due, payment_deadline_date, actual_title')
       .eq('id', reservationId)
       .maybeSingle()
     if (resErr) throw resErr
@@ -159,7 +159,14 @@ Deno.serve(async (req) => {
       })
     }
 
-    const eventTitle = event?.title || '(untitled reservation)'
+    // This email only ever goes to the resident who made the booking, so
+    // it's safe to use their own reference title here — calendar_events.title
+    // is always the masked "Private Event — Name" placeholder for a private/
+    // not-sure booking, which told the resident nothing about which of their
+    // own bookings this was (Keith, 2026-09-10, spotted in RCP's test run).
+    // Same fallback as everywhere else this was fixed: falls back to the
+    // masked title if they never set one.
+    const eventTitle = reservation.actual_title || event?.title || '(untitled reservation)'
 
     const { subjectLine, bodyHtml } = buildStatusFragment({
       status: reservation.status,

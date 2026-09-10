@@ -112,18 +112,19 @@ export default function ClubhouseReservationsPage() {
     fetchRows()
   }
 
+  // A pending_rcp booking is always private/not-sure by definition, and
+  // every clubhouse resource plus the security deposit is priced now (Keith:
+  // "Scenario 5 does not exist, we have priced everything") — so there is no
+  // longer a legitimate no-fee outcome here. There used to be an
+  // "Acknowledge — no fee needed" action offered right alongside this one;
+  // removed 2026-09-10 after RCP's test run used it on a private booking and
+  // produced an incorrectly-confirmed $0 reservation. A dismissed escalation
+  // (resolveEscalation below) still correctly confirms with no fee — that's
+  // a *non*-private booking by the time it's dismissed, a different case.
   const acknowledgeFeeRequired = async row => {
     await act(row.id, { status: 'pending_payment', acknowledged_at: new Date().toISOString(), acknowledged_by: user.id },
       'Acknowledged — fee required')
     notifyResident(row.id) // fire-and-forget — the acknowledgment itself already succeeded
-  }
-
-  const acknowledgeNoFee = async row => {
-    await act(row.id, {
-      status: 'confirmed', acknowledged_at: new Date().toISOString(), acknowledged_by: user.id,
-      fee_main: null, fee_side_room: null, fee_tables_chairs: null, deposit_amount: null,
-    }, 'Acknowledged — no fee needed, confirmed')
-    notifyResident(row.id)
   }
 
   const markCheckReceived = row =>
@@ -322,10 +323,7 @@ export default function ClubhouseReservationsPage() {
                       these, whether or not RLS would technically let them touch
                       the row (it only would for an escalated one anyway). */}
                   {isRCP && r.status === 'pending_rcp' && (
-                    <>
-                      <button onClick={() => acknowledgeFeeRequired(r)} className="text-xs font-medium bg-brand-700 text-white px-3 py-1.5 rounded-lg hover:bg-brand-800">Acknowledge — fee required</button>
-                      <button onClick={() => acknowledgeNoFee(r)} className="text-xs font-medium border border-gray-200 text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-50">Acknowledge — no fee needed</button>
-                    </>
+                    <button onClick={() => acknowledgeFeeRequired(r)} className="text-xs font-medium bg-brand-700 text-white px-3 py-1.5 rounded-lg hover:bg-brand-800">Acknowledge — fee required</button>
                   )}
                   {isRCP && r.status === 'pending_payment' && (
                     <button onClick={() => markCheckReceived(r)} className="text-xs font-medium bg-brand-700 text-white px-3 py-1.5 rounded-lg hover:bg-brand-800">Mark check received</button>
