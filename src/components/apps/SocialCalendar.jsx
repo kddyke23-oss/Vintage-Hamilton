@@ -794,9 +794,9 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
                         onChange={e => set('termsAccepted', e.target.checked)}
                       />
                       I have read and agree to the Vintage at Hamilton{' '}
-                      <a href="/clubhouse-lease-agreement.pdf" target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="underline text-brand-700 hover:text-brand-900">
-                        Clubhouse Lease Agreement and Rules &amp; Regulations
-                      </a>. Submitting this request, and RCP&apos;s acknowledgment of it, together serve as the signed Agreement.
+                      <a href="/clubhouse-rules" target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="underline text-brand-700 hover:text-brand-900">
+                        Clubhouse Rules &amp; Regulations
+                      </a>. Submitting this request, and RCP&apos;s acknowledgment of it, together serve as the signed Clubhouse Lease Agreement, with a full record of this booking&apos;s details sent by email to both sides.
                     </label>
                     <label className="flex items-start gap-2 text-xs text-brand-700">
                       <input
@@ -995,8 +995,8 @@ function ClubhouseReservationPanel({ eventId, canView }) {
 
       {reservation.terms_acknowledged_at && reservation.acknowledged_at && (
         <p className="text-xs text-brand-400 mt-2 pt-2 border-t border-brand-200">
-          Agreement signed by you on {formatDate(reservation.terms_acknowledged_at.slice(0, 10))} and acknowledged by RCP on {formatDate(reservation.acknowledged_at.slice(0, 10))} — together these serve as the signed{' '}
-          <a href="/clubhouse-lease-agreement.pdf" target="_blank" rel="noopener noreferrer" className="underline hover:text-brand-600">Clubhouse Lease Agreement and Rules &amp; Regulations</a>.
+          Agreement signed by you on {formatDate(reservation.terms_acknowledged_at.slice(0, 10))} and acknowledged by RCP on {formatDate(reservation.acknowledged_at.slice(0, 10))} — together these serve as the signed Clubhouse Lease Agreement (see the{' '}
+          <a href="/clubhouse-rules" target="_blank" rel="noopener noreferrer" className="underline hover:text-brand-600">Rules &amp; Regulations</a>), with the full booking details on file and included in your confirmation email.
         </p>
       )}
     </div>

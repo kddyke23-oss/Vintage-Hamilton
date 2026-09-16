@@ -23,6 +23,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { enqueueNotifications } from '../_shared/notify-queue.ts'
+import { buildBookingDetailsTable, buildSignatureBlock } from '../_shared/clubhouse-form.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -31,12 +32,8 @@ const corsHeaders = {
 
 const SITE_URL = 'https://vintageathamilton.com'
 
-function resourceList(r: { wants_main_clubhouse: boolean; wants_side_room: boolean; wants_tables_chairs: boolean }): string {
-  const items: string[] = []
-  if (r.wants_main_clubhouse) items.push('Main Clubhouse')
-  if (r.wants_side_room) items.push('Small Side Room')
-  if (r.wants_tables_chairs) items.push('Extra Tables & Chairs')
-  return items.join(', ') || '(no resource on file)'
+function privateAnswerLabel(answer: string | null): string {
+  return answer === 'yes' ? 'Yes' : answer === 'not_sure' ? 'Not sure' : 'No'
 }
 
 function formatDateTime(startsAt: string, endsAt: string): string {
@@ -53,38 +50,18 @@ function formatDeadline(dateStr: string | null): string {
   return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
 }
 
-function money(n: number | null): string {
-  return n == null ? '' : `$${Number(n).toFixed(2)}`
-}
-
 function buildStatusFragment(opts: {
   status: 'pending_payment' | 'confirmed'
-  when: string
-  resources: string
-  feeMain: number | null
-  feeSideRoom: number | null
-  feeTablesChairs: number | null
-  feeAdditionalHours: number | null
-  deposit: number | null
-  totalDue: number | null
+  formTableHtml: string
   deadline: string
   payableTo: string | null
   mailingAddress: string | null
-  signedByResidentAt: string | null
-  signedByRcpAt: string | null
+  signatureHtml: string
 }): { subjectLine: string; bodyHtml: string } {
-  const { status, when, resources, feeMain, feeSideRoom, feeTablesChairs, feeAdditionalHours, deposit, totalDue, deadline, payableTo, mailingAddress, signedByResidentAt, signedByRcpAt } = opts
+  const { status, formTableHtml, deadline, payableTo, mailingAddress, signatureHtml } = opts
 
-  const feeRows = status === 'pending_payment'
-    ? [
-        feeMain != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Main Clubhouse fee</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(feeMain)}</td></tr>` : '',
-        feeSideRoom != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Side Room fee</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(feeSideRoom)}</td></tr>` : '',
-        feeTablesChairs != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Tables &amp; Chairs fee</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(feeTablesChairs)}</td></tr>` : '',
-        feeAdditionalHours != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Additional hours fee</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(feeAdditionalHours)}</td></tr>` : '',
-        deposit != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Security deposit</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(deposit)} (also covers cleaning if the space isn't left as required)</td></tr>` : '',
-        `<tr><td style="padding:6px 12px 3px;font-size:13px;color:#1A3F5C;font-weight:700;">Total due</td><td style="padding:6px 12px 3px;font-size:13px;color:#1A3F5C;font-weight:700;">${money(totalDue)}</td></tr>`,
-        deadline ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Due by</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;font-weight:700;">${deadline}</td></tr>` : '',
-      ].filter(Boolean).join('')
+  const deadlineRow = status === 'pending_payment' && deadline
+    ? `<p style="margin:8px 0 0;font-size:13px;color:#1A3F5C;"><strong>Due by ${deadline}</strong></p>`
     : ''
 
   const paymentInstructions = status === 'pending_payment'
@@ -101,33 +78,18 @@ function buildStatusFragment(opts: {
     : ''
 
   const intro = status === 'pending_payment'
-    ? `RCP has reviewed and approved your clubhouse booking request. A fee is due before your event — see the details below.`
-    : `RCP has reviewed your clubhouse booking request and confirmed it — no fee is required. You're all set.`
+    ? `RCP has reviewed and approved your clubhouse booking request. A fee is due before your event — see the full booking details below.`
+    : `RCP has reviewed your clubhouse booking request and confirmed it — no fee is required. You're all set. Your full booking details are below.`
 
   const subjectLine = status === 'pending_payment'
     ? `Payment due for your clubhouse booking`
     : `Your clubhouse booking is confirmed`
 
-  // Keith, 2026-09-16: since there's no physical signature step, the
-  // resident's own submission (accepting the Clubhouse Lease Agreement /
-  // Rules & Regulations terms) plus RCP's acknowledgment in the portal
-  // together stand in for the two signature lines on the paper agreement —
-  // shown here so both parties have a durable, dated record of it.
-  const signatureNote = (signedByResidentAt && signedByRcpAt)
-    ? `<p style="margin:10px 0 0;font-size:12px;line-height:1.5;color:#888;">
-         Agreement accepted by you on ${signedByResidentAt}, and acknowledged by RCP on ${signedByRcpAt} — together these serve as the signed
-         <a href="${SITE_URL}/clubhouse-lease-agreement.pdf" style="color:#2C5F8A;">Clubhouse Lease Agreement and Rules &amp; Regulations</a>.
-       </p>`
-    : ''
-
   const bodyHtml = `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#444;">${intro}</p>
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;border-radius:6px;padding:12px;margin:0;">
-      <tr><td style="padding:3px 12px;font-size:13px;color:#666;">When</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${when}</td></tr>
-      <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Resources</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${resources}</td></tr>
-      ${feeRows}
-    </table>
+    ${formTableHtml}
+    ${deadlineRow}
     ${paymentInstructions}
-    ${signatureNote}`
+    ${signatureHtml}`
 
   return { subjectLine, bodyHtml }
 }
@@ -149,7 +111,7 @@ Deno.serve(async (req) => {
 
     const { data: reservation, error: resErr } = await supabaseAdmin
       .from('clubhouse_reservations')
-      .select('calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, status, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due, payment_deadline_date, actual_title, terms_acknowledged_at, acknowledged_at')
+      .select('calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, status, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due, payment_deadline_date, actual_title, terms_acknowledged_at, acknowledged_at, acknowledged_by, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, liability_insurance_confirmed, private_event_answer')
       .eq('id', reservationId)
       .maybeSingle()
     if (resErr) throw resErr
@@ -161,9 +123,12 @@ Deno.serve(async (req) => {
       })
     }
 
-    const [{ data: event }, { data: resident }, settingsResult] = await Promise.all([
+    const [{ data: event }, { data: resident }, { data: rcpProfile }, settingsResult] = await Promise.all([
       supabaseAdmin.from('calendar_events').select('title').eq('id', reservation.calendar_event_id).maybeSingle(),
-      supabaseAdmin.from('profiles').select('emails').eq('id', reservation.reserved_by).maybeSingle(),
+      supabaseAdmin.from('profiles').select('names, surname, emails').eq('id', reservation.reserved_by).maybeSingle(),
+      reservation.acknowledged_by
+        ? supabaseAdmin.from('profiles').select('names, surname').eq('id', reservation.acknowledged_by).maybeSingle()
+        : Promise.resolve({ data: null }),
       reservation.status === 'pending_payment'
         ? supabaseAdmin.from('community_settings').select('clubhouse_check_payable_to, clubhouse_check_mailing_address').eq('id', 1).maybeSingle()
         : Promise.resolve({ data: null }),
@@ -176,6 +141,9 @@ Deno.serve(async (req) => {
       })
     }
 
+    const residentName = resident ? `${resident.names ?? ''} ${resident.surname ?? ''}`.trim() || 'Resident' : 'Resident'
+    const rcpName = rcpProfile ? `${rcpProfile.names ?? ''} ${rcpProfile.surname ?? ''}`.trim() || null : null
+
     // This email only ever goes to the resident who made the booking, so
     // it's safe to use their own reference title here — calendar_events.title
     // is always the masked "Private Event — Name" placeholder for a private/
@@ -185,21 +153,40 @@ Deno.serve(async (req) => {
     // masked title if they never set one.
     const eventTitle = reservation.actual_title || event?.title || '(untitled reservation)'
 
-    const { subjectLine, bodyHtml } = buildStatusFragment({
-      status: reservation.status,
+    const formTableHtml = buildBookingDetailsTable({
+      residentName,
       when: formatDateTime(reservation.starts_at, reservation.ends_at),
-      resources: resourceList(reservation),
+      wantsMainClubhouse: !!reservation.wants_main_clubhouse,
+      wantsSideRoom: !!reservation.wants_side_room,
+      extraTables: reservation.extra_tables_requested || 0,
+      extraChairs: reservation.extra_chairs_requested || 0,
+      privateAnswerLabel: privateAnswerLabel(reservation.private_event_answer),
+      guestCount: reservation.guest_count,
+      wantsLateEnd: !!reservation.wants_late_end,
+      insuranceConfirmed: !!reservation.liability_insurance_confirmed,
       feeMain: reservation.fee_main,
       feeSideRoom: reservation.fee_side_room,
       feeTablesChairs: reservation.fee_tables_chairs,
       feeAdditionalHours: reservation.fee_additional_hours,
       deposit: reservation.deposit_amount,
-      totalDue: reservation.total_due,
+      totalDue: reservation.status === 'pending_payment' ? reservation.total_due : null,
+    })
+
+    const signatureHtml = buildSignatureBlock({
+      residentName,
+      residentSignedAt: reservation.terms_acknowledged_at ? formatDeadline(reservation.terms_acknowledged_at.slice(0, 10)) : null,
+      rcpName,
+      rcpSignedAt: reservation.acknowledged_at ? formatDeadline(reservation.acknowledged_at.slice(0, 10)) : null,
+      rulesUrl: `${SITE_URL}/clubhouse-rules`,
+    })
+
+    const { subjectLine, bodyHtml } = buildStatusFragment({
+      status: reservation.status,
+      formTableHtml,
       deadline: formatDeadline(reservation.payment_deadline_date),
       payableTo: settingsResult?.data?.clubhouse_check_payable_to ?? null,
       mailingAddress: settingsResult?.data?.clubhouse_check_mailing_address ?? null,
-      signedByResidentAt: reservation.terms_acknowledged_at ? formatDeadline(reservation.terms_acknowledged_at.slice(0, 10)) : null,
-      signedByRcpAt: reservation.acknowledged_at ? formatDeadline(reservation.acknowledged_at.slice(0, 10)) : null,
+      signatureHtml,
     })
 
     const { inserted } = await enqueueNotifications(

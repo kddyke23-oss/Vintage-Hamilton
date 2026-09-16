@@ -24,6 +24,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { enqueueNotifications } from '../_shared/notify-queue.ts'
+import { buildBookingDetailsTable, buildSignatureBlock } from '../_shared/clubhouse-form.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -31,14 +32,6 @@ const corsHeaders = {
 }
 
 const SITE_URL = 'https://vintageathamilton.com'
-
-function resourceList(r: { wants_main_clubhouse: boolean; wants_side_room: boolean; wants_tables_chairs: boolean }): string {
-  const items: string[] = []
-  if (r.wants_main_clubhouse) items.push('Main Clubhouse')
-  if (r.wants_side_room) items.push('Small Side Room')
-  if (r.wants_tables_chairs) items.push('Extra Tables & Chairs')
-  return items.join(', ') || '(no resource on file)'
-}
 
 function formatDateTime(startsAt: string, endsAt: string): string {
   const s = new Date(startsAt)
@@ -48,38 +41,31 @@ function formatDateTime(startsAt: string, endsAt: string): string {
   return `${dateStr} · ${fmtTime(s)}–${fmtTime(e)}`
 }
 
+function formatDateOnly(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+}
+
+function privateAnswerLabel(answer: string): string {
+  return answer === 'yes' ? 'Yes' : answer === 'not_sure' ? 'Not sure' : 'No'
+}
+
+// wantsLateEnd, 2026-09-16: resident is asking to stay past the board-editable
+// vacate time — per the signed Clubhouse Lease Agreement that needs advance
+// written Board approval, so it's called out here for RCP to follow up on;
+// it doesn't change the normal acknowledge/fee flow below.
 function buildNewBookingFragment(opts: {
-  residentName: string
-  when: string
-  resources: string
-  privateAnswer: string
-  guestCount: number | null
-  extraTables: number
-  extraChairs: number
   wantsLateEnd: boolean
+  formTableHtml: string
+  signatureHtml: string
 }): string {
-  const { residentName, when, resources, privateAnswer, guestCount, extraTables, extraChairs, wantsLateEnd } = opts
-  const answerLabel = privateAnswer === 'yes' ? 'Yes' : privateAnswer === 'not_sure' ? 'Not sure' : 'No'
-  const extrasParts: string[] = []
-  if (extraTables > 0) extrasParts.push(`${extraTables} extra table${extraTables === 1 ? '' : 's'}`)
-  if (extraChairs > 0) extrasParts.push(`${extraChairs} extra chair${extraChairs === 1 ? '' : 's'}`)
-  // wantsLateEnd, 2026-09-16: resident is asking to stay past the board-editable
-  // vacate time — per the signed Clubhouse Lease Agreement that needs advance
-  // written Board approval, so it's called out here for RCP to follow up on;
-  // it doesn't change the normal acknowledge/fee flow below.
+  const { wantsLateEnd, formTableHtml, signatureHtml } = opts
   return `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#444;">
       A resident has requested this booking and marked it private (or wasn't sure). Please
       acknowledge it in the portal so the fee and payment deadline are set.
     </p>
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;border-radius:6px;padding:12px;margin:0;">
-      <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Resident</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;font-weight:700;">${residentName}</td></tr>
-      <tr><td style="padding:3px 12px;font-size:13px;color:#666;">When</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${when}</td></tr>
-      <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Resources</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${resources}</td></tr>
-      <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Private event?</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${answerLabel}</td></tr>
-      ${guestCount != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Guests</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${guestCount}</td></tr>` : ''}
-      ${extrasParts.length ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Extra</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${extrasParts.join(', ')}</td></tr>` : ''}
-    </table>
-    ${wantsLateEnd ? `<p style="margin:10px 0 0;font-size:13px;line-height:1.5;color:#8a5a00;background:#FBF3E4;border-radius:6px;padding:10px 12px;">⚠ Resident asked to stay past the standard vacate time — please check with the Board.</p>` : ''}`
+    ${formTableHtml}
+    ${wantsLateEnd ? `<p style="margin:10px 0 0;font-size:13px;line-height:1.5;color:#8a5a00;background:#FBF3E4;border-radius:6px;padding:10px 12px;">⚠ Resident asked to stay past the standard vacate time — please check with the Board.</p>` : ''}
+    ${signatureHtml}`
 }
 
 Deno.serve(async (req) => {
@@ -99,7 +85,7 @@ Deno.serve(async (req) => {
 
     const { data: reservation, error: resErr } = await supabaseAdmin
       .from('clubhouse_reservations')
-      .select('calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, status, private_event_answer, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end')
+      .select('calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, status, private_event_answer, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, liability_insurance_confirmed, terms_acknowledged_at, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due')
       .eq('id', reservationId)
       .maybeSingle()
     if (resErr) throw resErr
@@ -141,15 +127,37 @@ Deno.serve(async (req) => {
       })
     }
 
-    const bodyHtml = buildNewBookingFragment({
+    const formTableHtml = buildBookingDetailsTable({
       residentName,
       when: formatDateTime(reservation.starts_at, reservation.ends_at),
-      resources: resourceList(reservation),
-      privateAnswer: reservation.private_event_answer,
-      guestCount: reservation.guest_count,
+      wantsMainClubhouse: !!reservation.wants_main_clubhouse,
+      wantsSideRoom: !!reservation.wants_side_room,
       extraTables: reservation.extra_tables_requested || 0,
       extraChairs: reservation.extra_chairs_requested || 0,
+      privateAnswerLabel: privateAnswerLabel(reservation.private_event_answer),
+      guestCount: reservation.guest_count,
       wantsLateEnd: !!reservation.wants_late_end,
+      insuranceConfirmed: !!reservation.liability_insurance_confirmed,
+      feeMain: reservation.fee_main,
+      feeSideRoom: reservation.fee_side_room,
+      feeTablesChairs: reservation.fee_tables_chairs,
+      feeAdditionalHours: reservation.fee_additional_hours,
+      deposit: reservation.deposit_amount,
+      totalDue: reservation.total_due,
+    })
+
+    const signatureHtml = buildSignatureBlock({
+      residentName,
+      residentSignedAt: reservation.terms_acknowledged_at ? formatDateOnly(reservation.terms_acknowledged_at) : null,
+      rcpName: null,
+      rcpSignedAt: null,
+      rulesUrl: `${SITE_URL}/clubhouse-rules`,
+    })
+
+    const bodyHtml = buildNewBookingFragment({
+      wantsLateEnd: !!reservation.wants_late_end,
+      formTableHtml,
+      signatureHtml,
     })
 
     const { inserted } = await enqueueNotifications(

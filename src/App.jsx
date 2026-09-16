@@ -21,6 +21,7 @@ import AccessPage from '@/pages/admin/AccessPage'
 import AccessRequestsPage from '@/pages/admin/AccessRequestsPage'
 import ReportsPage from '@/pages/admin/ReportsPage'
 import ClubhouseReservationsPage from '@/pages/admin/ClubhouseReservationsPage'
+import ClubhouseRulesPage from '@/pages/ClubhouseRulesPage'
 
 function ResidentShell({ children }) {
   return (
@@ -62,6 +63,7 @@ export default function App() {
               <Route path="/login" element={<LoginPage />} />
               <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route path="/request-access" element={<RequestAccessPage />} />
+              <Route path="/clubhouse-rules" element={<ClubhouseRulesPage />} />
 
               {/* Resident routes */}
               <Route path="/" element={<ResidentShell><HomePage /></ResidentShell>} />

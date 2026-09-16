@@ -245,6 +245,54 @@ Keith had RCP send over the actual, currently-signed "Clubhouse Lease Agreement"
 
 **Not yet done:** the migration hasn't been run; nothing has been deployed. Deploy steps once Keith runs the migration: `git push` for the three `.jsx` files (Vercel auto-deploys), plus `supabase functions deploy notify-clubhouse-rcp --no-verify-jwt` and `supabase functions deploy notify-clubhouse-resident-status --no-verify-jwt` for the two edge functions.
 
+### 2.16 Reproduce the form in-app, not the PDF — 2026-09-16
+
+Right after 2.15 shipped, Keith actually tried booking and hit a real gap: the "I agree to the Clubhouse Lease
+Agreement and Rules & Regulations" checkbox had no link behind it at all — text referencing a document that was
+never actually linked. First fix was to drop the signed `VI Clubhouse Rental Agreement 2025.pdf` into `public/`
+and link to it from the checkbox, the on-screen panel, and the resident email. **Keith rejected that approach**:
+
+> "We need to reproduce the form and not just send the old PDF. We only need to show the actual rules and
+> regulations and not the specifics of the booking - when they submit and RCP subsequently acknowledge the full
+> form - including all booking details - should be included in the email (can be the email and does not need to
+> be an attachment) and include the person and timestamp of acknowledgement by the resident and RCP."
+
+Rebuilt as two pieces instead:
+
+1. **`/clubhouse-rules`** (`src/pages/ClubhouseRulesPage.jsx`) — a new public page (unauthenticated, same pattern
+   as `/login`) reproducing only the standing Rules & Regulations from the signed contract: eligibility, defined
+   areas (Clubhouse room + bathrooms only; pool/fitness/patio/pickleball court/office explicitly off-limits),
+   insurance indemnification, resident responsibilities, non-smoking, alcohol usage, additional items, and the
+   waiver clause. Deliberately excludes booking-specific fill-in content (the Term/Rental-Purpose blanks from the
+   paper form) — those live on the booking form and in the confirmation emails instead. Dollar figures (base fee,
+   deposit, additional-hour fee, tables/chairs fee) are described without being hardcoded, since they're
+   board-editable settings — the page points to "shown live on the booking form" rather than risk drifting out of
+   sync with whatever the Board has actually set.
+2. **`supabase/functions/_shared/clubhouse-form.ts`** — new shared helper (`buildBookingDetailsTable`,
+   `buildSignatureBlock`) that renders the *complete* booking record — resident name, date/time, resources,
+   guest count, private-event answer, insurance-confirmed flag, late-end flag, every fee line and the total — plus
+   the two-sided acknowledgment record (resident's name + `terms_acknowledged_at`, and once it happens, RCP's
+   name + `acknowledged_at`) as an HTML fragment. Both `notify-clubhouse-rcp` and `notify-clubhouse-resident-status`
+   now import this and embed the full form directly in the email body (never a PDF attachment) instead of each
+   building their own partial summary table. `notify-clubhouse-rcp`'s select was extended with the fee/deposit/
+   total/insurance/terms-timestamp columns it didn't previously fetch; `notify-clubhouse-resident-status` now also
+   fetches the resident's own name (previously only email) and looks up the RCP acknowledger's name from
+   `acknowledged_by` (previously only had the timestamp) so the signature block can name both sides, not just date
+   them.
+
+The two links in `SocialCalendar.jsx` (the booking-form terms checkbox, and `ClubhouseReservationPanel`'s
+signed-by-both-parties line) now point to `/clubhouse-rules` instead of the PDF. `public/clubhouse-lease-agreement.pdf`
+has been deleted — nothing in the codebase references it anymore.
+
+**Built, `npx eslint` clean on every touched/new file** (`src/App.jsx`, `src/pages/ClubhouseRulesPage.jsx`,
+`src/components/apps/SocialCalendar.jsx` — matches its pre-existing 4-problem baseline, nothing new): the
+`/clubhouse-rules` route, the shared email helper, both edge functions rewired to use it, and the PDF removal.
+
+**Not yet deployed:** `git push` for the `.jsx`/`.ts` changes (Vercel auto-deploys the frontend + new route), plus
+`supabase functions deploy notify-clubhouse-rcp --no-verify-jwt` and
+`supabase functions deploy notify-clubhouse-resident-status --no-verify-jwt` to pick up the shared-helper rewire.
+This supersedes the PDF-link approach mentioned at the end of 2.15 — that link no longer exists anywhere.
+
 ## 3. Pickleball Court Reservation Flow
 
 Fully self-contained in the portal — no fee, no RCP touchpoint. Built as a separate calendar/app from the clubhouse flow (different structure: fixed-length resource slots vs. open-ended request/approval).
