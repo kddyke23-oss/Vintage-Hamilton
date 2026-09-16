@@ -115,7 +115,8 @@ function buildStatusFragment(opts: {
   // shown here so both parties have a durable, dated record of it.
   const signatureNote = (signedByResidentAt && signedByRcpAt)
     ? `<p style="margin:10px 0 0;font-size:12px;line-height:1.5;color:#888;">
-         Agreement accepted by you on ${signedByResidentAt}, and acknowledged by RCP on ${signedByRcpAt} — together these serve as the signed Clubhouse Lease Agreement.
+         Agreement accepted by you on ${signedByResidentAt}, and acknowledged by RCP on ${signedByRcpAt} — together these serve as the signed
+         <a href="${SITE_URL}/clubhouse-lease-agreement.pdf" style="color:#2C5F8A;">Clubhouse Lease Agreement and Rules &amp; Regulations</a>.
        </p>`
     : ''
 
