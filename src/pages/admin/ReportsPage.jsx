@@ -1158,6 +1158,14 @@ const CLUBHOUSE_FIELDS = [
   { key: 'clubhouse_tables_chairs_fee', label: 'Extra Tables & Chairs fee ($)', type: 'number', allowEmpty: true },
   { key: 'clubhouse_security_deposit', label: 'Security deposit ($)', type: 'number', allowEmpty: false },
   { key: 'clubhouse_payment_deadline_days', label: 'Payment deadline (days before event)', type: 'integer', allowEmpty: false },
+  // Added 2026-09-16, reviewing the signed Clubhouse Lease Agreement (Reservations/REQUIREMENTS.md):
+  // the contract's base rent covers 6 hours and prices extra hours separately, and vacates
+  // at 11:00 PM (extendable only with Board approval, never past midnight) — both now
+  // board-editable instead of hardcoded.
+  { key: 'clubhouse_latest_vacate_time', label: 'Latest vacate time', type: 'time', allowEmpty: false },
+  { key: 'clubhouse_additional_hour_fee', label: 'Additional hour fee ($, beyond the included 6 hours)', type: 'number', allowEmpty: true },
+  { key: 'clubhouse_main_max_occupancy', label: 'Main Clubhouse max occupancy', type: 'integer', allowEmpty: false },
+  { key: 'clubhouse_side_room_max_occupancy', label: 'Side Room max occupancy', type: 'integer', allowEmpty: true },
   // Text, not fee/deposit numbers — who the check is made out to and where it's
   // mailed. Kept as settings (not hardcoded copy) so this can be updated
   // without a code change if the booking contact ever changes from RCP.
@@ -1179,7 +1187,7 @@ function ClubhouseSettingsCard() {
     setLoading(true)
     const { data, error } = await supabase
       .from('community_settings')
-      .select('clubhouse_main_fee, clubhouse_side_room_fee, clubhouse_tables_chairs_fee, clubhouse_security_deposit, clubhouse_payment_deadline_days, clubhouse_side_room_available, clubhouse_check_payable_to, clubhouse_check_mailing_address')
+      .select('clubhouse_main_fee, clubhouse_side_room_fee, clubhouse_tables_chairs_fee, clubhouse_security_deposit, clubhouse_payment_deadline_days, clubhouse_side_room_available, clubhouse_check_payable_to, clubhouse_check_mailing_address, clubhouse_latest_vacate_time, clubhouse_additional_hour_fee, clubhouse_main_max_occupancy, clubhouse_side_room_max_occupancy')
       .eq('id', 1)
       .maybeSingle()
     if (!error && data) {
@@ -1208,7 +1216,7 @@ function ClubhouseSettingsCard() {
     setSaving(true)
     const update = { clubhouse_side_room_available: sideRoomAvailable }
     for (const f of CLUBHOUSE_FIELDS) {
-      if (f.type === 'text') {
+      if (f.type === 'text' || f.type === 'time') {
         update[f.key] = values[f.key] === '' ? null : values[f.key].trim()
       } else {
         update[f.key] = values[f.key] === '' ? null : (f.type === 'integer' ? parseInt(values[f.key], 10) : parseFloat(values[f.key]))
@@ -1227,7 +1235,7 @@ function ClubhouseSettingsCard() {
       <div className="mb-4">
         <h2 className="text-lg font-bold text-gray-900">Clubhouse Reservation Settings</h2>
         <p className="text-sm text-gray-500 mt-0.5">
-          Fees, deposit, and payment deadline used by the clubhouse reservation flow (Add Event → Main Clubhouse / Side Room). Each reservation snapshots these at booking time, so a change here never retroactively affects an existing booking.
+          Fees, deposit, payment deadline, vacate time, and occupancy caps used by the clubhouse reservation flow (Add Event → Main Clubhouse / Side Room). Each reservation snapshots the fees at booking time, so a change here never retroactively affects an existing booking&apos;s cost.
         </p>
       </div>
       <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
@@ -1240,7 +1248,7 @@ function ClubhouseSettingsCard() {
                 <div key={f.key}>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}</label>
                   <input
-                    type={f.type === 'text' ? 'text' : 'number'}
+                    type={f.type === 'text' ? 'text' : f.type === 'time' ? 'time' : 'number'}
                     step={f.type === 'integer' ? '1' : f.type === 'number' ? '0.01' : undefined}
                     value={values[f.key] ?? ''}
                     onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value }))}

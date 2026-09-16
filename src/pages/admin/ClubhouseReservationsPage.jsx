@@ -71,9 +71,10 @@ export default function ClubhouseReservationsPage() {
       .from('clubhouse_reservations')
       .select(`
         id, calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs,
-        starts_at, ends_at, private_event_answer, fee_main, fee_side_room, fee_tables_chairs, deposit_amount, total_due,
+        starts_at, ends_at, private_event_answer, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due,
         payment_deadline_date, status, acknowledged_at, check_received_at, escalated_at, escalation_outcome,
         cancelled_at, refund_issued_at, is_test, actual_title,
+        guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, liability_insurance_confirmed,
         calendar_events ( title )
       `)
       .order('starts_at', { ascending: true })
@@ -217,15 +218,20 @@ export default function ClubhouseReservationsPage() {
     // confirmed_private: now owes a fee that wasn't snapshotted at submission (it was a 'no' answer)
     const { data: settings } = await supabase
       .from('community_settings')
-      .select('clubhouse_main_fee, clubhouse_side_room_fee, clubhouse_tables_chairs_fee, clubhouse_security_deposit, clubhouse_payment_deadline_days')
+      .select('clubhouse_main_fee, clubhouse_side_room_fee, clubhouse_tables_chairs_fee, clubhouse_additional_hour_fee, clubhouse_security_deposit, clubhouse_payment_deadline_days')
       .eq('id', 1)
       .maybeSingle()
+    // Same 6-hours-included / pay-for-extra math as a fresh submission
+    // (SocialCalendar.jsx) — a 'no' answer never went through that at
+    // booking time, so it's computed here from the row's own start/end.
+    const extraHours = Math.max(0, Math.ceil((new Date(row.ends_at) - new Date(row.starts_at)) / 3600000 - 6))
     await act(row.id, {
       status: 'pending_payment',
       escalation_resolved_at: new Date().toISOString(), escalation_resolved_by: user.id, escalation_outcome: 'confirmed_private',
       fee_main: row.wants_main_clubhouse ? settings?.clubhouse_main_fee : null,
       fee_side_room: row.wants_side_room ? settings?.clubhouse_side_room_fee : null,
       fee_tables_chairs: row.wants_tables_chairs ? settings?.clubhouse_tables_chairs_fee : null,
+      fee_additional_hours: extraHours > 0 && settings?.clubhouse_additional_hour_fee != null ? extraHours * Number(settings.clubhouse_additional_hour_fee) : null,
       deposit_amount: settings?.clubhouse_security_deposit,
       payment_deadline_days_snapshot: settings?.clubhouse_payment_deadline_days,
     }, 'Escalation confirmed — fee now due')
@@ -313,7 +319,27 @@ export default function ClubhouseReservationsPage() {
                         — Name", so this is the only place RCP/committee can see what a
                         resident actually called it (e.g. a test-plan "Test scenario 1"). */}
                     {r.actual_title && <div className="text-sm text-gray-500 italic">Ref: {r.actual_title}</div>}
-                    {r.total_due > 0 && <div className="text-sm text-gray-700 mt-1">Due: {money(r.total_due)}{r.payment_deadline_date ? ` by ${r.payment_deadline_date}` : ''}</div>}
+                    {(r.guest_count != null || r.extra_tables_requested > 0 || r.extra_chairs_requested > 0) && (
+                      <div className="text-sm text-gray-500">
+                        {[
+                          r.guest_count != null ? `${r.guest_count} guests` : null,
+                          r.extra_tables_requested > 0 ? `${r.extra_tables_requested} extra table${r.extra_tables_requested === 1 ? '' : 's'}` : null,
+                          r.extra_chairs_requested > 0 ? `${r.extra_chairs_requested} extra chair${r.extra_chairs_requested === 1 ? '' : 's'}` : null,
+                        ].filter(Boolean).join(' · ')}
+                        {r.liability_insurance_confirmed && ' · Insurance confirmed'}
+                      </div>
+                    )}
+                    {r.total_due > 0 && <div className="text-sm text-gray-700 mt-1">Due: {money(r.total_due)}{r.fee_additional_hours ? ` (incl. ${money(r.fee_additional_hours)} additional-hour fee)` : ''}{r.payment_deadline_date ? ` by ${r.payment_deadline_date}` : ''}</div>}
+                    {/* Keith, 2026-09-16: the resident checked "I need to stay later
+                        than the vacate time" — this is a flag for RCP to take to the
+                        Board offline (per the signed Clubhouse Lease Agreement),
+                        not a separate blocking status; the normal acknowledge/fee
+                        flow below proceeds regardless. */}
+                    {r.wants_late_end && (
+                      <div className="text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-1 inline-block">
+                        ⚠ Requested to stay past the vacate time — check with the Board
+                      </div>
+                    )}
                   </div>
                   <span className={`text-xs font-medium px-2 py-1 rounded-full ${st.color}`}>{st.label}</span>
                 </div>

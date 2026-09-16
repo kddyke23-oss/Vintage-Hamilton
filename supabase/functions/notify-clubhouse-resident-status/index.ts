@@ -64,20 +64,24 @@ function buildStatusFragment(opts: {
   feeMain: number | null
   feeSideRoom: number | null
   feeTablesChairs: number | null
+  feeAdditionalHours: number | null
   deposit: number | null
   totalDue: number | null
   deadline: string
   payableTo: string | null
   mailingAddress: string | null
+  signedByResidentAt: string | null
+  signedByRcpAt: string | null
 }): { subjectLine: string; bodyHtml: string } {
-  const { status, when, resources, feeMain, feeSideRoom, feeTablesChairs, deposit, totalDue, deadline, payableTo, mailingAddress } = opts
+  const { status, when, resources, feeMain, feeSideRoom, feeTablesChairs, feeAdditionalHours, deposit, totalDue, deadline, payableTo, mailingAddress, signedByResidentAt, signedByRcpAt } = opts
 
   const feeRows = status === 'pending_payment'
     ? [
         feeMain != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Main Clubhouse fee</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(feeMain)}</td></tr>` : '',
         feeSideRoom != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Side Room fee</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(feeSideRoom)}</td></tr>` : '',
         feeTablesChairs != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Tables &amp; Chairs fee</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(feeTablesChairs)}</td></tr>` : '',
-        deposit != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Security deposit</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(deposit)}</td></tr>` : '',
+        feeAdditionalHours != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Additional hours fee</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(feeAdditionalHours)}</td></tr>` : '',
+        deposit != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Security deposit</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(deposit)} (also covers cleaning if the space isn't left as required)</td></tr>` : '',
         `<tr><td style="padding:6px 12px 3px;font-size:13px;color:#1A3F5C;font-weight:700;">Total due</td><td style="padding:6px 12px 3px;font-size:13px;color:#1A3F5C;font-weight:700;">${money(totalDue)}</td></tr>`,
         deadline ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Due by</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;font-weight:700;">${deadline}</td></tr>` : '',
       ].filter(Boolean).join('')
@@ -104,13 +108,25 @@ function buildStatusFragment(opts: {
     ? `Payment due for your clubhouse booking`
     : `Your clubhouse booking is confirmed`
 
+  // Keith, 2026-09-16: since there's no physical signature step, the
+  // resident's own submission (accepting the Clubhouse Lease Agreement /
+  // Rules & Regulations terms) plus RCP's acknowledgment in the portal
+  // together stand in for the two signature lines on the paper agreement —
+  // shown here so both parties have a durable, dated record of it.
+  const signatureNote = (signedByResidentAt && signedByRcpAt)
+    ? `<p style="margin:10px 0 0;font-size:12px;line-height:1.5;color:#888;">
+         Agreement accepted by you on ${signedByResidentAt}, and acknowledged by RCP on ${signedByRcpAt} — together these serve as the signed Clubhouse Lease Agreement.
+       </p>`
+    : ''
+
   const bodyHtml = `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#444;">${intro}</p>
     <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;border-radius:6px;padding:12px;margin:0;">
       <tr><td style="padding:3px 12px;font-size:13px;color:#666;">When</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${when}</td></tr>
       <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Resources</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${resources}</td></tr>
       ${feeRows}
     </table>
-    ${paymentInstructions}`
+    ${paymentInstructions}
+    ${signatureNote}`
 
   return { subjectLine, bodyHtml }
 }
@@ -132,7 +148,7 @@ Deno.serve(async (req) => {
 
     const { data: reservation, error: resErr } = await supabaseAdmin
       .from('clubhouse_reservations')
-      .select('calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, status, fee_main, fee_side_room, fee_tables_chairs, deposit_amount, total_due, payment_deadline_date, actual_title')
+      .select('calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, status, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due, payment_deadline_date, actual_title, terms_acknowledged_at, acknowledged_at')
       .eq('id', reservationId)
       .maybeSingle()
     if (resErr) throw resErr
@@ -175,11 +191,14 @@ Deno.serve(async (req) => {
       feeMain: reservation.fee_main,
       feeSideRoom: reservation.fee_side_room,
       feeTablesChairs: reservation.fee_tables_chairs,
+      feeAdditionalHours: reservation.fee_additional_hours,
       deposit: reservation.deposit_amount,
       totalDue: reservation.total_due,
       deadline: formatDeadline(reservation.payment_deadline_date),
       payableTo: settingsResult?.data?.clubhouse_check_payable_to ?? null,
       mailingAddress: settingsResult?.data?.clubhouse_check_mailing_address ?? null,
+      signedByResidentAt: reservation.terms_acknowledged_at ? formatDeadline(reservation.terms_acknowledged_at.slice(0, 10)) : null,
+      signedByRcpAt: reservation.acknowledged_at ? formatDeadline(reservation.acknowledged_at.slice(0, 10)) : null,
     })
 
     const { inserted } = await enqueueNotifications(

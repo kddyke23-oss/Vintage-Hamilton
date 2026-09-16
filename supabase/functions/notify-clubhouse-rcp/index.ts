@@ -53,9 +53,20 @@ function buildNewBookingFragment(opts: {
   when: string
   resources: string
   privateAnswer: string
+  guestCount: number | null
+  extraTables: number
+  extraChairs: number
+  wantsLateEnd: boolean
 }): string {
-  const { residentName, when, resources, privateAnswer } = opts
+  const { residentName, when, resources, privateAnswer, guestCount, extraTables, extraChairs, wantsLateEnd } = opts
   const answerLabel = privateAnswer === 'yes' ? 'Yes' : privateAnswer === 'not_sure' ? 'Not sure' : 'No'
+  const extrasParts: string[] = []
+  if (extraTables > 0) extrasParts.push(`${extraTables} extra table${extraTables === 1 ? '' : 's'}`)
+  if (extraChairs > 0) extrasParts.push(`${extraChairs} extra chair${extraChairs === 1 ? '' : 's'}`)
+  // wantsLateEnd, 2026-09-16: resident is asking to stay past the board-editable
+  // vacate time — per the signed Clubhouse Lease Agreement that needs advance
+  // written Board approval, so it's called out here for RCP to follow up on;
+  // it doesn't change the normal acknowledge/fee flow below.
   return `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#444;">
       A resident has requested this booking and marked it private (or wasn't sure). Please
       acknowledge it in the portal so the fee and payment deadline are set.
@@ -65,7 +76,10 @@ function buildNewBookingFragment(opts: {
       <tr><td style="padding:3px 12px;font-size:13px;color:#666;">When</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${when}</td></tr>
       <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Resources</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${resources}</td></tr>
       <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Private event?</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${answerLabel}</td></tr>
-    </table>`
+      ${guestCount != null ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Guests</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${guestCount}</td></tr>` : ''}
+      ${extrasParts.length ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Extra</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${extrasParts.join(', ')}</td></tr>` : ''}
+    </table>
+    ${wantsLateEnd ? `<p style="margin:10px 0 0;font-size:13px;line-height:1.5;color:#8a5a00;background:#FBF3E4;border-radius:6px;padding:10px 12px;">⚠ Resident asked to stay past the standard vacate time — please check with the Board.</p>` : ''}`
 }
 
 Deno.serve(async (req) => {
@@ -85,7 +99,7 @@ Deno.serve(async (req) => {
 
     const { data: reservation, error: resErr } = await supabaseAdmin
       .from('clubhouse_reservations')
-      .select('calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, status, private_event_answer')
+      .select('calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, status, private_event_answer, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end')
       .eq('id', reservationId)
       .maybeSingle()
     if (resErr) throw resErr
@@ -132,6 +146,10 @@ Deno.serve(async (req) => {
       when: formatDateTime(reservation.starts_at, reservation.ends_at),
       resources: resourceList(reservation),
       privateAnswer: reservation.private_event_answer,
+      guestCount: reservation.guest_count,
+      extraTables: reservation.extra_tables_requested || 0,
+      extraChairs: reservation.extra_chairs_requested || 0,
+      wantsLateEnd: !!reservation.wants_late_end,
     })
 
     const { inserted } = await enqueueNotifications(

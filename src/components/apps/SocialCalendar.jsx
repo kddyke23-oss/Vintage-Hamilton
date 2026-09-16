@@ -155,8 +155,20 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
     event_end_time: '',
     wantsMainClubhouse: false,
     wantsSideRoom: false,
-    wantsTablesChairs: false,
+    extraTables: 0, // 2026-09-16: replaces the old wantsTablesChairs boolean —
+    extraChairs: 0, // Keith wants a quantity, capped at 5 tables / 50 chairs,
+                     // not just yes/no. wantsTablesChairs is now derived (see
+                     // wantsTablesChairsResource below), not stored form state.
     privateAnswer: '', // 'yes' | 'no' | 'not_sure'
+    guestCount: '', // required whenever Main Clubhouse or Side Room is wanted —
+                     // signed Clubhouse Lease Agreement caps occupancy
+    wantsLateEnd: false, // "I need to go past the vacate time" — RCP takes this
+                          // to the Board offline, per the signed agreement
+    termsAccepted: false, // resident's acknowledgment of the Clubhouse Lease
+                           // Agreement / Rules & Regulations — stands in for
+                           // their signature (Keith, 2026-09-16)
+    insuranceConfirmed: false, // confirms liability insurance per the agreement;
+                                // RCP separately collects actual proof
   })
   const [saving, setSaving] = useState(false)
 
@@ -167,7 +179,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
   useEffect(() => {
     supabase
       .from('community_settings')
-      .select('clubhouse_main_fee, clubhouse_side_room_fee, clubhouse_tables_chairs_fee, clubhouse_security_deposit, clubhouse_payment_deadline_days, clubhouse_side_room_available')
+      .select('clubhouse_main_fee, clubhouse_side_room_fee, clubhouse_tables_chairs_fee, clubhouse_security_deposit, clubhouse_payment_deadline_days, clubhouse_side_room_available, clubhouse_latest_vacate_time, clubhouse_additional_hour_fee, clubhouse_main_max_occupancy, clubhouse_side_room_max_occupancy')
       .eq('id', 1)
       .maybeSingle()
       .then(({ data }) => setClubhouseSettings(data || null))
@@ -186,7 +198,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
     setReservationLoaded(false)
     supabase
       .from('clubhouse_reservations')
-      .select('id, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, private_event_answer, status, check_received_at, actual_title')
+      .select('id, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, private_event_answer, status, check_received_at, actual_title, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end')
       .eq('calendar_event_id', editEvent.id)
       .maybeSingle()
       .then(({ data }) => {
@@ -210,9 +222,12 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
       ...f,
       wantsMainClubhouse: existingReservation.wants_main_clubhouse,
       wantsSideRoom: existingReservation.wants_side_room,
-      wantsTablesChairs: existingReservation.wants_tables_chairs,
+      extraTables: existingReservation.extra_tables_requested ?? 0,
+      extraChairs: existingReservation.extra_chairs_requested ?? 0,
       event_end_time: existingReservation.ends_at.slice(11, 16),
       privateAnswer: existingReservation.private_event_answer,
+      guestCount: existingReservation.guest_count != null ? String(existingReservation.guest_count) : '',
+      wantsLateEnd: existingReservation.wants_late_end || false,
       ...(wasMasked ? { title: existingReservation.actual_title || '' } : {}),
     }))
   }, [existingReservation])
@@ -225,7 +240,19 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
   const reservationEditable = !!existingReservation && existingReservation.status !== 'cancelled' && !existingReservation.check_received_at
   const isClubhouseReservationEdit = !!editEvent && !!existingReservation
 
-  const wantsAnyClubhouseResource = form.wantsMainClubhouse || form.wantsSideRoom || form.wantsTablesChairs
+  const wantsTablesChairsResource = (Number(form.extraTables) || 0) > 0 || (Number(form.extraChairs) || 0) > 0
+  const wantsAnyClubhouseResource = form.wantsMainClubhouse || form.wantsSideRoom || wantsTablesChairsResource
+  const wantsClubhouseRoom = form.wantsMainClubhouse || form.wantsSideRoom
+  // Render-only mirror of the extraHours calc in handleSubmit, so the fee
+  // breakdown below can show the additional-hour line before submission.
+  const reservationMinutesForDisplay = form.event_time && form.event_end_time
+    ? (() => {
+        const [sh, sm] = form.event_time.split(':').map(Number)
+        const [eh, em] = form.event_end_time.split(':').map(Number)
+        return (eh * 60 + em) - (sh * 60 + sm)
+      })()
+    : 0
+  const extraHoursForDisplay = Math.ceil(Math.max(0, reservationMinutesForDisplay - 360) / 60)
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -237,6 +264,10 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
   }, [allowedCategories.length])
 
   async function handleSubmit() {
+    // Hoisted out of the validation block below so the payload-construction
+    // code further down (both the edit-update and new-insert paths) can
+    // read the same values the validation already checked.
+    let extraTables = 0, extraChairs = 0, extraHours = 0
     if (editEvent && !reservationLoaded) return toast.error('Still loading — please try again in a moment')
     if (isClubhouseReservationEdit && reservationEditable && !wantsAnyClubhouseResource) {
       return toast.error('A clubhouse reservation needs at least one space selected — cancel the reservation instead if you no longer need it.')
@@ -268,15 +299,43 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
       // strings from <input type="time">, always same-day, so string comparison
       // against '22:00' is safe. 'yes'/'not_sure' is the same private-or-unsure
       // bucket used everywhere else in this file (masking, RCP notification).
-      if (form.event_end_time > '22:00') return toast.error('Clubhouse reservations must end by 10:00 PM')
-      if (form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure') {
-        const [startH, startM] = form.event_time.split(':').map(Number)
-        const [endH, endM] = form.event_end_time.split(':').map(Number)
-        const reservationMinutes = (endH * 60 + endM) - (startH * 60 + startM)
-        if (reservationMinutes > 360) return toast.error('Private clubhouse reservations can be at most 6 hours long')
+      // Vacate time and the 6-hour-included / pay-for-extra-hours model both
+      // replace the old hardcoded 10:00 PM / hard 6-hour-block rule, 2026-09-16,
+      // to match the signed Clubhouse Lease Agreement (Reservations/REQUIREMENTS.md).
+      // The vacate time is board-editable; going past it needs the "stay later"
+      // checkbox (RCP takes it to the Board offline — see wantsLateEnd below).
+      // There's no separate "never past midnight" check: a same-day <input
+      // type="time"> already tops out at 23:59, so it can't represent going
+      // past midnight at all.
+      const vacateTime = clubhouseSettings?.clubhouse_latest_vacate_time?.slice(0, 5) || '23:00'
+      if (form.event_end_time > vacateTime && !form.wantsLateEnd) {
+        return toast.error(`Please check the box below if you need to stay past ${formatTime(vacateTime)} — RCP will check with the Board`)
+      }
+      const [startH, startM] = form.event_time.split(':').map(Number)
+      const [endH, endM] = form.event_end_time.split(':').map(Number)
+      const reservationMinutes = (endH * 60 + endM) - (startH * 60 + startM)
+      extraHours = Math.ceil(Math.max(0, reservationMinutes - 360) / 60)
+      if (extraHours > 0 && clubhouseSettings?.clubhouse_additional_hour_fee == null) {
+        return toast.error('This reservation runs longer than the included 6 hours, and the additional-hour fee hasn\'t been set yet — contact an administrator')
       }
       if (form.wantsSideRoom && !clubhouseSettings?.clubhouse_side_room_available) return toast.error('The Side Room is not yet available to book')
-      if (form.wantsTablesChairs && clubhouseSettings?.clubhouse_tables_chairs_fee == null) return toast.error('Extra Tables & Chairs pricing has not been set yet — contact an administrator')
+      extraTables = Math.max(0, Math.min(5, Number(form.extraTables) || 0))
+      extraChairs = Math.max(0, Math.min(50, Number(form.extraChairs) || 0))
+      if (wantsTablesChairsResource && clubhouseSettings?.clubhouse_tables_chairs_fee == null) return toast.error('Extra Tables & Chairs pricing has not been set yet — contact an administrator')
+      if (wantsClubhouseRoom) {
+        if (!form.guestCount || Number(form.guestCount) <= 0) return toast.error('Please enter the expected number of guests')
+        const applicableMaxes = [
+          form.wantsMainClubhouse ? clubhouseSettings?.clubhouse_main_max_occupancy : null,
+          form.wantsSideRoom ? clubhouseSettings?.clubhouse_side_room_max_occupancy : null,
+        ].filter(v => v != null)
+        const applicableMax = applicableMaxes.length ? Math.min(...applicableMaxes) : null
+        if (applicableMax != null && Number(form.guestCount) > applicableMax) {
+          return toast.error(`Maximum occupancy for the space(s) selected is ${applicableMax} guests`)
+        }
+      }
+      if ((form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure') && (!form.termsAccepted || !form.insuranceConfirmed)) {
+        return toast.error('Please acknowledge the Clubhouse Lease Agreement and confirm liability insurance below')
+      }
     }
 
     const displayName = `${profile?.names || ''} ${profile?.surname || ''}`.trim() || 'A resident'
@@ -314,17 +373,28 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
           .update({
             wants_main_clubhouse: form.wantsMainClubhouse,
             wants_side_room: form.wantsSideRoom,
-            wants_tables_chairs: form.wantsTablesChairs,
+            wants_tables_chairs: wantsTablesChairsResource,
+            extra_tables_requested: extraTables,
+            extra_chairs_requested: extraChairs,
             starts_at: `${form.event_date}T${form.event_time}:00`,
             ends_at: `${form.event_date}T${form.event_end_time}:00`,
             private_event_answer: form.privateAnswer,
+            guest_count: wantsClubhouseRoom ? Number(form.guestCount) : null,
+            wants_late_end: form.wantsLateEnd,
             status: isMasked ? 'pending_rcp' : 'confirmed',
             actual_title: isMasked ? (form.title.trim() || null) : null,
             fee_main: isMasked && form.wantsMainClubhouse ? clubhouseSettings?.clubhouse_main_fee : null,
             fee_side_room: isMasked && form.wantsSideRoom ? clubhouseSettings?.clubhouse_side_room_fee : null,
-            fee_tables_chairs: isMasked && form.wantsTablesChairs ? clubhouseSettings?.clubhouse_tables_chairs_fee : null,
+            fee_tables_chairs: isMasked && wantsTablesChairsResource ? clubhouseSettings?.clubhouse_tables_chairs_fee : null,
+            fee_additional_hours: isMasked && extraHours > 0 ? extraHours * Number(clubhouseSettings?.clubhouse_additional_hour_fee) : null,
             deposit_amount: isMasked ? clubhouseSettings?.clubhouse_security_deposit : null,
             payment_deadline_days_snapshot: isMasked ? clubhouseSettings?.clubhouse_payment_deadline_days : null,
+            // Materially changing an already-acknowledged reservation starts the
+            // agreement over too — a fresh acknowledgment is required (enforced
+            // above in validation) and re-timestamped here, same reasoning as
+            // clearing acknowledged_at/escalated_at/etc. below.
+            liability_insurance_confirmed: isMasked ? form.insuranceConfirmed : false,
+            terms_acknowledged_at: isMasked ? new Date().toISOString() : null,
             acknowledged_at: null, acknowledged_by: null,
             escalated_at: null, escalated_by: null,
             escalation_resolved_at: null, escalation_resolved_by: null, escalation_outcome: null,
@@ -403,18 +473,25 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
       reserved_by: user.id,
       wants_main_clubhouse: form.wantsMainClubhouse,
       wants_side_room: form.wantsSideRoom,
-      wants_tables_chairs: form.wantsTablesChairs,
+      wants_tables_chairs: wantsTablesChairsResource,
+      extra_tables_requested: extraTables,
+      extra_chairs_requested: extraChairs,
       starts_at: `${form.event_date}T${form.event_time}:00`,
       ends_at: `${form.event_date}T${form.event_end_time}:00`,
       private_event_answer: form.privateAnswer,
+      guest_count: wantsClubhouseRoom ? Number(form.guestCount) : null,
+      wants_late_end: form.wantsLateEnd,
       status: isPrivateOrUnsure ? 'pending_rcp' : 'confirmed',
       actual_title: isPrivateOrUnsure ? (form.title.trim() || null) : null,
       ...(isPrivateOrUnsure ? {
         fee_main: form.wantsMainClubhouse ? clubhouseSettings.clubhouse_main_fee : null,
         fee_side_room: form.wantsSideRoom ? clubhouseSettings.clubhouse_side_room_fee : null,
-        fee_tables_chairs: form.wantsTablesChairs ? clubhouseSettings.clubhouse_tables_chairs_fee : null,
+        fee_tables_chairs: wantsTablesChairsResource ? clubhouseSettings.clubhouse_tables_chairs_fee : null,
+        fee_additional_hours: extraHours > 0 ? extraHours * Number(clubhouseSettings.clubhouse_additional_hour_fee) : null,
         deposit_amount: clubhouseSettings.clubhouse_security_deposit,
         payment_deadline_days_snapshot: clubhouseSettings.clubhouse_payment_deadline_days,
+        liability_insurance_confirmed: form.insuranceConfirmed,
+        terms_acknowledged_at: new Date().toISOString(),
       } : {}),
     }
 
@@ -551,7 +628,19 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
                   value={form.event_end_time}
                   onChange={e => set('event_end_time', e.target.value)}
                 />
-                <p className="text-xs text-brand-400 mt-1">Must end by 10:00 PM. Private events: maximum 6 hours.</p>
+                <p className="text-xs text-brand-400 mt-1">
+                  Included: 6 hours. Vacate by {formatTime(clubhouseSettings?.clubhouse_latest_vacate_time?.slice(0, 5) || '23:00')} unless you check the box below.
+                </p>
+                <label className="flex items-start gap-2 text-xs text-brand-600 mt-2">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={form.wantsLateEnd}
+                    disabled={isClubhouseReservationEdit && !reservationEditable}
+                    onChange={e => set('wantsLateEnd', e.target.checked)}
+                  />
+                  I need to stay later than that — RCP will check with the Board (advance written approval is required, and the Clubhouse can never be used past midnight).
+                </label>
               </div>
             )}
 
@@ -601,18 +690,55 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
             {/* Clubhouse reservation panel — only for a NEW event with a resource selected */}
             {wantsAnyClubhouseResource && (
               <div className="bg-brand-50 border border-brand-100 rounded-xl p-4 space-y-3">
-                <label className="flex items-center gap-2 text-sm text-brand-700">
-                  <input
-                    type="checkbox"
-                    checked={form.wantsTablesChairs}
-                    disabled={clubhouseSettings?.clubhouse_tables_chairs_fee == null || (isClubhouseReservationEdit && !reservationEditable)}
-                    onChange={e => set('wantsTablesChairs', e.target.checked)}
-                  />
-                  Extra Tables &amp; Chairs
-                  {clubhouseSettings?.clubhouse_tables_chairs_fee == null && (
-                    <span className="text-brand-400 text-xs">(pricing not yet set)</span>
-                  )}
-                </label>
+                {wantsClubhouseRoom && (
+                  <div>
+                    <label className="block text-sm font-medium text-brand-700 mb-1">Expected number of guests *</label>
+                    <input
+                      type="number"
+                      min="1"
+                      className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                      value={form.guestCount}
+                      disabled={isClubhouseReservationEdit && !reservationEditable}
+                      onChange={e => set('guestCount', e.target.value)}
+                    />
+                    <p className="text-xs text-brand-400 mt-1">
+                      Max occupancy: {[
+                        form.wantsMainClubhouse && clubhouseSettings?.clubhouse_main_max_occupancy != null ? `Main Clubhouse ${clubhouseSettings.clubhouse_main_max_occupancy}` : null,
+                        form.wantsSideRoom ? (clubhouseSettings?.clubhouse_side_room_max_occupancy != null ? `Side Room ${clubhouseSettings.clubhouse_side_room_max_occupancy}` : 'Side Room (not yet set)') : null,
+                      ].filter(Boolean).join(' · ') || 'not yet set'}
+                    </p>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-brand-700 mb-1">Extra tables <span className="text-brand-400">(max 5)</span></label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="5"
+                      className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                      value={form.extraTables}
+                      disabled={clubhouseSettings?.clubhouse_tables_chairs_fee == null || (isClubhouseReservationEdit && !reservationEditable)}
+                      onChange={e => set('extraTables', e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-brand-700 mb-1">Extra chairs <span className="text-brand-400">(max 50)</span></label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="50"
+                      className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                      value={form.extraChairs}
+                      disabled={clubhouseSettings?.clubhouse_tables_chairs_fee == null || (isClubhouseReservationEdit && !reservationEditable)}
+                      onChange={e => set('extraChairs', e.target.value)}
+                    />
+                  </div>
+                </div>
+                {clubhouseSettings?.clubhouse_tables_chairs_fee == null && (
+                  <p className="text-brand-400 text-xs">Tables &amp; chairs pricing not yet set</p>
+                )}
 
                 <div>
                   <label className="block text-sm font-medium text-brand-700 mb-1">Is this a private event? *</label>
@@ -639,16 +765,46 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
                   <div className="text-xs text-brand-600 bg-white rounded-lg border border-brand-100 px-3 py-2 space-y-0.5">
                     {form.wantsMainClubhouse && <div>Main Clubhouse: ${Number(clubhouseSettings.clubhouse_main_fee).toFixed(2)}</div>}
                     {form.wantsSideRoom && clubhouseSettings.clubhouse_side_room_fee != null && <div>Side Room: ${Number(clubhouseSettings.clubhouse_side_room_fee).toFixed(2)}</div>}
-                    {form.wantsTablesChairs && clubhouseSettings.clubhouse_tables_chairs_fee != null && <div>Extra Tables &amp; Chairs: ${Number(clubhouseSettings.clubhouse_tables_chairs_fee).toFixed(2)}</div>}
+                    {wantsTablesChairsResource && clubhouseSettings.clubhouse_tables_chairs_fee != null && <div>Extra Tables &amp; Chairs: ${Number(clubhouseSettings.clubhouse_tables_chairs_fee).toFixed(2)}</div>}
+                    {extraHoursForDisplay > 0 && clubhouseSettings.clubhouse_additional_hour_fee != null && (
+                      <div>Additional hours ({extraHoursForDisplay} × ${Number(clubhouseSettings.clubhouse_additional_hour_fee).toFixed(2)}): ${(extraHoursForDisplay * Number(clubhouseSettings.clubhouse_additional_hour_fee)).toFixed(2)}</div>
+                    )}
                     <div>Security deposit: ${Number(clubhouseSettings.clubhouse_security_deposit).toFixed(2)}</div>
                     <div className="font-semibold pt-1 border-t border-brand-100 mt-1">
                       Total due: ${(
                         (form.wantsMainClubhouse ? Number(clubhouseSettings.clubhouse_main_fee) : 0) +
                         (form.wantsSideRoom && clubhouseSettings.clubhouse_side_room_fee != null ? Number(clubhouseSettings.clubhouse_side_room_fee) : 0) +
-                        (form.wantsTablesChairs && clubhouseSettings.clubhouse_tables_chairs_fee != null ? Number(clubhouseSettings.clubhouse_tables_chairs_fee) : 0) +
+                        (wantsTablesChairsResource && clubhouseSettings.clubhouse_tables_chairs_fee != null ? Number(clubhouseSettings.clubhouse_tables_chairs_fee) : 0) +
+                        (extraHoursForDisplay > 0 && clubhouseSettings.clubhouse_additional_hour_fee != null ? extraHoursForDisplay * Number(clubhouseSettings.clubhouse_additional_hour_fee) : 0) +
                         Number(clubhouseSettings.clubhouse_security_deposit)
                       ).toFixed(2)}
                     </div>
+                    <p className="text-brand-400 pt-1">The security deposit also covers cleaning if the space isn&apos;t left as required.</p>
+                  </div>
+                )}
+
+                {(form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure') && (
+                  <div className="space-y-2 pt-1">
+                    <label className="flex items-start gap-2 text-xs text-brand-700">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={form.termsAccepted}
+                        disabled={isClubhouseReservationEdit && !reservationEditable}
+                        onChange={e => set('termsAccepted', e.target.checked)}
+                      />
+                      I have read and agree to the Vintage at Hamilton Clubhouse Lease Agreement and Rules &amp; Regulations. Submitting this request, and RCP&apos;s acknowledgment of it, together serve as the signed Agreement.
+                    </label>
+                    <label className="flex items-start gap-2 text-xs text-brand-700">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={form.insuranceConfirmed}
+                        disabled={isClubhouseReservationEdit && !reservationEditable}
+                        onChange={e => set('insuranceConfirmed', e.target.checked)}
+                      />
+                      I confirm I have, or will obtain, liability insurance for this event as required by the Agreement. RCP will follow up separately for proof.
+                    </label>
                   </div>
                 )}
               </div>
@@ -754,7 +910,7 @@ function ClubhouseReservationPanel({ eventId, canView }) {
     ;(async () => {
       const { data } = await supabase
         .from('clubhouse_reservations')
-        .select('status, fee_main, fee_side_room, fee_tables_chairs, deposit_amount, total_due, payment_deadline_date, cancellation_reason, check_received_at')
+        .select('status, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due, payment_deadline_date, cancellation_reason, check_received_at, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, terms_acknowledged_at, acknowledged_at')
         .eq('calendar_event_id', eventId)
         .maybeSingle()
       if (cancelledEffect) return
@@ -785,13 +941,27 @@ function ClubhouseReservationPanel({ eventId, canView }) {
         )}
       </div>
 
+      {(reservation.guest_count != null || reservation.extra_tables_requested > 0 || reservation.extra_chairs_requested > 0 || reservation.wants_late_end) && (
+        <div className="text-sm text-brand-700 space-y-0.5 mb-2 pb-2 border-b border-brand-200">
+          {reservation.guest_count != null && <p>Guests: {reservation.guest_count}</p>}
+          {(reservation.extra_tables_requested > 0 || reservation.extra_chairs_requested > 0) && (
+            <p>Extra: {[
+              reservation.extra_tables_requested > 0 ? `${reservation.extra_tables_requested} table${reservation.extra_tables_requested === 1 ? '' : 's'}` : null,
+              reservation.extra_chairs_requested > 0 ? `${reservation.extra_chairs_requested} chair${reservation.extra_chairs_requested === 1 ? '' : 's'}` : null,
+            ].filter(Boolean).join(', ')}</p>
+          )}
+          {reservation.wants_late_end && <p className="text-amber-600">Requested to stay past the standard vacate time — pending Board approval via RCP.</p>}
+        </div>
+      )}
+
       {reservation.status === 'pending_payment' && (
         <div className="text-sm text-brand-700 space-y-1.5">
           <div className="space-y-0.5">
             {reservation.fee_main != null && <p>Main Clubhouse fee: {money(reservation.fee_main)}</p>}
             {reservation.fee_side_room != null && <p>Side Room fee: {money(reservation.fee_side_room)}</p>}
             {reservation.fee_tables_chairs != null && <p>Tables &amp; Chairs fee: {money(reservation.fee_tables_chairs)}</p>}
-            {reservation.deposit_amount != null && <p>Security deposit: {money(reservation.deposit_amount)}</p>}
+            {reservation.fee_additional_hours != null && <p>Additional hours fee: {money(reservation.fee_additional_hours)}</p>}
+            {reservation.deposit_amount != null && <p>Security deposit: {money(reservation.deposit_amount)} (also covers cleaning if the space isn&apos;t left as required)</p>}
             <p className="font-semibold">Total due: {money(reservation.total_due)}</p>
           </div>
           {reservation.payment_deadline_date && (
@@ -818,6 +988,12 @@ function ClubhouseReservationPanel({ eventId, canView }) {
 
       {reservation.status === 'cancelled' && reservation.cancellation_reason && (
         <p className="text-sm text-brand-700">Reason: {reservation.cancellation_reason}</p>
+      )}
+
+      {reservation.terms_acknowledged_at && reservation.acknowledged_at && (
+        <p className="text-xs text-brand-400 mt-2 pt-2 border-t border-brand-200">
+          Agreement signed by you on {formatDate(reservation.terms_acknowledged_at.slice(0, 10))} and acknowledged by RCP on {formatDate(reservation.acknowledged_at.slice(0, 10))}.
+        </p>
       )}
     </div>
   )
