@@ -920,7 +920,7 @@ function ClubhouseReservationPanel({ eventId, canView }) {
     ;(async () => {
       const { data } = await supabase
         .from('clubhouse_reservations')
-        .select('status, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due, payment_deadline_date, cancellation_reason, check_received_at, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, terms_acknowledged_at, acknowledged_at')
+        .select('status, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due, payment_deadline_date, cancellation_reason, check_received_at, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, terms_acknowledged_at, acknowledged_at, post_event_reviewed_at, post_event_fee_amount, post_event_fee_reason, deposit_refund_amount, deposit_refund_issued_at')
         .eq('calendar_event_id', eventId)
         .maybeSingle()
       if (cancelledEffect) return
@@ -994,6 +994,28 @@ function ClubhouseReservationPanel({ eventId, canView }) {
         <p className="text-sm text-brand-700">
           {reservation.check_received_at ? 'Payment received — you\'re all set.' : 'No payment required — you\'re all set.'}
         </p>
+      )}
+
+      {/* Post-event deposit check-in (Keith, 2026-09-18) — the on-screen
+          counterpart to the "Clubhouse deposit review" / "Deposit refund
+          issued" emails, same pairing as everywhere else on this panel. Only
+          appears once RCP has actually recorded a review; before that,
+          nothing shows here (no "pending inspection" placeholder — keeps
+          the panel quiet until there's something to report). */}
+      {reservation.post_event_reviewed_at && (
+        <div className="text-sm text-brand-700 mt-2 pt-2 border-t border-brand-200">
+          <p className="font-semibold mb-0.5">Post-event deposit review</p>
+          {Number(reservation.post_event_fee_amount) > 0 ? (
+            <p>{money(reservation.post_event_fee_amount)} withheld from your deposit — {reservation.post_event_fee_reason}</p>
+          ) : (
+            <p>No fee was applied — the space was left as required.</p>
+          )}
+          {Number(reservation.deposit_refund_amount) > 0 ? (
+            <p>Refund of {money(reservation.deposit_refund_amount)}{reservation.deposit_refund_issued_at ? ' has been mailed to you by check.' : ' is being processed and will be mailed to you by check.'}</p>
+          ) : (
+            <p>The full deposit was applied to the fee above, so no refund is due.</p>
+          )}
+        </div>
       )}
 
       {reservation.status === 'cancelled' && reservation.cancellation_reason && (

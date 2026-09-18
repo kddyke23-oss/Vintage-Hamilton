@@ -74,6 +74,7 @@ export default function ClubhouseReservationsPage() {
         starts_at, ends_at, private_event_answer, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due,
         payment_deadline_date, status, acknowledged_at, check_received_at, escalated_at, escalation_outcome,
         cancelled_at, refund_issued_at, is_test, actual_title,
+        post_event_reviewed_at, post_event_fee_amount, post_event_fee_reason, deposit_refund_amount, deposit_refund_issued_at,
         guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, liability_insurance_confirmed,
         calendar_events ( title )
       `)
@@ -104,6 +105,18 @@ export default function ClubhouseReservationsPage() {
     r.wants_side_room && 'Side Room',
     r.wants_tables_chairs && 'Tables & Chairs',
   ].filter(Boolean).join(' + ')
+
+  // Post-event deposit check-in (Keith, 2026-09-18, Reservations/
+  // REQUIREMENTS.md 2.21) — only relevant once a booking actually collected
+  // a deposit (a 'no'-answer booking that was never escalated never did:
+  // deposit_amount stays NULL) and was actually paid for, and only once the
+  // event itself has passed.
+  const needsPostEventReview = r =>
+    r.status === 'confirmed' && !!r.check_received_at && Number(r.deposit_amount) > 0 &&
+    !r.post_event_reviewed_at && new Date(r.ends_at) < new Date()
+
+  const needsDepositRefund = r =>
+    !!r.post_event_reviewed_at && Number(r.deposit_refund_amount) > 0 && !r.deposit_refund_issued_at
 
   // ── Actions ────────────────────────────────────────────────────────────
   const act = async (id, update, successMsg) => {
@@ -299,6 +312,60 @@ export default function ClubhouseReservationsPage() {
     notifyCancellation(row.id, 'refund_issued') // fire-and-forget — lets the resident know it's sent
   }
 
+  // Fire-and-forget — tells the resident what RCP found on inspection (and
+  // again once the refund is actually sent). See notify-clubhouse-deposit/
+  // index.ts and Reservations/REQUIREMENTS.md 2.21.
+  const notifyDeposit = async (reservationId, eventType) => {
+    try {
+      await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-clubhouse-deposit`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify(eventType ? { reservationId, eventType } : { reservationId }),
+        }
+      )
+    } catch (e) {
+      console.error('notify-clubhouse-deposit call failed:', e)
+    }
+  }
+
+  // Step 1 of the post-event deposit check-in: RCP records what they found
+  // when they inspected the room(s) after the event. window.prompt matches
+  // the existing style used for cancelReservation's reason prompt — no
+  // dedicated modal exists elsewhere in this page, so this stays consistent
+  // rather than introducing a one-off form component for a two-field input.
+  const recordPostEventReview = async row => {
+    const feeInput = window.prompt(`Fee to withhold from the ${money(row.deposit_amount)} security deposit for cleaning/corrective work? Enter 0 if none.`)
+    if (feeInput === null) return
+    const fee = Number(feeInput)
+    if (Number.isNaN(fee) || fee < 0) { toast.error('Enter a valid amount — 0 or more'); return }
+    let reason = 'n/a'
+    if (fee > 0) {
+      const reasonInput = window.prompt('Reason for the fee (shown to the resident)?')
+      if (reasonInput === null) return
+      if (!reasonInput.trim()) { toast.error('A reason is required when a fee is applied'); return }
+      reason = reasonInput.trim()
+    }
+    await act(row.id, {
+      post_event_reviewed_at: new Date().toISOString(), post_event_reviewed_by: user.id,
+      post_event_fee_amount: fee, post_event_fee_reason: reason,
+    }, 'Post-event review recorded')
+    notifyDeposit(row.id) // fire-and-forget — tells the resident what was found and what refund (if any) is coming
+  }
+
+  // Step 2: RCP has actually written and mailed the refund check. Only ever
+  // offered when needsDepositRefund(row) is true, i.e. there's something
+  // left to refund — see the button's guard below.
+  const markDepositRefundIssued = async row => {
+    await act(row.id, { deposit_refund_issued_at: new Date().toISOString(), deposit_refund_issued_by: user.id }, 'Deposit refund marked issued')
+    notifyDeposit(row.id, 'refund_issued') // fire-and-forget — lets the resident know it's sent
+  }
+
   if (myRole === null) return <LoadingSpinner label="Checking access…" />
 
   if (!eligible) {
@@ -314,7 +381,8 @@ export default function ClubhouseReservationsPage() {
   // Committee members only ever have escalated rows (+ their own bookings)
   // in `rows` at all, via RLS — no client-side filtering needed for them.
   const visibleRows = isCommittee ? rows : rows.filter(r => filter === 'all' || ['pending_rcp', 'pending_payment', 'escalated'].includes(r.status) ||
-    (r.status === 'cancelled' && r.check_received_at && !r.refund_issued_at))
+    (r.status === 'cancelled' && r.check_received_at && !r.refund_issued_at) ||
+    needsPostEventReview(r) || needsDepositRefund(r))
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
@@ -379,8 +447,22 @@ export default function ClubhouseReservationsPage() {
                       </div>
                     )}
                   </div>
-                  <span className={`text-xs font-medium px-2 py-1 rounded-full ${st.color}`}>{st.label}</span>
+                  <div className="flex flex-col items-end gap-1">
+                    <span className={`text-xs font-medium px-2 py-1 rounded-full ${st.color}`}>{st.label}</span>
+                    {needsPostEventReview(r) && (
+                      <span className="text-xs font-medium px-2 py-1 rounded-full bg-teal-100 text-teal-700">Deposit review due</span>
+                    )}
+                    {needsDepositRefund(r) && (
+                      <span className="text-xs font-medium px-2 py-1 rounded-full bg-orange-100 text-orange-700">Deposit refund pending</span>
+                    )}
+                  </div>
                 </div>
+
+                {r.post_event_reviewed_at && (
+                  <div className="text-sm text-gray-500 mt-1">
+                    Deposit review: {Number(r.post_event_fee_amount) > 0 ? `${money(r.post_event_fee_amount)} withheld (${r.post_event_fee_reason})` : 'No fee applied'} — Refund {money(r.deposit_refund_amount)}{r.deposit_refund_issued_at ? ' — issued' : Number(r.deposit_refund_amount) > 0 ? ' — pending' : ''}
+                  </div>
+                )}
 
                 <div className="flex gap-2 flex-wrap mt-3">
                   {/* RCP-only actions — a committee member (role='user') never sees
@@ -404,6 +486,12 @@ export default function ClubhouseReservationsPage() {
                   )}
                   {isRCP && needsRefund && (
                     <button onClick={() => markRefundIssued(r)} className="text-xs font-medium bg-orange-600 text-white px-3 py-1.5 rounded-lg hover:bg-orange-700">Mark refund issued</button>
+                  )}
+                  {isRCP && needsPostEventReview(r) && (
+                    <button onClick={() => recordPostEventReview(r)} className="text-xs font-medium bg-teal-700 text-white px-3 py-1.5 rounded-lg hover:bg-teal-800">Record post-event deposit review</button>
+                  )}
+                  {isRCP && needsDepositRefund(r) && (
+                    <button onClick={() => markDepositRefundIssued(r)} className="text-xs font-medium bg-orange-600 text-white px-3 py-1.5 rounded-lg hover:bg-orange-700">Mark deposit refund issued</button>
                   )}
                   {isRCP && r.status !== 'cancelled' && !r.check_received_at && (
                     <button onClick={() => cancelReservation(r)} className="text-xs font-medium text-red-600 hover:text-red-700 px-3 py-1.5">Cancel</button>

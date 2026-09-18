@@ -444,6 +444,56 @@ change, plus `git push` for the three touched files (`notify-clubhouse-cancellat
 `ClubhouseReservationsPage.jsx`, `SocialCalendar.jsx`) so Vercel picks up the frontend half. No migration
 involved — `refund_issued_at`/`refund_issued_by` already existed on `clubhouse_reservations`.
 
+### 2.21 Post-event deposit check-in, 2026-09-18
+
+**Asked by Keith:** the security deposit is collected up front (bundled into the fee check the resident already
+sent), but nothing in the portal ever closed the loop after the event actually happened. He wants a workflow
+where RCP confirms they've checked the room(s), applied a fee of X (0 if none) for reason Y (n/a if X is 0), and
+Z — the deposit minus X — is being refunded by check.
+
+**Built as a two-step workflow**, matching the check-received / refund-issued pattern already used everywhere
+else in this queue (confirmed with Keith over a simpler one-step version, since the inspection and mailing the
+check don't always happen in the same sitting):
+
+1. **Record post-event review** — a new button on any `confirmed` booking that actually collected a deposit
+   (`deposit_amount > 0`, `check_received_at` set) once its event has ended and no review is on file yet
+   (`needsPostEventReview()`, `ClubhouseReservationsPage.jsx`). Prompts for the fee to withhold (0 allowed) and,
+   only if the fee is above 0, a reason — stores `post_event_fee_amount`/`post_event_fee_reason` plus
+   `post_event_reviewed_at`/`by`. The refund amount itself (`deposit_refund_amount`) isn't entered — it's a
+   generated column, `deposit_amount` minus the fee, floored at $0.
+2. **Mark deposit refund issued** — a second button, offered only once a review is on file and
+   `deposit_refund_amount > 0` and it hasn't been marked sent yet (`needsDepositRefund()`). Records
+   `deposit_refund_issued_at`/`by`. Never offered at all when the full deposit was withheld — there's nothing
+   to mail in that case.
+
+**New table columns** (`clubhouse_post_event_deposit.sql`): `post_event_reviewed_at`, `post_event_reviewed_by`,
+`post_event_fee_amount`, `post_event_fee_reason`, `deposit_refund_amount` (generated), `deposit_refund_issued_at`,
+`deposit_refund_issued_by`. No RLS changes — the existing owner-or-clubhouse-admin UPDATE policy already
+covers them.
+
+**New Edge Function**, `notify-clubhouse-deposit` — fired after each of the two steps above
+(`eventType: 'reviewed'` / `'refund_issued'`, same pattern as `notify-clubhouse-cancellation`'s `eventType`).
+Tells the resident what was found (fee + reason, or "no fee applied") and what refund, if any, is coming; the
+second email confirms the refund was actually mailed. Resident-only in both cases — RCP already knows, they're
+the one who just took the action.
+
+**On-screen counterpart**: `ClubhouseReservationPanel` in `SocialCalendar.jsx` now shows the same review/refund
+information directly on the resident's own event, once a review is on file — same "email + on-screen" pairing
+every other stage of this workflow already has. Nothing shows before RCP has actually recorded a review; there's
+no "inspection pending" placeholder cluttering the panel in the meantime.
+
+**Where this surfaces for RCP**: a `confirmed`, paid, deposit-collected booking whose event has passed and hasn't
+been reviewed yet now shows a teal "Deposit review due" badge and pulls into the "Needs action" filter, same as
+an unresolved refund does today; once reviewed with money still owed, that becomes an orange "Deposit refund
+pending" badge until marked issued. A one-line summary ("$X withheld (reason) — Refund $Z — issued/pending")
+shows on the row permanently once reviewed, for both RCP and committee history.
+
+**Deploy note:** apply `clubhouse_post_event_deposit.sql` (Keith, via SQL editor or `supabase db push`) *before*
+deploying anything else in this round — the new Edge Function and the admin page both query columns it adds.
+Then `supabase functions deploy notify-clubhouse-deposit --no-verify-jwt` (new function, needs its own first
+deploy), and `git push` for `ClubhouseReservationsPage.jsx` and `SocialCalendar.jsx` so Vercel picks up the
+frontend half.
+
 ## 3. Pickleball Court Reservation Flow
 
 Fully self-contained in the portal — no fee, no RCP touchpoint. Built as a separate calendar/app from the clubhouse flow (different structure: fixed-length resource slots vs. open-ended request/approval).
