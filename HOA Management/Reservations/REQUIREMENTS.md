@@ -406,6 +406,44 @@ yet — Keith to run in the Supabase SQL editor when ready.
 **Deploy note:** `git push` for both `.jsx` files (Vercel auto-deploys the frontend) — no Edge Function or
 migration involved in this round.
 
+### 2.20 Scenario 5 — resident cancels after paying, and where that shows up, 2026-09-18
+
+**Asked by Keith:** testing scenario 5 — a resident cancelling a booking after their fee had already been
+received. The only option on their own calendar is "Remove". Does that actually trigger the refund, and if the
+booking just disappears from the calendar, how does the resident see that a refund is in motion?
+
+**What "Remove" actually does (confirmed, unchanged by this round):** `SocialCalendar.jsx`'s `handleRemove`
+marks the reservation `cancelled` and pulls the event off the calendar (`removed: true`). It doesn't issue a
+refund itself — that's still a manual step RCP takes outside the portal (write the check, etc.) and then marks
+issued (`markRefundIssued`, `ClubhouseReservationsPage.jsx`). What it *did* already do, before this round: if a
+fee had been collected, it notified RCP (`notify-clubhouse-cancellation`) that a refund now needs processing.
+What it did NOT do: tell the resident anything at all — the booking just vanished from their calendar with no
+confirmation the cancellation went through, and no way to see refund status once RCP does process it.
+
+**Built, closing both gaps:**
+
+- `notify-clubhouse-cancellation/index.ts` — the self-cancelled-with-payment branch now also queues a
+  "Cancellation received" email to the resident themselves (alongside the existing RCP-facing "Refund needed"
+  email, unchanged), confirming the cancellation and promising a follow-up once the refund is issued. Told apart
+  by a new `eventType` field in the POST body, defaulting to `'cancelled'` when omitted (every existing caller
+  keeps working unchanged) — `'refund_issued'` is the new second case below.
+- A new `eventType: 'refund_issued'` case in the same function, resident-only (RCP already knows — they're
+  the one who just clicked the button), fired from a now-async `markRefundIssued` in
+  `ClubhouseReservationsPage.jsx` right after it records `refund_issued_at`.
+- `SocialCalendar.jsx`'s `fetchEvents` — when "My Events" is on, it now also pulls in the resident's own
+  `cancelled` clubhouse reservations (joined to their `calendar_events` row, which is `removed: true` and so
+  normally invisible everywhere) and merges them into the list. `EventCard` shows a grey "Cancelled" badge and a
+  struck-through title on these so they read as a closed-out record, not a live upcoming booking. This is *only*
+  under "My Events" — nobody else's cancelled bookings show up anywhere, same as before.
+
+**Not changed:** RCP's own `cancelReservation` path (cancelling before a fee is ever collected) — that
+already only emails the resident with the reason, no refund involved, and that branch is untouched.
+
+**Deploy note:** `supabase functions deploy notify-clubhouse-cancellation --no-verify-jwt` for the Edge Function
+change, plus `git push` for the three touched files (`notify-clubhouse-cancellation/index.ts`,
+`ClubhouseReservationsPage.jsx`, `SocialCalendar.jsx`) so Vercel picks up the frontend half. No migration
+involved — `refund_issued_at`/`refund_issued_by` already existed on `clubhouse_reservations`.
+
 ## 3. Pickleball Court Reservation Flow
 
 Fully self-contained in the portal — no fee, no RCP touchpoint. Built as a separate calendar/app from the clubhouse flow (different structure: fixed-length resource slots vs. open-ended request/approval).

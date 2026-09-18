@@ -1436,12 +1436,17 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, o
 function EventCard({ event, categories, onSelect, currentUserId }) {
   const cat = categories.find(c => c.id === event.category_id)
   const upcoming = isFutureOrToday(event.event_date)
+  // Only set for a clubhouse reservation surfaced via "My Events" after the
+  // resident cancelled it themselves (fetchEvents' cancelledReservations
+  // merge, Keith 2026-09-18) — makes it read as a closed-out record, not a
+  // live upcoming booking, since it otherwise looks like any other card.
+  const isCancelled = event.reservation_status === 'cancelled'
 
   return (
     <div
       onClick={() => onSelect(event)}
       className={`bg-white rounded-xl border border-brand-100 shadow-sm hover:shadow-md hover:border-brand-300 transition-all cursor-pointer p-4 ${
-        !upcoming ? 'opacity-60' : ''
+        isCancelled ? 'opacity-70' : !upcoming ? 'opacity-60' : ''
       }`}
     >
       <div className="flex items-start justify-between gap-3">
@@ -1461,6 +1466,11 @@ function EventCard({ event, categories, onSelect, currentUserId }) {
         {/* Content */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
+            {isCancelled && (
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${CLUBHOUSE_STATUS_INFO.cancelled.color}`}>
+                {CLUBHOUSE_STATUS_INFO.cancelled.label}
+              </span>
+            )}
             {cat && (
               <span
                 className="text-xs font-semibold px-2 py-0.5 rounded-full"
@@ -1477,7 +1487,7 @@ function EventCard({ event, categories, onSelect, currentUserId }) {
               </span>
             )}
           </div>
-          <h3 className="font-semibold text-brand-800 text-sm leading-snug truncate">{displayTitle(event, currentUserId)}</h3>
+          <h3 className={`font-semibold text-brand-800 text-sm leading-snug truncate ${isCancelled ? 'line-through' : ''}`}>{displayTitle(event, currentUserId)}</h3>
           <div className="flex items-center gap-3 mt-1 text-xs text-brand-500 flex-wrap">
             {event.event_time && <span>{formatTime(event.event_time)}</span>}
             {event.location && <span>📍 {event.location}</span>}
@@ -1854,9 +1864,30 @@ export default function SocialCalendar() {
 
     const { data: evData } = await query
 
+    // "My Events" should still show a booking the resident cancelled
+    // themselves — Keith, 2026-09-18: it used to just vanish (calendar_
+    // events.removed gets set true on cancel, and the query above always
+    // filters removed=false), leaving no trace that the cancellation (and
+    // any refund) was ever in motion. Only pulled in for filterMine — a
+    // cancelled booking still isn't shown to anyone else, or in the
+    // unfiltered calendar, just here.
+    let allEvData = evData || []
+    if (filterMine && user && allEvData) {
+      const { data: cancelledReservations } = await supabase
+        .from('clubhouse_reservations')
+        .select('calendar_events(*)')
+        .eq('reserved_by', user.id)
+        .eq('status', 'cancelled')
+      const existingIds = new Set(allEvData.map(e => e.id))
+      const cancelledEvents = (cancelledReservations || [])
+        .map(r => r.calendar_events)
+        .filter(ce => ce && !existingIds.has(ce.id))
+      allEvData = [...allEvData, ...cancelledEvents]
+    }
+
     // Fetch RSVP counts + author names separately
-    if (evData && evData.length > 0) {
-      const eventIds = evData.map(e => e.id)
+    if (allEvData && allEvData.length > 0) {
+      const eventIds = allEvData.map(e => e.id)
 
       // RSVP counts
       const { data: rsvpRows } = await supabase
@@ -1887,7 +1918,7 @@ export default function SocialCalendar() {
       }
 
       // Author names — fetch profiles for created_by UUIDs
-      const authorIds = [...new Set(evData.map(e => e.created_by).filter(Boolean))]
+      const authorIds = [...new Set(allEvData.map(e => e.created_by).filter(Boolean))]
       const { data: authorProfiles } = await supabase
         .from('profiles')
         .select('id, names, surname')
@@ -1905,18 +1936,19 @@ export default function SocialCalendar() {
       // below can decide per-viewer at render time.
       const { data: reservationRows } = await supabase
         .from('clubhouse_reservations')
-        .select('calendar_event_id, actual_title, private_event_answer, escalation_outcome')
+        .select('calendar_event_id, actual_title, private_event_answer, escalation_outcome, status')
         .in('calendar_event_id', eventIds)
       const reservationMap = {}
       reservationRows?.forEach(r => { reservationMap[r.calendar_event_id] = r })
 
-      setEvents(evData.map(ev => ({
+      setEvents(allEvData.map(ev => ({
         ...ev,
         rsvp_count: rsvpCounts[ev.id] || 0,
         author_name: authorMap[ev.created_by] || 'Resident',
         reservation_actual_title: reservationMap[ev.id]?.actual_title || null,
         reservation_private_answer: reservationMap[ev.id]?.private_event_answer || null,
         reservation_escalation_outcome: reservationMap[ev.id]?.escalation_outcome || null,
+        reservation_status: reservationMap[ev.id]?.status || null,
       })))
     } else {
       setEvents([])

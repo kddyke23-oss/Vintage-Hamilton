@@ -1,11 +1,15 @@
 // notify-clubhouse-cancellation
-// Fire-and-forget, called after ANY clubhouse reservation cancellation —
-// whether RCP cancelled it (ClubhouseReservationsPage.jsx's cancelReservation)
-// or a resident cancelled their own booking (SocialCalendar.jsx's
-// handleRemove). One function handles both directions since the audience
-// and message are the only things that differ, both derived from the row
-// itself (cancelled_by vs reserved_by, and whether check_received_at was
-// already set when it was cancelled):
+// Fire-and-forget, called for two distinct moments in a clubhouse
+// reservation's cancellation/refund lifecycle, told apart by the optional
+// `eventType` field in the POST body (default/omitted = 'cancelled'):
+//
+// eventType: 'cancelled' (default) — called right after ANY cancellation,
+// whether RCP cancelled it (ClubhouseReservationsPage.jsx's
+// cancelReservation) or a resident cancelled their own booking
+// (SocialCalendar.jsx's handleRemove). One branch handles both directions
+// since the audience and message are the only things that differ, both
+// derived from the row itself (cancelled_by vs reserved_by, and whether
+// check_received_at was already set when it was cancelled):
 //
 //   RCP cancelled (cancelled_by !== reserved_by)
 //     -> queues a notification to the resident with RCP's cancellation_reason.
@@ -22,7 +26,17 @@
 //     -> if a fee HAD already been collected (check_received_at set), queues
 //        a notification to every clubhouse role='admin' reviewer that a
 //        refund now needs processing (mirrors notify-clubhouse-rcp's
-//        recipient lookup).
+//        recipient lookup) — AND (added 2026-09-18, Keith: a resident who
+//        cancels a paid booking previously got no confirmation of any kind,
+//        and the event vanishing from their calendar meant they also lost
+//        the only other place that showed refund status) a confirmation to
+//        the resident themselves that their cancellation was received and
+//        a refund is coming.
+//
+// eventType: 'refund_issued' — called from ClubhouseReservationsPage.jsx's
+// markRefundIssued once RCP has actually sent the refund (added
+// 2026-09-18, closing the loop the above paragraph starts). Resident-only;
+// RCP already knows, they're the one who just clicked the button.
 //
 // As of the notification-queue rework, this no longer emails immediately —
 // it inserts into `pending_notifications`, which `send-daily-notifications`
@@ -71,14 +85,15 @@ Deno.serve(async (req) => {
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
-    const { reservationId } = await req.json()
+    const { reservationId, eventType } = await req.json()
     if (!reservationId) throw new Error('reservationId is required')
+    const kind: 'cancelled' | 'refund_issued' = eventType === 'refund_issued' ? 'refund_issued' : 'cancelled'
 
     const { data: reservation, error: resErr } = await supabaseAdmin
       .from('clubhouse_reservations')
       .select(`
         id, calendar_event_id, reserved_by, cancelled_by, cancellation_reason, check_received_at,
-        status, starts_at, ends_at, wants_main_clubhouse, wants_side_room, wants_tables_chairs, total_due
+        refund_issued_at, status, starts_at, ends_at, wants_main_clubhouse, wants_side_room, wants_tables_chairs, total_due
       `)
       .eq('id', reservationId)
       .maybeSingle()
@@ -102,6 +117,45 @@ Deno.serve(async (req) => {
       .from('calendar_events').select('title').eq('id', reservation.calendar_event_id).maybeSingle()
     const eventTitle = event?.title || '(untitled reservation)'
 
+    // ── Refund issued (RCP clicked "mark issued") ───────────────────
+    if (kind === 'refund_issued') {
+      if (!reservation.refund_issued_at) {
+        return new Response(JSON.stringify({ success: true, queued: 0, reason: 'refund_not_marked' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+      const { data: residentForRefund } = await supabaseAdmin
+        .from('profiles').select('names, surname, emails').eq('id', reservation.reserved_by).maybeSingle()
+      const refundResidentEmails: string[] = residentForRefund?.emails || []
+      if (refundResidentEmails.length === 0) {
+        return new Response(JSON.stringify({ success: true, queued: 0, reason: 'no_resident_email' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+      const refundBodyHtml = `
+        <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#444;">
+          Your refund for the reservation below has been issued.
+        </p>
+        <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;border-radius:6px;padding:12px;margin:0;">
+          <tr><td style="padding:3px 12px;font-size:13px;color:#666;">When</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${when}</td></tr>
+          <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Resources</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${resources}</td></tr>
+          <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Amount refunded</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(reservation.total_due)}</td></tr>
+        </table>`
+      const { inserted: refundInserted } = await enqueueNotifications(
+        supabaseAdmin,
+        refundResidentEmails.map((email) => ({
+          recipientEmail: email,
+          category: 'clubhouse_cancellation' as const,
+          subjectLine: `Refund issued — ${eventTitle}`,
+          bodyHtml: refundBodyHtml,
+          linkUrl: calendarLinkUrl,
+        }))
+      )
+      return new Response(JSON.stringify({ success: true, queued: refundInserted }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
+
     // ── Resident cancelled their own booking ───────────────────────────
     if (selfCancelled) {
       if (!reservation.check_received_at) {
@@ -123,7 +177,7 @@ Deno.serve(async (req) => {
       }
 
       const [{ data: resident }, { data: rcpProfiles }] = await Promise.all([
-        supabaseAdmin.from('profiles').select('names, surname').eq('id', reservation.reserved_by).maybeSingle(),
+        supabaseAdmin.from('profiles').select('names, surname, emails').eq('id', reservation.reserved_by).maybeSingle(),
         supabaseAdmin.from('profiles').select('id, emails').in('id', rcpIds),
       ])
       const residentName = resident ? `${resident.names ?? ''} ${resident.surname ?? ''}`.trim() || 'A resident' : 'A resident'
@@ -146,7 +200,7 @@ Deno.serve(async (req) => {
           ${reservation.cancellation_reason ? `<tr><td style="padding:3px 12px;font-size:13px;color:#666;">Resident's reason</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${reservation.cancellation_reason}</td></tr>` : ''}
         </table>`
 
-      const { inserted } = await enqueueNotifications(
+      const { inserted: rcpInserted } = await enqueueNotifications(
         supabaseAdmin,
         rcpEmails.map((email) => ({
           recipientEmail: email,
@@ -156,7 +210,36 @@ Deno.serve(async (req) => {
           linkUrl: `${SITE_URL}/admin/reservations`,
         }))
       )
-      return new Response(JSON.stringify({ success: true, queued: inserted }), {
+
+      // Also let the resident know their cancellation was received and a
+      // refund is coming — previously silent (Keith, 2026-09-18): the event
+      // just vanished from their calendar with no confirmation of any kind.
+      const residentOwnEmails: string[] = resident?.emails || []
+      let residentInserted = 0
+      if (residentOwnEmails.length > 0) {
+        const residentBodyHtml = `
+          <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#444;">
+            We've received your cancellation. Since payment had already been collected for this reservation, RCP will process a refund and you'll get a separate email once it's issued.
+          </p>
+          <table width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FA;border-radius:6px;padding:12px;margin:0;">
+            <tr><td style="padding:3px 12px;font-size:13px;color:#666;">When</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${when}</td></tr>
+            <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Resources</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${resources}</td></tr>
+            <tr><td style="padding:3px 12px;font-size:13px;color:#666;">Amount to be refunded</td><td style="padding:3px 12px;font-size:13px;color:#1A3F5C;">${money(reservation.total_due)}</td></tr>
+          </table>`
+        const { inserted } = await enqueueNotifications(
+          supabaseAdmin,
+          residentOwnEmails.map((email) => ({
+            recipientEmail: email,
+            category: 'clubhouse_cancellation' as const,
+            subjectLine: `Cancellation received — ${eventTitle}`,
+            bodyHtml: residentBodyHtml,
+            linkUrl: calendarLinkUrl,
+          }))
+        )
+        residentInserted = inserted
+      }
+
+      return new Response(JSON.stringify({ success: true, queued: rcpInserted + residentInserted }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }

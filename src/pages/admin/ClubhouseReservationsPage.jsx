@@ -182,11 +182,14 @@ export default function ClubhouseReservationsPage() {
   }
 
   // Fires after ANY cancellation (RCP's own cancelReservation below, or a
-  // resident's self-cancel in SocialCalendar.jsx) — the Edge Function itself
-  // figures out who to email and what to say based on who cancelled it and
-  // whether a fee had already been collected. See notify-clubhouse-
-  // cancellation/index.ts and Reservations/REQUIREMENTS.md 2.9.
-  const notifyCancellation = async (reservationId) => {
+  // resident's self-cancel in SocialCalendar.jsx), and again once a refund
+  // on a paid cancellation is marked issued (markRefundIssued below) — the
+  // Edge Function itself figures out who to email and what to say, based on
+  // who cancelled it, whether a fee had already been collected, and now
+  // eventType ('cancelled', the default, vs 'refund_issued'). See
+  // notify-clubhouse-cancellation/index.ts and Reservations/REQUIREMENTS.md
+  // 2.9 and 2.20.
+  const notifyCancellation = async (reservationId, eventType) => {
     try {
       await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-clubhouse-cancellation`,
@@ -197,7 +200,7 @@ export default function ClubhouseReservationsPage() {
             'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
             'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
           },
-          body: JSON.stringify({ reservationId }),
+          body: JSON.stringify(eventType ? { reservationId, eventType } : { reservationId }),
         }
       )
     } catch (e) {
@@ -291,8 +294,10 @@ export default function ClubhouseReservationsPage() {
     notifyCancellation(row.id) // fire-and-forget — emails the resident with the reason
   }
 
-  const markRefundIssued = row =>
-    act(row.id, { refund_issued_at: new Date().toISOString(), refund_issued_by: user.id }, 'Refund marked issued')
+  const markRefundIssued = async row => {
+    await act(row.id, { refund_issued_at: new Date().toISOString(), refund_issued_by: user.id }, 'Refund marked issued')
+    notifyCancellation(row.id, 'refund_issued') // fire-and-forget — lets the resident know it's sent
+  }
 
   if (myRole === null) return <LoadingSpinner label="Checking access…" />
 
