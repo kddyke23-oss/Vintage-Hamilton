@@ -92,7 +92,7 @@ export function buildSignatureBlock(opts: {
   if (!residentName || !residentSignedAt) return ''
 
   const rcpLine = (rcpName && rcpSignedAt)
-    ? `Acknowledged on the Association's behalf by <strong>${rcpName}</strong> (RCP) on ${rcpSignedAt}.`
+    ? `Acknowledged on the Association's behalf by <strong>${rcpName}</strong> on ${rcpSignedAt}.`
     : `Awaiting acknowledgment from RCP.`
 
   return `<div style="margin:14px 0 0;padding:10px 12px;background:#FBF3E4;border-radius:6px;">

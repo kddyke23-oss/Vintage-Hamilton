@@ -228,7 +228,7 @@ Keith had RCP send over the actual, currently-signed "Clubhouse Lease Agreement"
    - **Rental purpose**: no new categorized field — Keith's call is that the resident's own title (`actual_title` for a masked booking) already serves this purpose.
    - **Extra tables & chairs**: converted from a single yes/no checkbox to two quantity fields, `extra_tables_requested` (max 5) and `extra_chairs_requested` (max 50). Fee stays flat regardless of quantity (Keith: read as covering setup labor, not a per-item cost) — `wants_tables_chairs` is now derived (true if either quantity is > 0), not stored form state.
 4. **Liability insurance.** Contract requires proof. **Decision:** a checkbox confirmation at booking (`liability_insurance_confirmed`) — RCP still separately collects actual proof; no document upload was built.
-5. **Side Room.** The contract doesn't mention Side Room as a leasable space at all (only "Clubhouse room" is defined; every other space, including by implication a side room, is listed as off-limits to guests). **Decision:** proceed anyway — Side Room's booking flow was already fully built (just gated behind the existing `clubhouse_side_room_available` toggle) and stays triggered by that same toggle. **Open paperwork loose end:** RCP hasn't formally confirmed Side Room falls under this agreement — worth closing out before flipping the toggle on.
+5. **Side Room.** The contract doesn't mention Side Room as a leasable space at all (only "Clubhouse room" is defined; every other space, including by implication a side room, is listed as off-limits to guests). **Decision:** proceed anyway — Side Room's booking flow was already fully built (just gated behind the existing `clubhouse_side_room_available` toggle) and stays triggered by that same toggle. **Resolved, 2026-09-17 (Keith):** the Side Room is to be treated as covered by the Clubhouse Lease Agreement whenever it's booked — same Rules & Regulations, same acknowledgment/signature flow apply. No separate agreement or paperwork carve-out needed. (Its occupancy cap, `clubhouse_side_room_max_occupancy`, is still unset — no cap is enforced until the Board settles on a number.)
 
 **Signature approach (Keith, 2026-09-16):** since there's no physical signing step, the resident's own submission — now gated behind an explicit "I have read and agree to the Clubhouse Lease Agreement and Rules & Regulations" checkbox (`terms_acknowledged_at`, timestamped) — plus RCP's existing "Acknowledge — fee required" action (`acknowledged_at`/`acknowledged_by`, already built, per 2.6) together stand in for the paper agreement's two signature lines. Both dates now appear on the resident's confirmation email and the on-screen `ClubhouseReservationPanel`, so there's a durable dated record either side can point to.
 
@@ -292,6 +292,41 @@ has been deleted — nothing in the codebase references it anymore.
 `supabase functions deploy notify-clubhouse-rcp --no-verify-jwt` and
 `supabase functions deploy notify-clubhouse-resident-status --no-verify-jwt` to pick up the shared-helper rewire.
 This supersedes the PDF-link approach mentioned at the end of 2.15 — that link no longer exists anywhere.
+
+### 2.17 Payment-received confirmation, and dropping the “(RCP)” tag — 2026-09-18
+
+**Gap found:** RCP asked why residents who'd paid got no confirmation — they'd received the initial
+“fee required” email (from `acknowledgeFeeRequired`) but nothing when the check was actually marked
+received. Checked against 2.10 as originally written: `notify-clubhouse-resident-status` was only ever wired to
+fire from `acknowledgeFeeRequired` and `resolveEscalation`'s two outcomes — never from `markCheckReceived`
+(the action that flips `pending_payment` → `confirmed` once RCP has the check in hand). Not a documented
+decision to rely on the on-screen panel instead — just never built.
+
+**Fixed:** `markCheckReceived` in `ClubhouseReservationsPage.jsx` now also calls `notifyResident`, same
+fire-and-forget pattern as the other actions. On the email side, `status === 'confirmed'` used to mean only one
+thing (no fee ever due, via a dismissed escalation) — that copy would have been wrong for a payment-received
+confirmation, so `notify-clubhouse-resident-status` now also selects `check_received_at` and
+`buildStatusFragment` takes a new `paymentReceived` flag to tell the two `confirmed` cases apart: no-fee-needed
+keeps its existing wording, payment-received gets its own subject line and intro (“Your payment has been
+received — your clubhouse booking is confirmed”).
+
+**Also (Keith, 2026-09-18):** the acknowledgment line in the resident email named the RCP acknowledger with an
+appended “(RCP)” tag — e.g. “Acknowledged on the Association's behalf by Keith DYKE (RCP) on …”. Dropped
+the tag in `buildSignatureBlock` (`_shared/clubhouse-form.ts`) since acknowledgment isn't always RCP — it could
+be a board member. Only that one instance was changed; `buildSignatureBlock`'s *other* line (“Awaiting
+acknowledgment from RCP”, shown before anyone has acted) and the on-screen panel's “acknowledged by RCP on
+{date}” in `SocialCalendar.jsx` both still say “RCP” generically, without naming a specific person — flagged
+here in case Keith wants those generalized too for consistency, not changed yet.
+
+**Deploy note:** `git push` for `ClubhouseReservationsPage.jsx` (Vercel auto-deploys the frontend). The shared
+helper (`_shared/clubhouse-form.ts`) is bundled into each edge function at *that function's own* deploy time, not
+by Vercel, so both functions that import it need redeploying to actually pick up the dropped “(RCP)” tag:
+`supabase functions deploy notify-clubhouse-resident-status --no-verify-jwt` (also needed regardless, for the new
+paymentReceived branch) and `supabase functions deploy notify-clubhouse-rcp --no-verify-jwt` (imports
+`buildSignatureBlock` too — though in practice that email fires at `pending_rcp`, before RCP has acknowledged
+anything, so `rcpName`/`rcpSignedAt` are always null at send time and the named-acknowledgment line — the one
+carrying the tag — never actually renders there; redeploying is about keeping the bundled code in sync, not a
+user-visible fix for that function).
 
 ## 3. Pickleball Court Reservation Flow
 

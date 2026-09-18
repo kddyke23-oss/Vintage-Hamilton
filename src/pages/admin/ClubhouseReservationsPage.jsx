@@ -128,9 +128,11 @@ export default function ClubhouseReservationsPage() {
     notifyResident(row.id) // fire-and-forget — the acknowledgment itself already succeeded
   }
 
-  const markCheckReceived = row =>
-    act(row.id, { status: 'confirmed', check_received_at: new Date().toISOString(), check_received_by: user.id },
+  const markCheckReceived = async row => {
+    await act(row.id, { status: 'confirmed', check_received_at: new Date().toISOString(), check_received_by: user.id },
       'Check marked received — confirmed')
+    notifyResident(row.id) // fire-and-forget — sends the payment-received confirmation (2026-09-18)
+  }
 
   // Fire-and-forget notifiers — a notification hiccup should never look like
   // a failed action to RCP, so none of these are awaited before the toast.
@@ -154,9 +156,11 @@ export default function ClubhouseReservationsPage() {
   }
 
   // Emails the resident once RCP has processed their request — approved with
-  // a fee due (includes the check payee/address, per Keith 2026-09-03), or
-  // confirmed outright with no fee. The function itself no-ops for any other
-  // status, so it's safe to call after any acknowledge/resolve action.
+  // a fee due (includes the check payee/address, per Keith 2026-09-03),
+  // confirmed outright with no fee, or (2026-09-18) confirmed because their
+  // check was marked received. The function itself no-ops for any other
+  // status, so it's safe to call after any acknowledge/resolve/check-received
+  // action.
   const notifyResident = async (reservationId) => {
     try {
       await fetch(

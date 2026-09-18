@@ -7,9 +7,11 @@
 // actually due. The on-screen counterpart (same information, shown right on
 // the event) is ClubhouseReservationPanel in SocialCalendar.jsx.
 //
-// Only fires for the two outcomes RCP's acknowledge/resolve actions produce:
-//   status = 'pending_payment' — fee now due, needs the payment instructions
-//   status = 'confirmed'       — no fee required, booking just stands
+// Only fires for the outcomes RCP's acknowledge/resolve/check-received
+// actions produce:
+//   status = 'pending_payment'                        — fee now due, needs the payment instructions
+//   status = 'confirmed', check_received_at is null    — no fee required, booking just stands
+//   status = 'confirmed', check_received_at is set     — payment received (2026-09-18), booking confirmed
 // Anything else (pending_rcp, escalated, cancelled) is a no-op here — those
 // have their own notifications (notify-clubhouse-rcp, notify-clubhouse-
 // escalation) or don't need a resident email.
@@ -52,13 +54,14 @@ function formatDeadline(dateStr: string | null): string {
 
 function buildStatusFragment(opts: {
   status: 'pending_payment' | 'confirmed'
+  paymentReceived: boolean
   formTableHtml: string
   deadline: string
   payableTo: string | null
   mailingAddress: string | null
   signatureHtml: string
 }): { subjectLine: string; bodyHtml: string } {
-  const { status, formTableHtml, deadline, payableTo, mailingAddress, signatureHtml } = opts
+  const { status, paymentReceived, formTableHtml, deadline, payableTo, mailingAddress, signatureHtml } = opts
 
   const deadlineRow = status === 'pending_payment' && deadline
     ? `<p style="margin:8px 0 0;font-size:13px;color:#1A3F5C;"><strong>Due by ${deadline}</strong></p>`
@@ -77,13 +80,23 @@ function buildStatusFragment(opts: {
            </p>`)
     : ''
 
+  // Three distinct outcomes reach this point (see the header comment above):
+  // a fee now due, a booking confirmed with no fee ever owed (dismissed
+  // escalation), or — new 2026-09-18 — a booking confirmed because the
+  // check was marked received. `paymentReceived` (from `check_received_at`)
+  // is what tells the no-fee and payment-received cases apart — both arrive
+  // here as status === 'confirmed'.
   const intro = status === 'pending_payment'
     ? `RCP has reviewed and approved your clubhouse booking request. A fee is due before your event — see the full booking details below.`
-    : `RCP has reviewed your clubhouse booking request and confirmed it — no fee is required. You're all set. Your full booking details are below.`
+    : paymentReceived
+      ? `Your payment has been received — your clubhouse booking is confirmed. Your full booking details are below.`
+      : `RCP has reviewed your clubhouse booking request and confirmed it — no fee is required. You're all set. Your full booking details are below.`
 
   const subjectLine = status === 'pending_payment'
     ? `Payment due for your clubhouse booking`
-    : `Your clubhouse booking is confirmed`
+    : paymentReceived
+      ? `Payment received — your clubhouse booking is confirmed`
+      : `Your clubhouse booking is confirmed`
 
   const bodyHtml = `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#444;">${intro}</p>
     ${formTableHtml}
@@ -111,7 +124,7 @@ Deno.serve(async (req) => {
 
     const { data: reservation, error: resErr } = await supabaseAdmin
       .from('clubhouse_reservations')
-      .select('calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, status, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due, payment_deadline_date, actual_title, terms_acknowledged_at, acknowledged_at, acknowledged_by, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, liability_insurance_confirmed, private_event_answer')
+      .select('calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, status, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due, payment_deadline_date, actual_title, terms_acknowledged_at, acknowledged_at, acknowledged_by, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, liability_insurance_confirmed, private_event_answer, check_received_at')
       .eq('id', reservationId)
       .maybeSingle()
     if (resErr) throw resErr
@@ -182,6 +195,7 @@ Deno.serve(async (req) => {
 
     const { subjectLine, bodyHtml } = buildStatusFragment({
       status: reservation.status,
+      paymentReceived: !!reservation.check_received_at,
       formTableHtml,
       deadline: formatDeadline(reservation.payment_deadline_date),
       payableTo: settingsResult?.data?.clubhouse_check_payable_to ?? null,
