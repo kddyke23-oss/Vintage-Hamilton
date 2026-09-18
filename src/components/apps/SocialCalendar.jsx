@@ -1895,15 +1895,48 @@ export default function SocialCalendar() {
     // unfiltered calendar, just here.
     let allEvData = evData || []
     if (filterMine && user && allEvData) {
+      // Built directly from clubhouse_reservations' own columns rather than
+      // embedding calendar_events(*) (what this originally did) — Keith,
+      // 2026-09-18 second report: the embed came back empty, most likely
+      // calendar_events' own RLS (set up directly in Supabase, not tracked
+      // in this repo — see README's Phase 1 note) restricting reads to
+      // removed=false rows regardless of ownership, which a cancelled
+      // booking's linked event always is by this point. Sidestepping that
+      // table entirely for this lookup removes the dependency instead of
+      // chasing down the exact policy. actual_title is guaranteed populated
+      // by now — handleRemove below (and cancelReservation in
+      // ClubhouseReservationsPage.jsx, RCP's side) snapshot it into
+      // clubhouse_reservations at the moment of cancellation, specifically
+      // so it's readable here without ever touching calendar_events again.
       const { data: cancelledReservations } = await supabase
         .from('clubhouse_reservations')
-        .select('calendar_events(*)')
+        .select('calendar_event_id, actual_title, starts_at, wants_main_clubhouse, wants_side_room, wants_tables_chairs')
         .eq('reserved_by', user.id)
         .eq('status', 'cancelled')
       const existingIds = new Set(allEvData.map(e => e.id))
+      const pad = n => String(n).padStart(2, '0')
       const cancelledEvents = (cancelledReservations || [])
-        .map(r => r.calendar_events)
-        .filter(ce => ce && !existingIds.has(ce.id))
+        .filter(r => r.calendar_event_id != null && !existingIds.has(r.calendar_event_id))
+        .map(r => {
+          const resourceParts = [
+            r.wants_main_clubhouse && 'Main Clubhouse',
+            r.wants_side_room && 'Side Room',
+            r.wants_tables_chairs && 'Tables & Chairs',
+          ].filter(Boolean)
+          const start = new Date(r.starts_at)
+          return {
+            id: r.calendar_event_id,
+            title: r.actual_title || resourceParts.join(' + ') || 'Clubhouse reservation',
+            description: '',
+            location: resourceParts.join(' + '),
+            event_date: `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`,
+            event_time: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
+            category_id: null,
+            external_url: null,
+            created_by: user.id,
+            removed: true,
+          }
+        })
       allEvData = [...allEvData, ...cancelledEvents]
     }
 
@@ -2028,6 +2061,12 @@ export default function SocialCalendar() {
           cancelled_at: new Date().toISOString(),
           cancelled_by: user.id,
           cancellation_reason: reason || null,
+          // Snapshot the real title now, while it's still readable off the
+          // event that's about to be removed — fetchEvents' "My Events"
+          // cancelled-booking lookup reads this back later without ever
+          // touching calendar_events again (Keith, 2026-09-18 second
+          // report; see the comment there for why).
+          actual_title: event.reservation_actual_title || event.title,
         })
         .eq('id', reservation.id)
       if (cancelError) {

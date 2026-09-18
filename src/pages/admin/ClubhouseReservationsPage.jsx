@@ -302,8 +302,15 @@ export default function ClubhouseReservationsPage() {
     // CASCADE, so deleting the calendar_events row would destroy this
     // reservation (and its cancellation/refund history) along with it.
     await supabase.from('calendar_events').update({ removed: true }).eq('id', row.calendar_event_id)
-    await act(row.id, { status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: user.id, cancellation_reason: reason || null },
-      'Reservation cancelled')
+    await act(row.id, {
+      status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: user.id, cancellation_reason: reason || null,
+      // Same snapshot handleRemove takes on the resident's own self-cancel
+      // path (SocialCalendar.jsx, 2026-09-18) — the resident's "My Events"
+      // view reads this back afterward without ever querying calendar_events
+      // again, so it needs to be captured here too for an RCP-cancelled
+      // booking, not just a self-cancelled one.
+      actual_title: row.actual_title || row.calendar_events?.title || null,
+    }, 'Reservation cancelled')
     notifyCancellation(row.id) // fire-and-forget — emails the resident with the reason
   }
 
