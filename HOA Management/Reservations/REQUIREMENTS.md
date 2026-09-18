@@ -328,6 +328,37 @@ anything, so `rcpName`/`rcpSignedAt` are always null at send time and the named-
 carrying the tag — never actually renders there; redeploying is about keeping the bundled code in sync, not a
 user-visible fix for that function).
 
+### 2.18 Escalation notifications for the resident, and a test-title cleanup note — 2026-09-18
+
+**Gap found (from Keith's escalation test cases 2a/2b):** a resident whose already-confirmed booking gets
+escalated by RCP had no way to know anything had changed — `escalate()` only ever notified the Social
+Committee (`notify-clubhouse-escalation`), never the resident. They'd only find out once the committee resolved
+it one way or the other (or not at all, if the confirmation/fee-due email that eventually arrived didn't say why).
+
+**Fixed:** `escalate()` in `ClubhouseReservationsPage.jsx` now also calls `notifyResident`. On the Edge Function
+side, `notify-clubhouse-resident-status` gains a `status = 'escalated'` branch (“flagged for a closer look by
+the Social Committee — there's nothing you need to do, we'll email you again once that's complete”), and the
+existing `resolveEscalation` outcomes — already wired to fire this same notification — now read
+`escalation_outcome` to say specifically that the *committee's review* is what produced the result, rather than
+reusing RCP's ordinary acknowledge/confirm wording: “Following review, the Social Committee has determined this
+event is private, a fee is now due” (confirmed_private → pending_payment) or “…has confirmed your booking stands
+as submitted, no fee is required” (dismissed → confirmed). The ordinary (non-escalation) acknowledge/confirm
+wording is unchanged.
+
+**Separately raised, not a code issue:** Keith noticed the calendar invite for both 2a/2b showed “this should be
+escalated and the escalation dismissed” as the event's name, which he flagged as meaningless to a real resident.
+No code anywhere produces that string — it isn't a system message. It matches `actual_title`, the free-text
+title field the resident (Keith, testing) fills in on the booking form itself; the codebase reproduces it back to
+the owner and in the resident email by design (see 2.9c/2.9d), which is what surfaced it here. Read as: Keith
+used the event's own Title field to describe the test case rather than a normal event name — test-data cleanup
+(rename the two events via Edit Event, available since `check_received_at` is null on both), not a bug. Flagged
+here rather than silently assumed, in case it turns out to be something else on closer look.
+
+**Deploy note:** `git push` for `ClubhouseReservationsPage.jsx` (Vercel auto-deploys the frontend), plus
+`supabase functions deploy notify-clubhouse-resident-status --no-verify-jwt` for the new escalated-status branch
+and the escalation-aware wording. `notify-clubhouse-rcp` and `notify-clubhouse-escalation` are untouched by this
+round — no redeploy needed for either.
+
 ## 3. Pickleball Court Reservation Flow
 
 Fully self-contained in the portal — no fee, no RCP touchpoint. Built as a separate calendar/app from the clubhouse flow (different structure: fixed-length resource slots vs. open-ended request/approval).

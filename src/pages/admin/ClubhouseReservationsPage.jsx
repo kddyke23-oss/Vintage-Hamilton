@@ -157,10 +157,11 @@ export default function ClubhouseReservationsPage() {
 
   // Emails the resident once RCP has processed their request — approved with
   // a fee due (includes the check payee/address, per Keith 2026-09-03),
-  // confirmed outright with no fee, or (2026-09-18) confirmed because their
-  // check was marked received. The function itself no-ops for any other
-  // status, so it's safe to call after any acknowledge/resolve/check-received
-  // action.
+  // confirmed outright with no fee, confirmed because their check was marked
+  // received, or (2026-09-18) flagged for committee review — and again once
+  // that review resolves, one way or the other. The function itself no-ops
+  // for any other status, so it's safe to call after any acknowledge/
+  // resolve/check-received/escalate action.
   const notifyResident = async (reservationId) => {
     try {
       await fetch(
@@ -208,6 +209,12 @@ export default function ClubhouseReservationsPage() {
     await act(row.id, { status: 'escalated', escalated_at: new Date().toISOString(), escalated_by: user.id },
       'Escalated to the social committee')
     notifyCommittee(row.id) // fire-and-forget — the escalation itself already succeeded
+    // Without this, a resident whose already-confirmed booking gets escalated
+    // has no way to know anything changed — they'd only find out once the
+    // committee resolves it (or not at all, if they never re-check). Added
+    // 2026-09-18, same notifyResident() used everywhere else; the Edge
+    // Function now has a status='escalated' branch for this.
+    notifyResident(row.id)
   }
 
   const resolveEscalation = async (row, outcome) => {

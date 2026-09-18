@@ -7,14 +7,21 @@
 // actually due. The on-screen counterpart (same information, shown right on
 // the event) is ClubhouseReservationPanel in SocialCalendar.jsx.
 //
-// Only fires for the outcomes RCP's acknowledge/resolve/check-received
-// actions produce:
-//   status = 'pending_payment'                        — fee now due, needs the payment instructions
-//   status = 'confirmed', check_received_at is null    — no fee required, booking just stands
-//   status = 'confirmed', check_received_at is set     — payment received (2026-09-18), booking confirmed
-// Anything else (pending_rcp, escalated, cancelled) is a no-op here — those
-// have their own notifications (notify-clubhouse-rcp, notify-clubhouse-
-// escalation) or don't need a resident email.
+// Only fires for the outcomes RCP's acknowledge/resolve/check-received/
+// escalate actions produce:
+//   status = 'escalated'                                — flagged for committee review (2026-09-18)
+//   status = 'pending_payment'                          — fee now due, needs the payment instructions
+//     (escalation_outcome = 'confirmed_private' means it got here via the
+//     committee's review rather than RCP's ordinary acknowledge — 2026-09-18)
+//   status = 'confirmed', check_received_at is null      — no fee required, booking just stands
+//     (escalation_outcome = 'dismissed' means the committee's review is what
+//     confirmed it — 2026-09-18)
+//   status = 'confirmed', check_received_at is set        — payment received (2026-09-18), booking confirmed
+// Anything else (pending_rcp, cancelled) is a no-op here — those have their
+// own notifications (notify-clubhouse-rcp, notify-clubhouse-cancellation) or
+// don't need a resident email. The Social Committee's OWN notification for a
+// new escalation is separate (notify-clubhouse-escalation) — this one is
+// always about telling the *resident* what's happening to their booking.
 //
 // As of the notification-queue rework, this no longer emails immediately —
 // it inserts into `pending_notifications`, which `send-daily-notifications`
@@ -53,7 +60,8 @@ function formatDeadline(dateStr: string | null): string {
 }
 
 function buildStatusFragment(opts: {
-  status: 'pending_payment' | 'confirmed'
+  status: 'escalated' | 'pending_payment' | 'confirmed'
+  escalationOutcome: 'confirmed_private' | 'dismissed' | null
   paymentReceived: boolean
   formTableHtml: string
   deadline: string
@@ -61,7 +69,7 @@ function buildStatusFragment(opts: {
   mailingAddress: string | null
   signatureHtml: string
 }): { subjectLine: string; bodyHtml: string } {
-  const { status, paymentReceived, formTableHtml, deadline, payableTo, mailingAddress, signatureHtml } = opts
+  const { status, escalationOutcome, paymentReceived, formTableHtml, deadline, payableTo, mailingAddress, signatureHtml } = opts
 
   const deadlineRow = status === 'pending_payment' && deadline
     ? `<p style="margin:8px 0 0;font-size:13px;color:#1A3F5C;"><strong>Due by ${deadline}</strong></p>`
@@ -80,23 +88,32 @@ function buildStatusFragment(opts: {
            </p>`)
     : ''
 
-  // Three distinct outcomes reach this point (see the header comment above):
-  // a fee now due, a booking confirmed with no fee ever owed (dismissed
-  // escalation), or — new 2026-09-18 — a booking confirmed because the
-  // check was marked received. `paymentReceived` (from `check_received_at`)
-  // is what tells the no-fee and payment-received cases apart — both arrive
-  // here as status === 'confirmed'.
-  const intro = status === 'pending_payment'
-    ? `RCP has reviewed and approved your clubhouse booking request. A fee is due before your event — see the full booking details below.`
-    : paymentReceived
-      ? `Your payment has been received — your clubhouse booking is confirmed. Your full booking details are below.`
-      : `RCP has reviewed your clubhouse booking request and confirmed it — no fee is required. You're all set. Your full booking details are below.`
+  // Five distinct outcomes reach this point (see the header comment above).
+  // `escalationOutcome` (from `clubhouse_reservations.escalation_outcome`)
+  // tells the escalation-driven cases apart from the ordinary ones — both
+  // 'pending_payment' and 'confirmed' can arrive here either way.
+  // `paymentReceived` (from `check_received_at`) separately tells the two
+  // 'confirmed' cases apart. All added 2026-09-18 except the original
+  // plain pending_payment/confirmed pair.
+  const intro = status === 'escalated'
+    ? `Your clubhouse booking request has been flagged for a closer look by the Social Committee. There's nothing you need to do — we'll email you again as soon as that review is complete.`
+    : status === 'pending_payment'
+      ? (escalationOutcome === 'confirmed_private'
+          ? `Following review, the Social Committee has determined this event is private. A fee is now due — see the full booking details below.`
+          : `RCP has reviewed and approved your clubhouse booking request. A fee is due before your event — see the full booking details below.`)
+      : paymentReceived
+        ? `Your payment has been received — your clubhouse booking is confirmed. Your full booking details are below.`
+        : escalationOutcome === 'dismissed'
+          ? `Following review, the Social Committee has confirmed your booking stands as submitted — no fee is required. You're all set. Your full booking details are below.`
+          : `RCP has reviewed your clubhouse booking request and confirmed it — no fee is required. You're all set. Your full booking details are below.`
 
-  const subjectLine = status === 'pending_payment'
-    ? `Payment due for your clubhouse booking`
-    : paymentReceived
-      ? `Payment received — your clubhouse booking is confirmed`
-      : `Your clubhouse booking is confirmed`
+  const subjectLine = status === 'escalated'
+    ? `Your clubhouse booking is under review`
+    : status === 'pending_payment'
+      ? `Payment due for your clubhouse booking`
+      : paymentReceived
+        ? `Payment received — your clubhouse booking is confirmed`
+        : `Your clubhouse booking is confirmed`
 
   const bodyHtml = `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#444;">${intro}</p>
     ${formTableHtml}
@@ -124,13 +141,13 @@ Deno.serve(async (req) => {
 
     const { data: reservation, error: resErr } = await supabaseAdmin
       .from('clubhouse_reservations')
-      .select('calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, status, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due, payment_deadline_date, actual_title, terms_acknowledged_at, acknowledged_at, acknowledged_by, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, liability_insurance_confirmed, private_event_answer, check_received_at')
+      .select('calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, status, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due, payment_deadline_date, actual_title, terms_acknowledged_at, acknowledged_at, acknowledged_by, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, liability_insurance_confirmed, private_event_answer, check_received_at, escalation_outcome')
       .eq('id', reservationId)
       .maybeSingle()
     if (resErr) throw resErr
     if (!reservation) throw new Error('Reservation not found')
 
-    if (reservation.status !== 'pending_payment' && reservation.status !== 'confirmed') {
+    if (reservation.status !== 'escalated' && reservation.status !== 'pending_payment' && reservation.status !== 'confirmed') {
       return new Response(JSON.stringify({ success: true, queued: 0, reason: 'not_applicable_status' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
@@ -195,6 +212,7 @@ Deno.serve(async (req) => {
 
     const { subjectLine, bodyHtml } = buildStatusFragment({
       status: reservation.status,
+      escalationOutcome: reservation.escalation_outcome ?? null,
       paymentReceived: !!reservation.check_received_at,
       formTableHtml,
       deadline: formatDeadline(reservation.payment_deadline_date),
