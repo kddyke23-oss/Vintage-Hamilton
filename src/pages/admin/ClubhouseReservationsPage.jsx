@@ -236,9 +236,31 @@ export default function ClubhouseReservationsPage() {
     // (SocialCalendar.jsx) — a 'no' answer never went through that at
     // booking time, so it's computed here from the row's own start/end.
     const extraHours = Math.max(0, Math.ceil((new Date(row.ends_at) - new Date(row.starts_at)) / 3600000 - 6))
+    // A 'no'-answer booking was never masked at submission — calendar_events
+    // .title/.description hold the resident's real event details, visible to
+    // every resident on the shared calendar (only a 'yes'/'not_sure' answer
+    // gets the "Private Event — Name" treatment at submission time, in
+    // SocialCalendar.jsx). Now that the committee has determined this one IS
+    // private, mask it retroactively the same way — found by Keith
+    // 2026-09-18, a confirmed-private test booking was still fully visible
+    // to everyone. Capture the real title into actual_title first (same
+    // field a private/not-sure booking uses from birth) so the resident
+    // still sees it — on their own calendar (SocialCalendar.jsx's
+    // displayTitle(), extended alongside this fix) and in this escalation-
+    // resolved email — and so does RCP/committee, via "Ref: {actual_title}"
+    // above. Doesn't touch private_event_answer itself — that stays the
+    // resident's original 'no' answer, the historical record of what they
+    // actually submitted; escalation_outcome is what now marks it private.
+    const realTitle = row.calendar_events?.title || null
+    const displayName = row.requester?.name || 'A resident'
+    await supabase.from('calendar_events').update({
+      title: `Private Event — ${displayName}`,
+      description: '',
+    }).eq('id', row.calendar_event_id)
     await act(row.id, {
       status: 'pending_payment',
       escalation_resolved_at: new Date().toISOString(), escalation_resolved_by: user.id, escalation_outcome: 'confirmed_private',
+      actual_title: realTitle,
       fee_main: row.wants_main_clubhouse ? settings?.clubhouse_main_fee : null,
       fee_side_room: row.wants_side_room ? settings?.clubhouse_side_room_fee : null,
       fee_tables_chairs: row.wants_tables_chairs ? settings?.clubhouse_tables_chairs_fee : null,

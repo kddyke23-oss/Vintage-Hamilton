@@ -359,6 +359,53 @@ here rather than silently assumed, in case it turns out to be something else on 
 and the escalation-aware wording. `notify-clubhouse-rcp` and `notify-clubhouse-escalation` are untouched by this
 round — no redeploy needed for either.
 
+### 2.19 Confirmed-private bookings weren't actually masked — privacy leak, 2026-09-18
+
+**Found by Keith:** test case 2a — a 'no'-answer booking, escalated, then confirmed private by the committee
+(`resolveEscalation`, `confirmed_private`) — stayed fully visible to every resident on the shared calendar.
+Root cause: masking (the "Private Event — Name" placeholder, and blanking the description) only ever happened
+at *submission* time, keyed off `private_event_answer` — a 'yes'/'not_sure' answer gets masked immediately in
+`SocialCalendar.jsx`, but a 'no' answer stores the real title and description on `calendar_events` directly, and
+nothing in `resolveEscalation` ever went back to mask it once the committee later determined it WAS private.
+
+**Fixed:** `resolveEscalation`'s `confirmed_private` branch (`ClubhouseReservationsPage.jsx`) now also updates the
+linked `calendar_events` row — title to `Private Event — {resident's name}`, description blanked — the same
+treatment a private/not-sure booking gets from birth. The real title is captured into
+`clubhouse_reservations.actual_title` first (from the reservation row's already-joined `calendar_events.title`,
+no extra fetch needed), so it isn't lost: RCP/committee still see it via "Ref: {actual_title}" in this queue, and
+the resident still sees it via their own calendar (see next paragraph) and the escalation-resolved email.
+`private_event_answer` itself is left untouched — it stays the resident's original 'no' answer, the historical
+record of what they actually submitted; `escalation_outcome = 'confirmed_private'` is what now marks it private.
+
+**Also fixed, for consistency:** `displayTitle()` in `SocialCalendar.jsx` (decides what a masked booking's owner
+sees on their own calendar, vs. everyone else) now also masks when `reservation_escalation_outcome ===
+'confirmed_private'`, alongside the existing `private_event_answer` check — fetched via a new column added to
+the `reservationRows` query in `fetchEvents`. Without this, the resident would be the *one* viewer still seeing
+the generic "Private Event — Name" instead of their own real title, unlike every other masked booking.
+
+**Found but NOT fixed — flagging rather than guessing at the right behavior:** editing a reservation that's
+already been confirmed-private via escalation is unsafe. `SocialCalendar.jsx`'s edit-save path (the
+`isClubhouseReservationEdit && reservationEditable` branch) recomputes masking from `form.privateAnswer`, which
+is seeded from `private_event_answer` — still 'no' for this booking, untouched by the fix above on purpose (see
+that paragraph). So if anyone edits this reservation and saves — even an unrelated change like fixing a typo —
+the save logic treats it as an ordinary non-private edit: `calendar_events.title` reverts to the real (unmasked)
+title, `status` resets to `'confirmed'`, every fee field is nulled out, and `escalation_outcome` is cleared to
+`null` along with `acknowledged_at`/`escalated_at`/etc. — silently undoing the fee and the committee's
+determination. `reservationEditable` doesn't guard against this — it only checks `status !== 'cancelled'` and
+`check_received_at` is null, both true here. **Until this is addressed, don't use Edit Event on a
+confirmed-private reservation.** Worth deciding deliberately how this should behave (block editing entirely once
+`escalation_outcome` is set? preserve the escalation determination unless the private answer is intentionally
+changed?) rather than patched reactively — raised here, not solved.
+
+**One-time cleanup still needed for the 2a test booking itself:** it went through `resolveEscalation` before this
+fix existed, so its `calendar_events` row is still unmasked in the database right now — the code fix only
+applies going forward. A one-time SQL correction (find it, capture its title into `actual_title`, then mask
+`calendar_events`) is the same pattern used for the earlier no-fee-button test-booking cleanup in 2.9d. Not run
+yet — Keith to run in the Supabase SQL editor when ready.
+
+**Deploy note:** `git push` for both `.jsx` files (Vercel auto-deploys the frontend) — no Edge Function or
+migration involved in this round.
+
 ## 3. Pickleball Court Reservation Flow
 
 Fully self-contained in the portal — no fee, no RCP touchpoint. Built as a separate calendar/app from the clubhouse flow (different structure: fixed-length resource slots vs. open-ended request/approval).

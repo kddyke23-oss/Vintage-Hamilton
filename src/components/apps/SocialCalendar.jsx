@@ -885,7 +885,14 @@ const CLUBHOUSE_STATUS_INFO = {
 // the masked title if the owner never set one. See fetchEvents' reservation_*
 // fields above (Keith, 2026-09-05).
 function displayTitle(event, currentUserId) {
-  const isMasked = event.reservation_private_answer === 'yes' || event.reservation_private_answer === 'not_sure'
+  // A 'no'-answer booking that later gets confirmed-private via escalation
+  // (ClubhouseReservationsPage.jsx's resolveEscalation) is masked the same
+  // way retroactively — added 2026-09-18, same fix that made calendar_events
+  // .title itself masked for everyone else. Without this, the owner alone
+  // would see the generic "Private Event — Name" instead of their own
+  // real title, unlike every other masked booking.
+  const isMasked = event.reservation_private_answer === 'yes' || event.reservation_private_answer === 'not_sure' ||
+    event.reservation_escalation_outcome === 'confirmed_private'
   if (isMasked && event.created_by === currentUserId && event.reservation_actual_title) {
     return event.reservation_actual_title
   }
@@ -1898,7 +1905,7 @@ export default function SocialCalendar() {
       // below can decide per-viewer at render time.
       const { data: reservationRows } = await supabase
         .from('clubhouse_reservations')
-        .select('calendar_event_id, actual_title, private_event_answer')
+        .select('calendar_event_id, actual_title, private_event_answer, escalation_outcome')
         .in('calendar_event_id', eventIds)
       const reservationMap = {}
       reservationRows?.forEach(r => { reservationMap[r.calendar_event_id] = r })
@@ -1909,6 +1916,7 @@ export default function SocialCalendar() {
         author_name: authorMap[ev.created_by] || 'Resident',
         reservation_actual_title: reservationMap[ev.id]?.actual_title || null,
         reservation_private_answer: reservationMap[ev.id]?.private_event_answer || null,
+        reservation_escalation_outcome: reservationMap[ev.id]?.escalation_outcome || null,
       })))
     } else {
       setEvents([])
