@@ -494,6 +494,49 @@ Then `supabase functions deploy notify-clubhouse-deposit --no-verify-jwt` (new f
 deploy), and `git push` for `ClubhouseReservationsPage.jsx` and `SocialCalendar.jsx` so Vercel picks up the
 frontend half.
 
+### 2.22 Pre-go-live test data cleanup review, 2026-09-18
+
+**Asked by Keith:** ahead of the 10/1 go-live, do `test_removal_report.sql`/`test_removal_action.sql` (built 2.16,
+2026-09-16) need updating for anything built since, and when he runs them, he wants no trace of testing left
+anywhere — calendar or workflow data.
+
+**Confirmed: nothing about this session's schema changes required updating them.** Both scripts delete the whole
+`calendar_events` row (cascading to `clubhouse_reservations` via its existing FK, and to `calendar_comments` via
+its own `ON DELETE CASCADE`) — a full-row delete doesn't care what columns exist on the row, so the new
+post-event-deposit columns (2.21) needed no special handling.
+
+**Two real gaps found and fixed, unrelated to this session's other changes:**
+
+- **Matching was title-text only** (—`ce.title ILIKE 'Test Scenario%'`, etc.) — `clubhouse_reservations.is_test`
+  exists specifically to flag test data but neither script checked it. Turns out moot in practice: `is_test` is
+  never set anywhere in the app's own code (confirmed by search) — it's a manual, hand-flip-in-Supabase-only
+  column. Added `OR cr.is_test = true` to both scripts anyway as a supplementary catch, but title matching remains
+  the mechanism actually doing the work. **Practical implication for Keith:** the scenario-5 and post-event-deposit
+  test bookings from today need to have used a title starting with `Test Scenario` or `Test DYKE` to be caught —
+  if either used something else, the ILIKE patterns need widening before running the action script. Flagged
+  directly in both files' headers as a pre-run check.
+- **`pending_notifications` (the once-daily email queue) has no foreign key back to the booking it came from**
+  (—`notify-queue.ts` only stores recipient/subject/body text, nothing linking it to a reservation or event id)
+  — so deleting the booking rows does nothing to an unsent test notification already queued. Any test
+  notification triggered today that `send-daily-notifications` hasn't flushed yet would otherwise still go out,
+  addressed as test content, even after cleanup. Added a second query/DELETE to both scripts, matching the same
+  title patterns against `subject_line` and scoped to `sent_at IS NULL` — an already-sent row is just history,
+  nothing left to prevent.
+
+**Superseded by this:** `fix_confirmed_private_masking.sql` (2.19) only masks test case 2a's still-unmasked
+calendar event; `test_removal_action.sql` deletes that row outright, so there's no reason to run the masking fix
+first — noted in the action script's header. Skip it.
+
+**Not covered, and can't be from code alone:** `calendar_rsvps` isn't defined in this repo's tracked migrations
+— same as `calendar_events` itself, it was set up directly in Supabase during "Phase 1" and never version
+controlled, so its cascade behavior on a `calendar_events` delete can't be confirmed here. Low risk (these were
+never real bookings anyone but the tester would RSVP to), but worth a glance in the SQL editor if Keith wants to
+be thorough before go-live.
+
+**Run order, updated:** `test_removal_report.sql` (review both result sets, including the pre-run title-pattern
+check in its header) — then `test_removal_action.sql` — then re-run the report; both queries should come back
+empty.
+
 ## 3. Pickleball Court Reservation Flow
 
 Fully self-contained in the portal — no fee, no RCP touchpoint. Built as a separate calendar/app from the clubhouse flow (different structure: fixed-length resource slots vs. open-ended request/approval).
