@@ -627,6 +627,44 @@ picture.
 **Deploy note:** `git push` for `SocialCalendar.jsx` and `ClubhouseReservationsPage.jsx` — frontend only, no
 migration or Edge Function involved.
 
+### 2.26 Clubhouse booking journey added to the Help screens, 2026-09-23
+
+**Asked by Keith:** make the earlier internal state-diagram artifact more resident-friendly, add it to the
+in-app Help screens ahead of go-live, give it an explicit "no more updates coming" close point (there's no
+literal `closed` status in the data), and show what options are available, and to whom, at each stage.
+
+**New "Clubhouse Booking" tab in `src/pages/HelpPage.jsx`** (`TABS` array, inserted before "Contact & Help",
+which shifted from `activeTab === 8` to `9`) — replaces the technical state-diagram artifact with a
+plain-language build using the same status wording and colors residents already see on their own booking
+(`CLUBHOUSE_STATUS_INFO` in `SocialCalendar.jsx`), not the diagram's own invented palette:
+
+- **"Making a request"** — the actual steps (+ Add Event → Main Clubhouse / Side Room → fill in details →
+  accept the [Rules & Regulations](/clubhouse-rules) → submit).
+- **"Your booking's journey"** — a vertical sequence of `JourneyStep` cards (Submitted → Payment due →
+  Confirmed), each stating what the resident can do ("Your options"), what RCP is doing ("Meanwhile"), and a
+  pill reading either "🔔 More updates coming" or "✅ Nothing more coming" — the explicit close point Keith
+  asked for, since the data itself has no terminal `closed` value to hang it on.
+- **Branch sections** for the parts that aren't always a straight line — "If a deposit was collected"
+  (post-event review → refund), "If your booking is flagged as private" (escalation to committee), and "If you
+  cancel" (nothing paid → done immediately; something paid → refund pending → refund issued) — kept separate
+  from the main sequence rather than crammed into one branching diagram, since most bookings never hit them.
+- `AdminContact appId="clubhouse"` at the bottom, matching every other Help tab; also added `'clubhouse'` to
+  the Contact & Help tab's own admin list (label "Clubhouse Booking") so RCP shows up there too.
+
+**New sub-components** (bottom of `HelpPage.jsx`, after `AdminContact`): `JOURNEY_COLORS` (amber/orange/green/
+purple/gray, reusing the exact Tailwind classes the booking panel and RCP queue already use), `JourneyStep`,
+`UpdatesPill`, `JourneyArrow`.
+
+**Lint note:** `HelpPage.jsx` already carried 72 pre-existing `react/no-unescaped-entities` errors (unrelated,
+untouched contractions/quotes elsewhere in the file) before this change — confirmed via a same-file baseline
+check, not assumed. The new tab and components add zero new lint errors on top of that baseline; contractions
+and quoted button names inside the new content were phrased or entity-escaped to stay clean.
+
+**Not done:** the 72 pre-existing errors elsewhere in this file — out of scope of what was asked, left alone.
+
+**Deploy note:** `git push` for `src/pages/HelpPage.jsx` — frontend only, no migration or Edge Function
+involved.
+
 ## 3. Pickleball Court Reservation Flow
 
 Fully self-contained in the portal — no fee, no RCP touchpoint. Built as a separate calendar/app from the clubhouse flow (different structure: fixed-length resource slots vs. open-ended request/approval).
@@ -684,7 +722,7 @@ Design/build items are resolved (2.14, 3.7). What's left is deployment and real-
 - **Set up Mariesol's (and Al's, if needed) RCP portal account(s)** — see the deployment summary given to Keith alongside this build for exact steps.
 - **Board decisions still needed:** Side Room fee, Tables & Chairs fee (both currently unpriced/un-bookable on purpose), final payment-deadline-days reconciliation (30 vs. 60), who fulfills tables/chairs setup.
 - **Pickleball:** confirm how household/unit is represented across multiple resident logins in the current schema (3.3) — believed fine (reuses `profiles.address`, same as `access_requests`), not spot-checked against real data.
-- **Update the Help screens** to cover the new reservation flow (clubhouse/side-room/tables booking through Add Event, private-event masking, payment-by-check, and pickleball booking) once the feature actually goes live — not before, so Help doesn't describe something residents can't do yet. A reminder is scheduled for early October to catch this.
+- ~~Update the Help screens to cover the new reservation flow~~ — done for the clubhouse/side-room flow, see 2.26 (2026-09-23). Pickleball booking still needs its own Help coverage before that feature goes live.
 
 ## 5. Out of Scope (this phase)
 

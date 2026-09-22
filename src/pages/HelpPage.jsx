@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
 import { GENERAL_HELP_CONTACT } from '@/config/constants'
 
-const TABS = ['Getting Started', 'Navigating the App', 'Directory', 'Social Calendar', 'Blog', 'Recommendations', 'Lotto Syndicate', 'Budget Tracker', 'Contact & Help']
+const TABS = ['Getting Started', 'Navigating the App', 'Directory', 'Social Calendar', 'Blog', 'Recommendations', 'Lotto Syndicate', 'Budget Tracker', 'Clubhouse Booking', 'Contact & Help']
 
 export default function HelpPage() {
   const [activeTab, setActiveTab] = useState(0)
@@ -530,8 +530,156 @@ export default function HelpPage() {
           </div>
         )}
 
-        {/* ── Contact & Help ── */}
+        {/* ── Clubhouse Booking ── */}
         {activeTab === 8 && (
+          <div className="space-y-6">
+            <Section title="Booking the Clubhouse or Side Room 🏛️">
+              <p className="text-brand-600">
+                The Main Clubhouse and Side Room are requested the same way as any other calendar event, but
+                they go through a short review — and usually a fee — before they are confirmed. Here is how to
+                make a request, and what happens to it afterwards.
+              </p>
+            </Section>
+
+            <Section title="Making a request">
+              <Steps steps={[
+                { n: 1, text: <>Click <strong>&quot;+ Add Event&quot;</strong> on the Social Calendar.</> },
+                { n: 2, text: <>Choose <strong>🏛️ Main Clubhouse</strong> and/or <strong>🚪 Side Room</strong> under Location.</> },
+                { n: 3, text: <>Fill in your event details — guest count, times, and any extras (tables, chairs, a later end time). Fees for anything you select are shown right on the form as you go.</> },
+                { n: 4, text: <>Read and accept the <a href="/clubhouse-rules" target="_blank" rel="noopener noreferrer" className="underline text-brand-700 hover:text-brand-900">Clubhouse Rules &amp; Regulations</a>, then submit.</> },
+              ]} />
+              <p className="text-brand-500 text-sm mt-3">
+                You will get an email confirming exactly what you submitted, and every update below is emailed
+                to you as it happens too — you do not need to keep checking back.
+              </p>
+            </Section>
+
+            <Section title="Your booking's journey">
+              <p className="text-brand-600 mb-4">
+                Most bookings move through these steps in order. Each one shows what you can do (if anything),
+                what is happening on our end, and whether to expect to hear from us again — once a step is
+                marked <span className="text-green-700 font-medium">✅ Nothing more coming</span>, that
+                booking is finished.
+              </p>
+
+              <div className="space-y-2">
+                <JourneyStep
+                  color={JOURNEY_COLORS.amber}
+                  title="Submitted — awaiting RCP review"
+                  meaning="Your request has gone to the Reservation Coordination Person (RCP), who reviews it and confirms whether a fee applies."
+                  youCanDo="Remove (cancel) the booking any time, from the event itself."
+                  whoElse="RCP reviews your answers and sets the fee, if any."
+                  updates="more"
+                />
+                <JourneyArrow />
+                <JourneyStep
+                  color={JOURNEY_COLORS.orange}
+                  title="Payment due"
+                  meaning="RCP has confirmed a fee applies. The amount and due date are shown on the booking."
+                  youCanDo="Pay by the deadline shown · Remove (cancel) any time if your plans change."
+                  whoElse="RCP marks your payment received once your check arrives. If the deadline passes unpaid, both you and RCP get a reminder — the booking can be cancelled if it stays unpaid."
+                  updates="more"
+                />
+                <p className="text-brand-400 text-xs italic text-center">
+                  Some bookings go straight to Confirmed with no fee, depending on the answers you gave when submitting.
+                </p>
+                <JourneyArrow />
+                <JourneyStep
+                  color={JOURNEY_COLORS.green}
+                  title="Confirmed"
+                  meaning="Your booking is set."
+                  youCanDo="Nothing needed — Remove (cancel) any time if plans change."
+                  whoElse="If your booking included a refundable deposit, there's one more step after your event — see below."
+                  updates="done"
+                />
+              </div>
+            </Section>
+
+            <Section title="If a deposit was collected">
+              <p className="text-brand-600 mb-3">
+                Some bookings include a refundable deposit. If yours did, there is one more step after your event:
+              </p>
+              <div className="space-y-2">
+                <JourneyStep
+                  color={JOURNEY_COLORS.amber}
+                  title="Post-event deposit review"
+                  meaning="After your event, RCP checks the clubhouse and records whether any of your deposit needs to be withheld — for damage or extra cleaning, for example."
+                  youCanDo="Nothing needed — you'll get an email with the findings."
+                  whoElse="RCP records the outcome and, if a refund is due, mails it by check."
+                  updates="more"
+                />
+                <JourneyArrow />
+                <JourneyStep
+                  color={JOURNEY_COLORS.green}
+                  title="Deposit refund issued"
+                  meaning="Your deposit has been mailed to you by check — in full if no fee was withheld, or minus the fee if part of it was."
+                  updates="done"
+                />
+              </div>
+            </Section>
+
+            <Section title="If your booking is flagged as private">
+              <p className="text-brand-600 mb-3">
+                If your answers suggest the event might be a private, exclusive-use function, RCP can send it
+                to the Social Committee for a second look before it is confirmed:
+              </p>
+              <JourneyStep
+                color={JOURNEY_COLORS.purple}
+                title="Under review by the Social Committee"
+                meaning="The Committee decides whether this counts as a private event."
+                youCanDo="Nothing needed — wait to hear back."
+                whoElse="The Committee either confirms it's private (the booking then moves to Payment due) or dismisses it (the booking goes back to how it stood before)."
+                updates="more"
+              />
+            </Section>
+
+            <Section title="If you cancel">
+              <p className="text-brand-600 mb-3">
+                You can remove your own booking at any time — open it and click <strong>Remove</strong>. What
+                happens next depends on whether you had already paid anything:
+              </p>
+              <div className="space-y-2">
+                <JourneyStep
+                  color={JOURNEY_COLORS.gray}
+                  title="Cancelled"
+                  meaning="Your booking is taken off the shared calendar. Since nothing had been paid, that's the end of it."
+                  updates="done"
+                />
+                <p className="text-brand-400 text-xs italic text-center">— or, if a fee had already been paid —</p>
+                <JourneyStep
+                  color={JOURNEY_COLORS.gray}
+                  title="Cancelled — refund pending"
+                  meaning="Your booking is taken off the shared calendar. Since you'd already paid, a refund is owed."
+                  youCanDo="Nothing needed — wait for RCP to process it."
+                  whoElse="RCP mails a refund check and marks it issued."
+                  updates="more"
+                />
+                <JourneyArrow />
+                <JourneyStep
+                  color={JOURNEY_COLORS.green}
+                  title="Refund issued"
+                  meaning="Your refund has been mailed to you by check — the date shows on the booking."
+                  updates="done"
+                />
+              </div>
+              <p className="text-brand-500 text-sm mt-3">
+                A cancelled booking disappears from the shared calendar for everyone else, but you can still
+                find it under your own <strong>&quot;My Events&quot;</strong> filter, with the reason shown.
+              </p>
+            </Section>
+
+            <Callout>
+              💡 <strong>Checking status:</strong> Open the booking from the calendar at any time to see where
+              it stands. If you are the owner, a calendar admin, or RCP, you can also expand a full history of
+              everything that has happened to it right there on the booking.
+            </Callout>
+
+            <AdminContact appId="clubhouse" admins={appAdmins} loading={loadingAdmins} />
+          </div>
+        )}
+
+        {/* ── Contact & Help ── */}
+        {activeTab === 9 && (
           <div className="space-y-6">
             <Section title="Need help? We've got you covered 😊">
               <p className="text-brand-600">
@@ -549,10 +697,10 @@ export default function HelpPage() {
                 <p className="text-brand-400 text-sm">Loading...</p>
               ) : (
                 <div className="space-y-4">
-                  {['directory', 'calendar', 'blog', 'recommendations', 'lotto', 'budget'].map(appId => (
+                  {['directory', 'calendar', 'blog', 'recommendations', 'lotto', 'budget', 'clubhouse'].map(appId => (
                     <div key={appId}>
                       <p className="text-sm font-semibold text-brand-700 mb-2 capitalize">
-                        {appId === 'lotto' ? 'Lotto Syndicate' : appId === 'calendar' ? 'Social Calendar' : appId === 'blog' ? 'Community Blog' : appId === 'recommendations' ? 'Recommendations' : appId === 'budget' ? 'Budget Tracker' : 'Resident Directory'}
+                        {appId === 'lotto' ? 'Lotto Syndicate' : appId === 'calendar' ? 'Social Calendar' : appId === 'blog' ? 'Community Blog' : appId === 'recommendations' ? 'Recommendations' : appId === 'budget' ? 'Budget Tracker' : appId === 'clubhouse' ? 'Clubhouse Booking' : 'Resident Directory'}
                       </p>
                       {appAdmins[appId]?.length > 0 ? (
                         <div className="space-y-2">
@@ -689,4 +837,57 @@ function AdminContact({ appId, admins, loading }) {
       )}
     </div>
   )
+}
+
+// ── Clubhouse booking journey (Keith, 2026-09-22) — a plain-language,
+// resident-facing rebuild of an earlier internal state diagram. Each step
+// says what the resident can do, what's happening on RCP/Committee's side,
+// and whether the booking is finished ("Nothing more coming") or still has
+// updates ahead ("More updates coming") — the explicit "close point" that
+// diagram didn't have, since there's no literal "closed" status in the data.
+
+const JOURNEY_COLORS = {
+  amber: { bg: 'bg-amber-100', border: 'border-amber-200', text: 'text-amber-700' },
+  orange: { bg: 'bg-orange-100', border: 'border-orange-200', text: 'text-orange-700' },
+  green: { bg: 'bg-green-100', border: 'border-green-200', text: 'text-green-700' },
+  purple: { bg: 'bg-purple-100', border: 'border-purple-200', text: 'text-purple-700' },
+  gray: { bg: 'bg-gray-200', border: 'border-gray-300', text: 'text-gray-600' },
+}
+
+function JourneyStep({ color, title, meaning, youCanDo, whoElse, updates }) {
+  return (
+    <div className={`rounded-lg border p-4 ${color.border} ${color.bg}`}>
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+        <p className={`font-semibold text-sm ${color.text}`}>{title}</p>
+        <UpdatesPill status={updates} />
+      </div>
+      <p className="text-brand-700 text-sm mb-2">{meaning}</p>
+      {youCanDo && (
+        <p className="text-brand-600 text-sm">
+          <span className="font-medium">Your options: </span>{youCanDo}
+        </p>
+      )}
+      {whoElse && (
+        <p className="text-brand-500 text-sm mt-1">
+          <span className="font-medium">Meanwhile: </span>{whoElse}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function UpdatesPill({ status }) {
+  return status === 'done' ? (
+    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-white/70 text-green-700 border border-green-300 whitespace-nowrap">
+      ✅ Nothing more coming
+    </span>
+  ) : (
+    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-white/70 text-blue-700 border border-blue-300 whitespace-nowrap">
+      🔔 More updates coming
+    </span>
+  )
+}
+
+function JourneyArrow() {
+  return <div className="flex justify-center text-brand-300 text-lg leading-none">↓</div>
 }
