@@ -923,10 +923,75 @@ function money(n) {
 // event's creator or a calendar admin (canView), and only when the event is
 // actually a clubhouse reservation (a linked clubhouse_reservations row
 // exists) — most calendar events aren't.
+// Builds the ordered "what happened to this booking" trail entirely from
+// timestamp/actor column pairs already on clubhouse_reservations — no
+// separate audit-log table needed, since every meaningful transition this
+// reservation can go through already stamps who did it and when (Keith,
+// 2026-09-23: "an audit trail of what happened to a booking"). namesById
+// maps a profile id to a display name; entries with no matching id fall
+// back to 'System' (the one case is late_notice_sent_at, fired by the
+// clubhouse-payment-check cron, nobody to attribute it to).
+function buildClubhouseAuditTrail(r, namesById) {
+  const name = id => (id && namesById[id]) || (id ? 'Unknown' : 'System')
+  const entries = []
+
+  if (r.created_at) {
+    entries.push({ at: r.created_at, who: name(r.reserved_by), action: 'Submitted the booking' })
+  }
+  if (r.terms_acknowledged_at) {
+    entries.push({ at: r.terms_acknowledged_at, who: name(r.reserved_by), action: 'Accepted the Clubhouse Lease Agreement / Rules & Regulations' })
+  }
+  if (r.acknowledged_at) {
+    entries.push({ at: r.acknowledged_at, who: name(r.acknowledged_by), action: 'Acknowledged the booking — fee required' })
+  }
+  if (r.escalated_at) {
+    entries.push({ at: r.escalated_at, who: name(r.escalated_by), action: 'Escalated to the Social Committee' })
+  }
+  if (r.escalation_resolved_at) {
+    entries.push({
+      at: r.escalation_resolved_at,
+      who: name(r.escalation_resolved_by),
+      action: r.escalation_outcome === 'confirmed_private' ? 'Confirmed the escalation — this is private' : 'Dismissed the escalation — not private',
+    })
+  }
+  if (r.late_notice_sent_at) {
+    entries.push({ at: r.late_notice_sent_at, who: 'System', action: 'Sent an overdue-payment notice (past the payment deadline, still unpaid)' })
+  }
+  if (r.check_received_at) {
+    entries.push({ at: r.check_received_at, who: name(r.check_received_by), action: 'Marked the payment received' })
+  }
+  if (r.cancelled_at) {
+    entries.push({
+      at: r.cancelled_at,
+      who: name(r.cancelled_by),
+      action: r.cancelled_by === r.reserved_by ? 'Cancelled the booking (self)' : 'Cancelled the booking',
+      detail: r.cancellation_reason || null,
+    })
+  }
+  if (r.refund_issued_at) {
+    entries.push({ at: r.refund_issued_at, who: name(r.refund_issued_by), action: 'Marked the cancellation refund issued' })
+  }
+  if (r.post_event_reviewed_at) {
+    entries.push({
+      at: r.post_event_reviewed_at,
+      who: name(r.post_event_reviewed_by),
+      action: 'Recorded the post-event deposit review',
+      detail: Number(r.post_event_fee_amount) > 0 ? `${money(r.post_event_fee_amount)} withheld — ${r.post_event_fee_reason}` : 'No fee withheld',
+    })
+  }
+  if (r.deposit_refund_issued_at) {
+    entries.push({ at: r.deposit_refund_issued_at, who: name(r.deposit_refund_issued_by), action: 'Marked the deposit refund issued' })
+  }
+
+  return entries.sort((a, b) => new Date(a.at) - new Date(b.at))
+}
+
 function ClubhouseReservationPanel({ eventId, canView }) {
   const [reservation, setReservation] = useState(null)
   const [settings, setSettings] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [auditTrail, setAuditTrail] = useState([])
+  const [showAudit, setShowAudit] = useState(false)
 
   useEffect(() => {
     if (!canView) { setLoading(false); return }
@@ -934,7 +999,7 @@ function ClubhouseReservationPanel({ eventId, canView }) {
     ;(async () => {
       const { data } = await supabase
         .from('clubhouse_reservations')
-        .select('status, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due, payment_deadline_date, cancellation_reason, check_received_at, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, terms_acknowledged_at, acknowledged_at, post_event_reviewed_at, post_event_fee_amount, post_event_fee_reason, deposit_refund_amount, deposit_refund_issued_at, refund_issued_at')
+        .select('status, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due, payment_deadline_date, cancellation_reason, check_received_at, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, terms_acknowledged_at, acknowledged_at, post_event_reviewed_at, post_event_fee_amount, post_event_fee_reason, deposit_refund_amount, deposit_refund_issued_at, refund_issued_at, created_at, reserved_by, acknowledged_by, check_received_by, escalated_at, escalated_by, escalation_resolved_at, escalation_resolved_by, escalation_outcome, late_notice_sent_at, cancelled_at, cancelled_by, refund_issued_by, post_event_reviewed_by, deposit_refund_issued_by')
         .eq('calendar_event_id', eventId)
         .maybeSingle()
       if (cancelledEffect) return
@@ -946,6 +1011,21 @@ function ClubhouseReservationPanel({ eventId, canView }) {
           .eq('id', 1)
           .maybeSingle()
         if (!cancelledEffect) setSettings(s)
+      }
+      if (data) {
+        const actorIds = [...new Set([
+          data.reserved_by, data.acknowledged_by, data.check_received_by, data.escalated_by,
+          data.escalation_resolved_by, data.cancelled_by, data.refund_issued_by,
+          data.post_event_reviewed_by, data.deposit_refund_issued_by,
+        ].filter(Boolean))]
+        if (actorIds.length) {
+          const { data: profiles } = await supabase.from('profiles').select('id, names, surname').in('id', actorIds)
+          if (!cancelledEffect) {
+            const namesById = {}
+            for (const p of (profiles || [])) namesById[p.id] = `${p.names ?? ''} ${p.surname ?? ''}`.trim() || 'Resident'
+            setAuditTrail(buildClubhouseAuditTrail(data, namesById))
+          }
+        }
       }
       setLoading(false)
     })()
@@ -1060,13 +1140,51 @@ function ClubhouseReservationPanel({ eventId, canView }) {
           <a href="/clubhouse-rules" target="_blank" rel="noopener noreferrer" className="underline hover:text-brand-600">Rules &amp; Regulations</a>), with the full booking details on file and included in your confirmation email.
         </p>
       )}
+
+      {/* Audit trail (Keith, 2026-09-23) — every transition this row can go
+          through already stamps who + when, so this is purely a read-out of
+          fields already on the reservation, not a new log. Visible to the
+          same audience that can see this panel at all (owner, calendar
+          admin, or a clubhouse reviewer — canView, computed by the caller);
+          collapsed by default since most people opening a booking just want
+          its current status, not its history. */}
+      {auditTrail.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-brand-200">
+          <button
+            type="button"
+            onClick={() => setShowAudit(v => !v)}
+            className="text-xs font-medium text-brand-500 hover:text-brand-700"
+          >
+            {showAudit ? 'Hide' : 'Show'} audit trail ({auditTrail.length}) {showAudit ? '▲' : '▼'}
+          </button>
+          {showAudit && (
+            <ol className="mt-2 space-y-2 border-l-2 border-brand-200 pl-3">
+              {auditTrail.map((e, i) => (
+                <li key={i} className="text-xs text-brand-600">
+                  <div className="text-brand-400">{new Date(e.at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</div>
+                  <div><span className="font-medium text-brand-800">{e.who}</span> — {e.action}</div>
+                  {e.detail && <div className="text-brand-500 italic">{e.detail}</div>}
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
-function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, onClose, onEdit, onRemove, onReport, onRsvp, onRepeat, userRsvp, toast }) {
+function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, isClubhouseReviewer, onClose, onEdit, onRemove, onReport, onRsvp, onRepeat, userRsvp, toast }) {
   const cat = categories.find(c => c.id === event.category_id)
   const canModify = isCalendarAdmin || event.created_by === currentUserId
+  // Audit trail visibility is intentionally broader than canModify — a
+  // clubhouse reviewer (RCP or committee) can SEE the trail on a booking
+  // that isn't theirs and that they can't Edit/Remove from here, matching
+  // Keith's ask: owner, calendar admin, or RCP. RLS on clubhouse_reservations
+  // is still the real gate (a committee member's query simply returns
+  // nothing for a non-escalated row), this only controls whether the panel
+  // bothers to render at all.
+  const canViewClubhousePanel = canModify || isClubhouseReviewer
   const upcoming = isFutureOrToday(event.event_date)
   const [showAttendees, setShowAttendees] = useState(false)
   const [attendees, setAttendees] = useState([])
@@ -1248,7 +1366,7 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, o
             <p className="mt-4 text-sm text-brand-700 leading-relaxed">{event.description}</p>
           )}
 
-          <ClubhouseReservationPanel eventId={event.id} canView={canModify} />
+          <ClubhouseReservationPanel eventId={event.id} canView={canViewClubhousePanel} />
 
           {/* External link */}
           {event.external_url && (
@@ -1822,6 +1940,15 @@ export default function SocialCalendar() {
   const [userRsvps, setUserRsvps] = useState(new Set())
   const [profile, setProfile] = useState(null)
   const [isCalendarAdmin, setIsCalendarAdmin] = useState(false)
+  // Separate from isCalendarAdmin (app_id='admin' or calendar role='admin') —
+  // this is the 'clubhouse' app_access row specifically (RCP, role='admin',
+  // or Social Committee, role='user'), which is a different reviewer
+  // capability entirely. Used only to let a reviewer see the audit trail on
+  // a booking they wouldn't otherwise be able to Edit/Remove from this
+  // calendar view (Keith, 2026-09-23) — RLS still enforces which rows a
+  // committee member (escalated only) can actually read, so this can stay a
+  // simple "has any clubhouse row" check without duplicating that logic.
+  const [isClubhouseReviewer, setIsClubhouseReviewer] = useState(false)
   const [loading, setLoading] = useState(true)
 
   const [showAddModal, setShowAddModal] = useState(false)
@@ -1854,6 +1981,7 @@ export default function SocialCalendar() {
       setProfile(prof)
       const admin = accessRows?.some(r => r.app_id === 'admin' || (r.app_id === 'calendar' && r.role === 'admin'))
       setIsCalendarAdmin(!!admin)
+      setIsClubhouseReviewer(!!accessRows?.some(r => r.app_id === 'clubhouse'))
     }
     fetchProfile()
   }, [user])
@@ -2362,6 +2490,7 @@ export default function SocialCalendar() {
           categories={categories}
           currentUserId={user?.id}
           isCalendarAdmin={isCalendarAdmin}
+          isClubhouseReviewer={isClubhouseReviewer}
           onClose={() => setSelectedEvent(null)}
           onEdit={ev => { setEditEvent(ev); setSelectedEvent(null) }}
           onRemove={ev => handleRemove(ev)}

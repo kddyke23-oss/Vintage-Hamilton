@@ -31,6 +31,50 @@ function money(n) {
   return n == null ? '—' : `$${Number(n).toFixed(2)}`
 }
 
+// Same derivation as ClubhouseReservationPanel in SocialCalendar.jsx (kept
+// local rather than shared, matching this codebase's existing per-file
+// helper convention) — the full "what happened" trail read straight off
+// columns already on the row, not a separate log table. See Keith,
+// 2026-09-23, Reservations/REQUIREMENTS.md 2.25.
+function buildClubhouseAuditTrail(r, namesById) {
+  const name = id => (id && namesById[id]) || (id ? 'Unknown' : 'System')
+  const entries = []
+
+  if (r.created_at) entries.push({ at: r.created_at, who: name(r.reserved_by), action: 'Submitted the booking' })
+  if (r.terms_acknowledged_at) entries.push({ at: r.terms_acknowledged_at, who: name(r.reserved_by), action: 'Accepted the Clubhouse Lease Agreement / Rules & Regulations' })
+  if (r.acknowledged_at) entries.push({ at: r.acknowledged_at, who: name(r.acknowledged_by), action: 'Acknowledged the booking — fee required' })
+  if (r.escalated_at) entries.push({ at: r.escalated_at, who: name(r.escalated_by), action: 'Escalated to the Social Committee' })
+  if (r.escalation_resolved_at) {
+    entries.push({
+      at: r.escalation_resolved_at,
+      who: name(r.escalation_resolved_by),
+      action: r.escalation_outcome === 'confirmed_private' ? 'Confirmed the escalation — this is private' : 'Dismissed the escalation — not private',
+    })
+  }
+  if (r.late_notice_sent_at) entries.push({ at: r.late_notice_sent_at, who: 'System', action: 'Sent an overdue-payment notice (past the payment deadline, still unpaid)' })
+  if (r.check_received_at) entries.push({ at: r.check_received_at, who: name(r.check_received_by), action: 'Marked the payment received' })
+  if (r.cancelled_at) {
+    entries.push({
+      at: r.cancelled_at,
+      who: name(r.cancelled_by),
+      action: r.cancelled_by === r.reserved_by ? 'Cancelled the booking (self)' : 'Cancelled the booking',
+      detail: r.cancellation_reason || null,
+    })
+  }
+  if (r.refund_issued_at) entries.push({ at: r.refund_issued_at, who: name(r.refund_issued_by), action: 'Marked the cancellation refund issued' })
+  if (r.post_event_reviewed_at) {
+    entries.push({
+      at: r.post_event_reviewed_at,
+      who: name(r.post_event_reviewed_by),
+      action: 'Recorded the post-event deposit review',
+      detail: Number(r.post_event_fee_amount) > 0 ? `${money(r.post_event_fee_amount)} withheld — ${r.post_event_fee_reason}` : 'No fee withheld',
+    })
+  }
+  if (r.deposit_refund_issued_at) entries.push({ at: r.deposit_refund_issued_at, who: name(r.deposit_refund_issued_by), action: 'Marked the deposit refund issued' })
+
+  return entries.sort((a, b) => new Date(a.at) - new Date(b.at))
+}
+
 const STATUS_LABEL = {
   confirmed: { label: 'Confirmed', color: 'bg-green-100 text-green-700' },
   pending_rcp: { label: 'Awaiting RCP review', color: 'bg-amber-100 text-amber-700' },
@@ -48,6 +92,7 @@ export default function ClubhouseReservationsPage() {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('needs_action') // needs_action | all — RCP only
+  const [expandedAudit, setExpandedAudit] = useState(() => new Set()) // row ids with the audit trail open
 
   useEffect(() => {
     if (!user) return
@@ -72,10 +117,13 @@ export default function ClubhouseReservationsPage() {
       .select(`
         id, calendar_event_id, reserved_by, wants_main_clubhouse, wants_side_room, wants_tables_chairs,
         starts_at, ends_at, private_event_answer, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due,
-        payment_deadline_date, status, acknowledged_at, check_received_at, escalated_at, escalation_outcome,
-        cancelled_at, refund_issued_at, is_test, actual_title,
-        post_event_reviewed_at, post_event_fee_amount, post_event_fee_reason, deposit_refund_amount, deposit_refund_issued_at,
+        payment_deadline_date, status, acknowledged_at, acknowledged_by, check_received_at, check_received_by,
+        escalated_at, escalated_by, escalation_resolved_at, escalation_resolved_by, escalation_outcome,
+        cancelled_at, cancelled_by, cancellation_reason, refund_issued_at, refund_issued_by, is_test, actual_title,
+        post_event_reviewed_at, post_event_reviewed_by, post_event_fee_amount, post_event_fee_reason,
+        deposit_refund_amount, deposit_refund_issued_at, deposit_refund_issued_by,
         guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, liability_insurance_confirmed,
+        created_at, terms_acknowledged_at, late_notice_sent_at,
         calendar_events ( title )
       `)
       .order('starts_at', { ascending: true })
@@ -86,14 +134,26 @@ export default function ClubhouseReservationsPage() {
       return
     }
 
-    const ids = [...new Set((data || []).map(r => r.reserved_by))]
+    // The audit trail needs a name for every actor a row can mention, not
+    // just the requester — union every actor-id column across every row.
+    const actorIds = [...new Set((data || []).flatMap(r => [
+      r.reserved_by, r.acknowledged_by, r.check_received_by, r.escalated_by,
+      r.escalation_resolved_by, r.cancelled_by, r.refund_issued_by,
+      r.post_event_reviewed_by, r.deposit_refund_issued_by,
+    ].filter(Boolean)))]
     let namesById = {}
-    if (ids.length > 0) {
-      const { data: people } = await supabase.from('profiles').select('id, names, surname, address').in('id', ids)
+    let plainNamesById = {}
+    if (actorIds.length > 0) {
+      const { data: people } = await supabase.from('profiles').select('id, names, surname, address').in('id', actorIds)
       namesById = Object.fromEntries((people || []).map(p => [p.id, { name: `${p.names} ${p.surname}`.trim(), address: p.address }]))
+      plainNamesById = Object.fromEntries((people || []).map(p => [p.id, `${p.names ?? ''} ${p.surname ?? ''}`.trim() || 'Resident']))
     }
 
-    setRows((data || []).map(r => ({ ...r, requester: namesById[r.reserved_by] || { name: 'Unknown', address: '' } })))
+    setRows((data || []).map(r => ({
+      ...r,
+      requester: namesById[r.reserved_by] || { name: 'Unknown', address: '' },
+      auditTrail: buildClubhouseAuditTrail(r, plainNamesById),
+    })))
     setLoading(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -468,6 +528,37 @@ export default function ClubhouseReservationsPage() {
                 {r.post_event_reviewed_at && (
                   <div className="text-sm text-gray-500 mt-1">
                     Deposit review: {Number(r.post_event_fee_amount) > 0 ? `${money(r.post_event_fee_amount)} withheld (${r.post_event_fee_reason})` : 'No fee applied'} — Refund {money(r.deposit_refund_amount)}{r.deposit_refund_issued_at ? ' — issued' : Number(r.deposit_refund_amount) > 0 ? ' — pending' : ''}
+                  </div>
+                )}
+
+                {/* Audit trail (Keith, 2026-09-23) — same derived-from-existing-
+                    columns trail as the resident's own on-screen panel in
+                    SocialCalendar.jsx, surfaced here too since this queue is
+                    where RCP/committee actually work day to day. */}
+                {r.auditTrail?.length > 0 && (
+                  <div className="mt-1">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedAudit(prev => {
+                        const next = new Set(prev)
+                        next.has(r.id) ? next.delete(r.id) : next.add(r.id)
+                        return next
+                      })}
+                      className="text-xs font-medium text-gray-500 hover:text-gray-700"
+                    >
+                      {expandedAudit.has(r.id) ? 'Hide' : 'Show'} audit trail ({r.auditTrail.length}) {expandedAudit.has(r.id) ? '▲' : '▼'}
+                    </button>
+                    {expandedAudit.has(r.id) && (
+                      <ol className="mt-2 space-y-2 border-l-2 border-gray-200 pl-3">
+                        {r.auditTrail.map((e, i) => (
+                          <li key={i} className="text-xs text-gray-600">
+                            <div className="text-gray-400">{new Date(e.at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</div>
+                            <div><span className="font-medium text-gray-800">{e.who}</span> — {e.action}</div>
+                            {e.detail && <div className="text-gray-500 italic">{e.detail}</div>}
+                          </li>
+                        ))}
+                      </ol>
+                    )}
                   </div>
                 )}
 

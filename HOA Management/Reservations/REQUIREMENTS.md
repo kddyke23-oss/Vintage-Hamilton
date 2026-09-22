@@ -589,6 +589,44 @@ unrelated feature — flagged here, not fixed in this round.
 round of edits), plus `supabase functions deploy notify-clubhouse-resident-status --no-verify-jwt` for the
 Edge Function change.
 
+### 2.25 Audit trail — who did what, when, 2026-09-23
+
+**Asked by Keith:** for a given booking, the owner, a calendar admin, or RCP should be able to see an audit
+trail of everything that happened to it.
+
+**No new table, no migration.** Every meaningful transition a clubhouse reservation can go through already
+stamps who did it and when, in its own pair of columns — `acknowledged_at`/`acknowledged_by`,
+`check_received_at`/`check_received_by`, `escalated_at`/`escalated_by`, `escalation_resolved_at`/`_by`/
+`_outcome`, `cancelled_at`/`_by`/`_reason`, `refund_issued_at`/`_by`, `post_event_reviewed_at`/`_by`/
+`_fee_amount`/`_reason`, `deposit_refund_issued_at`/`_by`, plus `created_at`/`reserved_by` and
+`terms_acknowledged_at` for the booking's own submission and agreement-acceptance. The trail is just those
+columns, read off the row, sorted by timestamp — `buildClubhouseAuditTrail()`, one profile-name lookup for
+every actor id that appears on the row.
+
+**Built in both places someone would actually be looking at a booking:**
+- `SocialCalendar.jsx`'s `ClubhouseReservationPanel` (the on-screen panel inside a calendar event) — a
+  collapsed-by-default "Show audit trail (N)" toggle at the bottom. Visibility (`canViewClubhousePanel`) is now
+  the event's owner, a calendar admin, **or** a clubhouse reviewer (new `isClubhouseReviewer` state — any
+  `app_access` row with `app_id='clubhouse'`, RCP or committee) — previously this panel was owner/calendar-admin
+  only, so RCP browsing the shared calendar couldn't see it at all. Loosening the frontend check is safe:
+  `clubhouse_reservations`' RLS (`clubhouse_committee_role.sql`) is the real gate, and still only returns a row
+  to a committee member when it's `status = 'escalated'` — the query itself comes back empty for anything else,
+  so the panel (and the trail) simply doesn't render.
+- `ClubhouseReservationsPage.jsx` (the RCP/committee queue) — the same toggle, per row, right where RCP already
+  works day to day. `fetchRows()`'s `.select()` and its actor-name lookup both extended to cover every actor-id
+  column, not just `reserved_by`.
+
+**Deliberately left out:** `pending_notifications` (which recipient got which email, and whether/when it sent)
+isn't part of the trail — it has no foreign key back to a reservation (see 2.22), so there's nothing to join on
+without a schema change. Worth a follow-up if "did the email actually go out" ever needs to be part of this
+picture.
+
+**`npx eslint` clean** on `App.jsx`, `SocialCalendar.jsx` (matches its 4-problem baseline, nothing new), and
+`ClubhouseReservationsPage.jsx` (0 problems).
+
+**Deploy note:** `git push` for `SocialCalendar.jsx` and `ClubhouseReservationsPage.jsx` — frontend only, no
+migration or Edge Function involved.
+
 ## 3. Pickleball Court Reservation Flow
 
 Fully self-contained in the portal — no fee, no RCP touchpoint. Built as a separate calendar/app from the clubhouse flow (different structure: fixed-length resource slots vs. open-ended request/approval).
