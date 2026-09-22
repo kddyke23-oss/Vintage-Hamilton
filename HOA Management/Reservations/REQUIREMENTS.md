@@ -537,6 +537,27 @@ be thorough before go-live.
 check in its header) — then `test_removal_action.sql` — then re-run the report; both queries should come back
 empty.
 
+### 2.23 Scenario 5's refund never showed on the calendar entry itself, 2026-09-22
+
+**Reported by Keith:** RCP processed Scenario 5's refund, but it landed too late in the day to appear in the
+6pm resident-status digest yet — and checking the event directly on his own calendar, it only showed "Cancelled",
+nothing about the refund.
+
+**Confirmed as a real, narrow gap** — distinct from 2.20, which already solved a related problem (making a
+cancelled booking visible at all under "My Events", and emailing the resident at each step). What 2.20 didn't
+do: the on-screen panel you get by actually opening a specific cancelled booking (`ClubhouseReservationPanel`)
+never queried or rendered `refund_issued_at` — it showed the cancellation reason and nothing else, regardless of
+whether a fee had been collected, a refund was pending, or a refund had already been mailed. The data was tracked
+correctly the whole time (RCP's own queue, and both cancellation emails) — it just never reached this one screen.
+
+**Fixed:** `ClubhouseReservationPanel` now also fetches `refund_issued_at` and, for a cancelled booking that had
+collected a fee, shows either "A refund is being processed…" (amber) or "Refund mailed to you by check on
+{date}." once `refund_issued_at` is set. Shows nothing extra when no fee was ever collected — matches
+`notify-clubhouse-cancellation`'s own behavior in that case. `npx eslint` clean (matches the file's existing
+4-problem baseline, nothing new).
+
+**Deploy note:** `git push` for `SocialCalendar.jsx` — frontend only, no migration or Edge Function involved.
+
 ## 3. Pickleball Court Reservation Flow
 
 Fully self-contained in the portal — no fee, no RCP touchpoint. Built as a separate calendar/app from the clubhouse flow (different structure: fixed-length resource slots vs. open-ended request/approval).

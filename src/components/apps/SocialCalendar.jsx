@@ -920,7 +920,7 @@ function ClubhouseReservationPanel({ eventId, canView }) {
     ;(async () => {
       const { data } = await supabase
         .from('clubhouse_reservations')
-        .select('status, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due, payment_deadline_date, cancellation_reason, check_received_at, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, terms_acknowledged_at, acknowledged_at, post_event_reviewed_at, post_event_fee_amount, post_event_fee_reason, deposit_refund_amount, deposit_refund_issued_at')
+        .select('status, fee_main, fee_side_room, fee_tables_chairs, fee_additional_hours, deposit_amount, total_due, payment_deadline_date, cancellation_reason, check_received_at, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, terms_acknowledged_at, acknowledged_at, post_event_reviewed_at, post_event_fee_amount, post_event_fee_reason, deposit_refund_amount, deposit_refund_issued_at, refund_issued_at')
         .eq('calendar_event_id', eventId)
         .maybeSingle()
       if (cancelledEffect) return
@@ -1018,8 +1018,26 @@ function ClubhouseReservationPanel({ eventId, canView }) {
         </div>
       )}
 
-      {reservation.status === 'cancelled' && reservation.cancellation_reason && (
-        <p className="text-sm text-brand-700">Reason: {reservation.cancellation_reason}</p>
+      {reservation.status === 'cancelled' && (
+        <div className="text-sm text-brand-700 space-y-1">
+          {reservation.cancellation_reason && <p>Reason: {reservation.cancellation_reason}</p>}
+          {/* Refund status for a cancelled booking (Keith, 2026-09-22 — a
+              cancelled reservation with a fee already paid tracked
+              refund_issued_at correctly in RCP's own queue and in both
+              cancellation emails, but this on-screen panel never surfaced
+              it, so the calendar entry looked identical whether a refund
+              was still pending or had already been mailed. No line shows
+              at all when nothing was ever collected (check_received_at
+              unset) — matches notify-clubhouse-cancellation, which also
+              sends no refund messaging in that case. */}
+          {reservation.check_received_at && (
+            reservation.refund_issued_at ? (
+              <p>Refund mailed to you by check on {formatDate(reservation.refund_issued_at.slice(0, 10))}.</p>
+            ) : (
+              <p className="text-amber-600">A refund is being processed and will be mailed to you by check.</p>
+            )
+          )}
+        </div>
       )}
 
       {reservation.terms_acknowledged_at && reservation.acknowledged_at && (
