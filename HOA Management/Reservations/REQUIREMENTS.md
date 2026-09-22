@@ -558,6 +558,37 @@ collected a fee, shows either "A refund is being processed…" (amber) or "Refun
 
 **Deploy note:** `git push` for `SocialCalendar.jsx` — frontend only, no migration or Edge Function involved.
 
+### 2.24 Refund date showing a day early — UTC/local timezone bug, 2026-09-23
+
+**Reported by Keith:** right after 2.23 shipped, the refund line on Scenario 5's calendar entry did appear —
+but said the refund was mailed "today" when RCP had actually marked it issued the day before.
+
+**Root cause, confirmed in code:** the existing `formatDate()` helper is built for genuine `date`-only columns
+(like `payment_deadline_date`) — it takes a bare `'YYYY-MM-DD'` string and appends `'T00:00:00'` so the browser
+parses it in local time, not UTC (a well-known JS gotcha otherwise). 2.23's new refund line, and the older
+"Agreement signed by you on…/acknowledged by RCP on…" signature line (2.15), both fed it the wrong kind of
+input instead: a real `timestamptz` column (`refund_issued_at`, `terms_acknowledged_at`, `acknowledged_at`)
+sliced down to its first 10 characters. That slice is the UTC calendar date — if the actual action happened
+in the evening Eastern time, UTC has often already rolled over to the next day, so the sliced-then-midnight
+trick silently prints tomorrow relative to what actually happened locally. The same pattern existed in
+`notify-clubhouse-resident-status`'s signature-block email fields (`formatDeadline()`, same slice-first
+mistake) — fixed alongside it since it's the identical bug. **Not touched:** `comment.created_at.slice(0, 10)`
+in the calendar-comments feature has the exact same shape and is worth a look, but it's a separate, older,
+unrelated feature — flagged here, not fixed in this round.
+
+**Fixed:**
+- `SocialCalendar.jsx` — new `formatTimestampDate(isoString)` helper (parses the full timestamp, lets the
+  browser resolve it in the viewer's own timezone, no slicing). Both the refund-mailed line and the
+  agreement-signature line now use it instead of `formatDate(x.slice(0, 10))`.
+- `notify-clubhouse-resident-status/index.ts` — new `formatDateOnly(iso)` helper (same fix, mirrors the one
+  already correctly used in `notify-clubhouse-rcp/index.ts`). The signature block's `residentSignedAt`/
+  `rcpSignedAt` now use it instead of `formatDeadline(x.slice(0, 10))`.
+- `npx eslint` clean on `SocialCalendar.jsx` (matches its existing 4-problem baseline, nothing new).
+
+**Deploy note:** `git push` for `SocialCalendar.jsx` (already staged alongside 2.23's fix — same file, second
+round of edits), plus `supabase functions deploy notify-clubhouse-resident-status --no-verify-jwt` for the
+Edge Function change.
+
 ## 3. Pickleball Court Reservation Flow
 
 Fully self-contained in the portal — no fee, no RCP touchpoint. Built as a separate calendar/app from the clubhouse flow (different structure: fixed-length resource slots vs. open-ended request/approval).

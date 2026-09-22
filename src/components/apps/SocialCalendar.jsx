@@ -83,6 +83,20 @@ function formatDate(dateStr) {
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+// For a real timestamptz column (refund_issued_at, terms_acknowledged_at,
+// acknowledged_at, ...) — NOT a date-only column. formatDate()'s
+// dateStr + 'T00:00:00' trick only works on a bare 'YYYY-MM-DD' value; fed
+// a full UTC timestamp's date slice instead, it silently re-anchors that
+// slice to local midnight, which can print the wrong calendar day (Keith,
+// 2026-09-23 — the "refund mailed today" line was showing a date that
+// hadn't actually happened yet locally, because the UTC date had already
+// rolled over). This formats the actual instant, in the viewer's own
+// timezone, so the calendar day matches what really happened.
+function formatTimestampDate(isoString) {
+  if (!isoString) return ''
+  return new Date(isoString).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 function formatTime(timeStr) {
   if (!timeStr) return ''
   const [h, m] = timeStr.split(':')
@@ -1032,7 +1046,7 @@ function ClubhouseReservationPanel({ eventId, canView }) {
               sends no refund messaging in that case. */}
           {reservation.check_received_at && (
             reservation.refund_issued_at ? (
-              <p>Refund mailed to you by check on {formatDate(reservation.refund_issued_at.slice(0, 10))}.</p>
+              <p>Refund mailed to you by check on {formatTimestampDate(reservation.refund_issued_at)}.</p>
             ) : (
               <p className="text-amber-600">A refund is being processed and will be mailed to you by check.</p>
             )
@@ -1042,7 +1056,7 @@ function ClubhouseReservationPanel({ eventId, canView }) {
 
       {reservation.terms_acknowledged_at && reservation.acknowledged_at && (
         <p className="text-xs text-brand-400 mt-2 pt-2 border-t border-brand-200">
-          Agreement signed by you on {formatDate(reservation.terms_acknowledged_at.slice(0, 10))} and acknowledged by RCP on {formatDate(reservation.acknowledged_at.slice(0, 10))} — together these serve as the signed Clubhouse Lease Agreement (see the{' '}
+          Agreement signed by you on {formatTimestampDate(reservation.terms_acknowledged_at)} and acknowledged by RCP on {formatTimestampDate(reservation.acknowledged_at)} — together these serve as the signed Clubhouse Lease Agreement (see the{' '}
           <a href="/clubhouse-rules" target="_blank" rel="noopener noreferrer" className="underline hover:text-brand-600">Rules &amp; Regulations</a>), with the full booking details on file and included in your confirmation email.
         </p>
       )}

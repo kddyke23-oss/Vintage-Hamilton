@@ -59,6 +59,16 @@ function formatDeadline(dateStr: string | null): string {
   return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
 }
 
+// For a real timestamptz column, NOT a date-only one — formatDeadline()'s
+// dateStr + 'T00:00:00' trick assumes a bare 'YYYY-MM-DD' value; fed a full
+// UTC timestamp's date slice instead, it silently re-anchors that slice to
+// local midnight and can print the wrong calendar day once the UTC date has
+// already rolled over. Takes the full ISO string and lets it resolve in the
+// server's own locale/timezone instead.
+function formatDateOnly(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+}
+
 function buildStatusFragment(opts: {
   status: 'escalated' | 'pending_payment' | 'confirmed'
   escalationOutcome: 'confirmed_private' | 'dismissed' | null
@@ -204,9 +214,15 @@ Deno.serve(async (req) => {
 
     const signatureHtml = buildSignatureBlock({
       residentName,
-      residentSignedAt: reservation.terms_acknowledged_at ? formatDeadline(reservation.terms_acknowledged_at.slice(0, 10)) : null,
+      // formatDeadline() is for a real date-only column (payment_deadline_date);
+      // terms_acknowledged_at/acknowledged_at are timestamptz, so formatDateOnly()
+      // (full ISO string, not a sliced date) is used here instead — slicing first
+      // and re-anchoring to local midnight can print the wrong calendar day once
+      // the UTC date has already rolled over (Keith, 2026-09-23, same bug fixed
+      // on the on-screen panel in SocialCalendar.jsx).
+      residentSignedAt: reservation.terms_acknowledged_at ? formatDateOnly(reservation.terms_acknowledged_at) : null,
       rcpName,
-      rcpSignedAt: reservation.acknowledged_at ? formatDeadline(reservation.acknowledged_at.slice(0, 10)) : null,
+      rcpSignedAt: reservation.acknowledged_at ? formatDateOnly(reservation.acknowledged_at) : null,
       rulesUrl: `${SITE_URL}/clubhouse-rules`,
     })
 
