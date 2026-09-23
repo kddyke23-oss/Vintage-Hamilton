@@ -221,7 +221,7 @@ export default function HelpPage() {
                 { n: 1, text: <>Click <strong>Calendar</strong> in the sidebar.</> },
                 { n: 2, text: <>Use the <strong>List</strong> or <strong>Grid</strong> button to switch between a scrollable list and a monthly calendar view.</> },
                 { n: 3, text: <>Use the <strong>Category</strong> dropdown to filter events by type (e.g. Social Events, Fitness, Committee Meetings).</> },
-                { n: 4, text: <>Click any event to see full details — location, description, who's going, and any external links.</> },
+                { n: 4, text: <>Click any event to see full details — location, description, photo, who's going, and any external links. Events with a photo also show a small preview in List view.</> },
               ]} />
             </Section>
 
@@ -236,7 +236,7 @@ export default function HelpPage() {
               <Steps steps={[
                 { n: 1, text: <>Click the <strong>"+ Add Event"</strong> button at the top of the calendar.</> },
                 { n: 2, text: <>Fill in the event title, category, date, and time.</> },
-                { n: 3, text: <>Optionally add a location, description, and a link to any external page (e.g. a sign-up form or map).</> },
+                { n: 3, text: <>Optionally add a location, description, a photo or flyer, and a link to any external page (e.g. a sign-up form or map).</> },
                 { n: 4, text: <>Click <strong>"Save Event"</strong> — the event will appear on the calendar immediately.</> },
               ]} />
             </Section>

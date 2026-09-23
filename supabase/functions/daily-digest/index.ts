@@ -20,7 +20,7 @@ const DIGEST_SEGMENT_NAME = "Daily Digest Subscribers";
 // ── HTML digest email template ──────────────────────────────────────────────
 function buildDigestEmail(
   blogPosts: { title: string; author: string }[],
-  calendarEvents: { title: string; start_date: string; location?: string }[]
+  calendarEvents: { title: string; start_date: string; location?: string; photo_url?: string | null }[]
 ): string {
   const blogSection =
     blogPosts.length > 0
@@ -63,6 +63,7 @@ function buildDigestEmail(
                 <div style="font-size:13px;color:#6b7280;margin-top:4px;">
                   ${formatDate(e.start_date)}${e.location ? ` · ${e.location}` : ""}
                 </div>
+                ${e.photo_url ? `<img src="${e.photo_url}" alt="" width="480" style="display:block;width:100%;max-width:480px;height:auto;margin-top:10px;border-radius:6px;border:0;" />` : ""}
               </div>`
               )
               .join("")}
@@ -347,7 +348,7 @@ async function runDigest(): Promise<void> {
     const today = new Date().toISOString().split("T")[0];
     const { data: rawEvents, error: calErr } = await supabase
       .from("calendar_events")
-      .select("title, event_date, location, created_at")
+      .select("title, event_date, location, photo_url, created_at")
       .gte("created_at", since)
       .gte("event_date", today)
       .or("removed.is.null,removed.eq.false")
@@ -359,6 +360,7 @@ async function runDigest(): Promise<void> {
       title: e.title || "New Event",
       start_date: e.event_date,
       location: e.location,
+      photo_url: e.photo_url,
     }));
 
     // 3. Sync every active resident's email(s) into the Resend segment,

@@ -184,7 +184,7 @@ function UpcomingEvents() {
         const { data, error } = await supabase
           .from('calendar_events')
           .select(`
-            id, title, event_date, event_time, location,
+            id, title, event_date, event_time, location, photo_url,
             calendar_categories ( name, color )
           `)
           .eq('removed', false)
@@ -250,6 +250,14 @@ function UpcomingEvents() {
                 </span>
               )}
             </div>
+            {event.photo_url && (
+              <img
+                src={event.photo_url}
+                alt=""
+                loading="lazy"
+                className="flex-shrink-0 w-14 h-14 rounded-lg object-cover border border-brand-100 bg-brand-50"
+              />
+            )}
           </Link>
         )
       })}

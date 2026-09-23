@@ -186,6 +186,24 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
   })
   const [saving, setSaving] = useState(false)
 
+  // Event photo (optional) — same upload/compress flow as a blog post photo.
+  // Shown in the event detail view, as a thumbnail in List view and the Home
+  // page's Upcoming Events, and in the daily digest email. Never on the grid.
+  const existingPhotoUrl = editEvent?.photo_url ?? null
+  const [photoFile, setPhotoFile] = useState(null)
+  const [photoPreview, setPhotoPreview] = useState(existingPhotoUrl)
+  const photoInputRef = useRef(null)
+  const { error: photoError, uploadImage: uploadEventPhoto } = useImageUpload({
+    bucket: 'calendar-events',
+    maxDimension: 1200,
+  })
+  function clearPhoto() {
+    if (photoPreview && photoPreview !== existingPhotoUrl) URL.revokeObjectURL(photoPreview)
+    setPhotoFile(null)
+    setPhotoPreview(null)
+    if (photoInputRef.current) photoInputRef.current.value = ''
+  }
+
   // Clubhouse reservation settings (fees, deposit, deadline, side-room
   // availability) — fetched for both a new booking and an editable existing
   // one, so the resident sees real prices before submitting either way.
@@ -357,6 +375,34 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
 
     setSaving(true)
 
+    // Resolve photo_url. A masked private/not-sure clubhouse booking never
+    // carries a photo — same reason its description is never stored.
+    let photo_url = null
+    if (!isMasked) {
+      if (photoFile) {
+        photo_url = await uploadEventPhoto(photoFile)
+        if (!photo_url) { setSaving(false); toast.error('Photo upload failed'); return }
+      } else if (photoPreview && photoPreview === existingPhotoUrl) {
+        photo_url = existingPhotoUrl // unchanged
+      }
+    }
+
+    // After a successful edit, remove a replaced/removed photo from storage —
+    // unless another event still uses it ("Repeat" copies the same photo_url
+    // onto the next occurrence, so a photo can be shared).
+    const cleanupOldPhoto = async () => {
+      if (!existingPhotoUrl || existingPhotoUrl === photo_url) return
+      const { count, error: countError } = await supabase
+        .from('calendar_events')
+        .select('id', { count: 'exact', head: true })
+        .eq('photo_url', existingPhotoUrl)
+      if (!countError && count === 0) deleteStoragePhoto(existingPhotoUrl, 'calendar-events')
+    }
+    // A brand-new photo uploaded for a save that then failed is orphaned.
+    const discardNewPhoto = () => {
+      if (photoFile && photo_url) deleteStoragePhoto(photo_url, 'calendar-events')
+    }
+
     const resourceLabel = [
       form.wantsMainClubhouse && 'Main Clubhouse',
       form.wantsSideRoom && 'Side Room',
@@ -372,6 +418,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
       external_url: form.external_url.trim()
         ? (form.external_url.startsWith('http') ? form.external_url.trim() : 'https://' + form.external_url.trim())
         : null,
+      photo_url,
     }
 
     if (editEvent) {
@@ -429,7 +476,8 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
 
         const { error: eventUpdateError } = await supabase.from('calendar_events').update(payload).eq('id', editEvent.id)
         setSaving(false)
-        if (eventUpdateError) { toast.error('Failed to save event'); return }
+        if (eventUpdateError) { discardNewPhoto(); toast.error('Failed to save event'); return }
+        cleanupOldPhoto()
         if (isMasked) notifyClubhouseRcp(existingReservation.id) // fresh review, same as a brand-new submission
         toast.success(isMasked ? 'Reservation updated — awaiting RCP review' : 'Reservation updated and confirmed!')
         onSaved()
@@ -447,7 +495,8 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
       }
       const { error } = await supabase.from('calendar_events').update(payload).eq('id', editEvent.id)
       setSaving(false)
-      if (error) { toast.error('Failed to save event'); return }
+      if (error) { discardNewPhoto(); toast.error('Failed to save event'); return }
+      cleanupOldPhoto()
       toast.success('Event updated')
       onSaved()
       onClose()
@@ -458,7 +507,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
     if (!wantsAnyClubhouseResource) {
       const { error } = await supabase.from('calendar_events').insert({ ...payload, created_by: user.id })
       setSaving(false)
-      if (error) { toast.error('Failed to save event'); return }
+      if (error) { discardNewPhoto(); toast.error('Failed to save event'); return }
       toast.success('Event added!')
       onSaved()
       onClose()
@@ -477,6 +526,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
 
     if (eventError) {
       setSaving(false)
+      discardNewPhoto()
       toast.error('Failed to save event')
       return
     }
@@ -856,6 +906,50 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
               />
               <p className="text-xs text-brand-400 mt-1">Link to an external website, ticketing page, or more info</p>
             </div>
+
+            {/* Photo — hidden for a masked private/not-sure clubhouse booking,
+                same as the description above. */}
+            {!(wantsAnyClubhouseResource && (form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure')) && (
+              <div>
+                <label className="block text-sm font-medium text-brand-700 mb-1">
+                  Photo <span className="text-brand-400">(optional)</span>
+                </label>
+                {photoPreview ? (
+                  <div className="relative rounded-lg overflow-hidden border border-brand-200">
+                    <img src={photoPreview} alt="Event photo preview" className="w-full max-h-48 object-contain bg-brand-50" />
+                    <button
+                      type="button"
+                      onClick={clearPhoto}
+                      aria-label="Remove photo"
+                      className="absolute top-2 right-2 bg-white/90 rounded-full w-7 h-7 flex items-center justify-center shadow text-brand-700 font-bold text-sm"
+                    >×</button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => photoInputRef.current?.click()}
+                    className="w-full border-2 border-dashed border-brand-200 rounded-lg py-4 text-sm text-brand-500 hover:border-brand-400 hover:bg-brand-50 transition-colors"
+                  >
+                    📷 Add a photo or flyer
+                  </button>
+                )}
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/jpeg,image/jpg,image/png,image/webp,image/gif"
+                  className="hidden"
+                  onChange={e => {
+                    const f = e.target.files?.[0]
+                    if (!f) return
+                    if (photoPreview && photoPreview !== existingPhotoUrl) URL.revokeObjectURL(photoPreview)
+                    setPhotoFile(f)
+                    setPhotoPreview(URL.createObjectURL(f))
+                  }}
+                />
+                {photoError && <p className="text-xs text-red-500 mt-1">{photoError}</p>}
+                <p className="text-xs text-brand-400 mt-1">Shown when the event is opened, as a preview in List view and on the Home page, and in the daily email.</p>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-3 mt-6">
@@ -1175,6 +1269,7 @@ function ClubhouseReservationPanel({ eventId, canView }) {
 }
 
 function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, isClubhouseReviewer, onClose, onEdit, onRemove, onReport, onRsvp, onRepeat, userRsvp, toast }) {
+  const [photoZoom, setPhotoZoom] = useState(false)
   const cat = categories.find(c => c.id === event.category_id)
   const canModify = isCalendarAdmin || event.created_by === currentUserId
   // Audit trail visibility is intentionally broader than canModify — a
@@ -1361,6 +1456,27 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, i
               </div>
             )}
           </div>
+
+          {/* Event photo — click for full size */}
+          {event.photo_url && (
+            <button
+              type="button"
+              onClick={() => setPhotoZoom(true)}
+              aria-label="View full-size photo"
+              className="mt-4 block w-full rounded-xl overflow-hidden border border-brand-100 bg-brand-50"
+            >
+              <img src={event.photo_url} alt={displayTitle(event, currentUserId)} loading="lazy" className="w-full max-h-72 object-contain" />
+            </button>
+          )}
+          {photoZoom && event.photo_url && (
+            <div
+              className="fixed inset-0 z-[1600] bg-black/85 flex items-center justify-center p-4 cursor-zoom-out"
+              onClick={() => setPhotoZoom(false)}
+            >
+              <img src={event.photo_url} alt={displayTitle(event, currentUserId)} className="max-w-full max-h-full object-contain rounded-lg" />
+              <button type="button" aria-label="Close photo" className="absolute top-4 right-5 text-white text-3xl leading-none">×</button>
+            </div>
+          )}
 
           {event.description && (
             <p className="mt-4 text-sm text-brand-700 leading-relaxed">{event.description}</p>
@@ -1665,6 +1781,16 @@ function EventCard({ event, categories, onSelect, currentUserId }) {
             {event.location && <span>📍 {event.location}</span>}
           </div>
         </div>
+
+        {/* Photo preview (List view only — the grid stays text-only) */}
+        {event.photo_url && (
+          <img
+            src={event.photo_url}
+            alt=""
+            loading="lazy"
+            className="flex-shrink-0 w-16 h-16 rounded-lg object-cover border border-brand-100 bg-brand-50"
+          />
+        )}
 
         {/* RSVP pill */}
         {upcoming && event.rsvp_count > 0 && (
@@ -2264,6 +2390,7 @@ export default function SocialCalendar() {
       event_time: event.event_time || null,
       category_id: event.category_id,
       external_url: event.external_url || null,
+      photo_url: event.photo_url || null,
       created_by: user.id,
     }
     const { error } = await supabase.from('calendar_events').insert(payload)
