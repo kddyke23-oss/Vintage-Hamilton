@@ -333,7 +333,7 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
                 className="mt-2 flex items-center gap-1.5 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 w-fit hover:bg-amber-100 transition-colors"
               >
                 <span>📅</span>
-                <span>Related event: <strong>{post.calendar_event.title}</strong> · {fmtDate(post.calendar_event.event_date)}</span>
+                <span>Related event: <strong>{post.calendar_event.title}</strong> · {fmtDate(post.calendar_event.event_date + 'T00:00:00')}</span>
                 <span className="text-amber-400 ml-1">→</span>
               </button>
             )}
