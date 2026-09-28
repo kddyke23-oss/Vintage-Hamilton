@@ -2058,7 +2058,17 @@ export default function SocialCalendar() {
     const params = new URLSearchParams(window.location.search)
     return !!params.get('openEvent') // show past events if arriving from a blog link
   })
-  const [showAll, setShowAll] = useState(false) // list view: ignore date bounds entirely
+  const [showAll, setShowAll] = useState(() => {
+    // If arriving from blog with an event to open, don't let the default
+    // ~3-month list window (or the off-by-one below) hide it — an event
+    // more than a few months out would otherwise never be in the fetched
+    // set, so the auto-open effect below could never find it (Keith,
+    // 2026-09-28: the workaround was noticing it "popped up" only once you
+    // manually navigated month-by-month to where it actually lives, since
+    // that branch fetches one specific month with no forward limit at all).
+    const params = new URLSearchParams(window.location.search)
+    return !!params.get('openEvent')
+  }) // list view: ignore date bounds entirely
   const [filterMine, setFilterMine] = useState(false) // "Show my events" — only events this resident created
 
   const [categories, setCategories] = useState([])
@@ -2150,7 +2160,7 @@ export default function SocialCalendar() {
           start.setHours(0, 0, 0, 0)
         }
         query = query.gte('event_date', start.toISOString().split('T')[0])
-        query = query.lte('event_date', new Date(currentYear, currentMonth + 3, 0).toISOString().split('T')[0])
+        query = query.lte('event_date', new Date(currentYear, currentMonth + 4, 0).toISOString().split('T')[0])
       } else {
         // The month nav has moved to a specific month — show just that month
         // (same bounds as Grid view for that month), so every click of ‹ / ›
