@@ -5,6 +5,8 @@ import { deleteStoragePhoto } from '@/lib/storage'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/components/ui/Toast'
 import { useImageUpload } from '@/hooks/useImageUpload'
+import { formatUserText } from '@/lib/richText'
+import { FormattingToolbar } from '@/components/ui/FormattingToolbar'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -193,6 +195,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
   const [photoFile, setPhotoFile] = useState(null)
   const [photoPreview, setPhotoPreview] = useState(existingPhotoUrl)
   const photoInputRef = useRef(null)
+  const descriptionRef = useRef(null)
   const { error: photoError, uploadImage: uploadEventPhoto } = useImageUpload({
     bucket: 'calendar-events',
     maxDimension: 1200,
@@ -882,7 +885,9 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
             {!(wantsAnyClubhouseResource && (form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure')) && (
               <div>
                 <label className="block text-sm font-medium text-brand-700 mb-1">Description <span className="text-brand-400">(optional)</span></label>
+                <FormattingToolbar textareaRef={descriptionRef} onChange={v => set('description', v)} />
                 <textarea
+                  ref={descriptionRef}
                   className="w-full border border-brand-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 resize-none"
                   rows={3}
                   value={form.description}
@@ -1297,6 +1302,7 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, i
   const [commentPhotoFile, setCommentPhotoFile] = useState(null)
   const [commentPhotoPreview, setCommentPhotoPreview] = useState(null)
   const commentPhotoRef = useRef(null)
+  const newCommentRef = useRef(null)
   const { uploading: commentPhotoUploading, error: commentPhotoError, uploadImage: uploadCommentPhoto } = useImageUpload({
     bucket: 'calendar-comments',
     maxDimension: 1200,
@@ -1479,7 +1485,10 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, i
           )}
 
           {event.description && (
-            <p className="mt-4 text-sm text-brand-700 leading-relaxed">{event.description}</p>
+            <p
+              className="mt-4 text-sm text-brand-700 leading-relaxed"
+              dangerouslySetInnerHTML={{ __html: formatUserText(event.description) }}
+            />
           )}
 
           <ClubhouseReservationPanel eventId={event.id} canView={canViewClubhousePanel} />
@@ -1571,7 +1580,10 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, i
                             <span className="text-xs font-semibold text-brand-700">{comment.author_name || 'Resident'}</span>
                             <span className="text-xs text-brand-400">{formatDate(comment.created_at.slice(0, 10))}</span>
                           </div>
-                          <p className="text-sm text-brand-800 whitespace-pre-wrap">{comment.body}</p>
+                          <p
+                            className="text-sm text-brand-800 whitespace-pre-wrap"
+                            dangerouslySetInnerHTML={{ __html: formatUserText(comment.body) }}
+                          />
                           {comment.photo_url && (
                             <img src={comment.photo_url} alt="Comment attachment" loading="lazy" className="mt-2 rounded-lg max-h-40 object-cover w-full" />
                           )}
@@ -1598,7 +1610,9 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, i
             {/* Add comment */}
             <div className="flex gap-2 items-start">
               <div className="flex-1">
+                <FormattingToolbar textareaRef={newCommentRef} onChange={setNewComment} />
                 <textarea
+                  ref={newCommentRef}
                   value={newComment}
                   onChange={e => setNewComment(e.target.value)}
                   placeholder="Ask a question or leave a comment…"

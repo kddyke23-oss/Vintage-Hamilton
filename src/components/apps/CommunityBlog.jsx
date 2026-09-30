@@ -5,6 +5,8 @@ import { deleteStoragePhoto } from '@/lib/storage'
 import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/components/ui/Toast'
 import { useImageUpload } from '@/hooks/useImageUpload'
+import { formatUserText } from '@/lib/richText'
+import { FormattingToolbar } from '@/components/ui/FormattingToolbar'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -192,6 +194,7 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
   const [commentPhotoFile, setCommentPhotoFile] = useState(null)
   const [commentPhotoPreview, setCommentPhotoPreview] = useState(null)
   const commentPhotoRef = useRef(null)
+  const newCommentRef = useRef(null)
   const { uploading: commentPhotoUploading, error: commentPhotoError, uploadImage: uploadCommentPhoto } = useImageUpload({
     bucket: 'blog-comments',
     maxDimension: 1200,
@@ -373,7 +376,10 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
               onClick={() => setLightboxUrl(post.photo_url)}
             />
           )}
-          <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">{post.body}</p>
+          <p
+            className="text-gray-800 whitespace-pre-wrap leading-relaxed"
+            dangerouslySetInnerHTML={{ __html: formatUserText(post.body) }}
+          />
 
           {/* External link */}
           {post.external_url && (
@@ -427,7 +433,10 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
                           <span className="text-sm font-semibold text-gray-700">{comment.author_name || 'Resident'}</span>
                           <span className="text-xs text-gray-400">{fmt(comment.created_at)}</span>
                         </div>
-                        <p className="text-sm text-gray-800 whitespace-pre-wrap">{comment.body}</p>
+                        <p
+                          className="text-sm text-gray-800 whitespace-pre-wrap"
+                          dangerouslySetInnerHTML={{ __html: formatUserText(comment.body) }}
+                        />
                         {comment.photo_url && (
                           <img
                             src={comment.photo_url}
@@ -470,7 +479,9 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
               {(post.author_name || 'Y')[0].toUpperCase()}
             </div>
             <div className="flex-1">
+              <FormattingToolbar textareaRef={newCommentRef} onChange={setNewComment} />
               <textarea
+                ref={newCommentRef}
                 value={newComment}
                 onChange={e => setNewComment(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleAddComment() }}
@@ -587,6 +598,7 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
   const isEditMode = editPost !== null
   const [title, setTitle] = useState(editPost?.title ?? '')
   const [body, setBody] = useState(editPost?.body ?? '')
+  const bodyRef = useRef(null)
   const [linkedEventId, setLinkedEventId] = useState(editPost?.calendar_event_id ? String(editPost.calendar_event_id) : '')
   const [externalUrl, setExternalUrl] = useState(editPost?.external_url || '')
   const [events, setEvents] = useState([])
@@ -705,7 +717,9 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Body <span className="text-red-500">*</span></label>
+            <FormattingToolbar textareaRef={bodyRef} onChange={setBody} />
             <textarea
+              ref={bodyRef}
               value={body}
               onChange={e => setBody(e.target.value)}
               placeholder="Write your post…"
