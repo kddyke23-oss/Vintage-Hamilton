@@ -665,6 +665,49 @@ and quoted button names inside the new content were phrased or entity-escaped to
 **Deploy note:** `git push` for `src/pages/HelpPage.jsx` — frontend only, no migration or Edge Function
 involved.
 
+### 2.27 Day One: a plain-text "Clubhouse" location doesn't book it, and editing couldn't add a reservation, 2026-10-01
+
+**Found by Keith, go-live day one:** the Social Committee created an event by typing "Clubhouse" into the
+free-text Location box instead of clicking the Main Clubhouse button — so no reservation was ever created,
+no fee/payment workflow ran, and RCP never saw it. Not a bug in the sense that anything crashed, but two real
+gaps it exposed:
+
+1. **The warning shown under the free-text Location box was unclear.** It told residents to use the Main
+   Clubhouse / Side Room buttons for the clubhouse, but didn't say anything about other venues one way or
+   the other. Reworded to be explicit on both counts: click the buttons to book the Clubhouse/Side Room, use
+   the Pickleball app to book a court, and the portal doesn't handle bookings for anything else — that field
+   is informational only.
+2. **Editing an existing plain event had no way to add a clubhouse reservation to it.** The Main Clubhouse /
+   Side Room buttons only appeared during edit when a `clubhouse_reservations` row already existed
+   (`reservationEditable`, which requires `existingReservation`) — exactly backwards for this case, since the
+   whole problem was that no reservation existed. There was also no code path to create one from an edit; the
+   "plain event edit" branch in `handleSubmit` only ever touched `calendar_events`.
+
+**Fix — `src/components/apps/SocialCalendar.jsx` (`EventModal`):**
+
+- The Main Clubhouse / Side Room buttons now show during edit whenever there's **no** existing reservation
+  (gated on `canRequestClubhouse`, same permission check as a brand-new event), not only when one already
+  exists and is still editable. Editing a plain event can now retroactively add a clubhouse booking to it.
+- **New `handleSubmit` branch** (`!isClubhouseReservationEdit && wantsAnyClubhouseResource`): updates the
+  existing `calendar_events` row, then inserts a new linked `clubhouse_reservations` row — same payload shape
+  as the brand-new-reservation path just below it, reused rather than duplicated logic-by-logic. Unlike that
+  path, a failed reservation insert does **not** roll back/remove the calendar event (it already existed
+  before this edit); the resident sees an error and can just try adding the resource again.
+- **New `lockedMainClubhouse` / `lockedSideRoom`** (`!!existingReservation?.wants_main_clubhouse` /
+  `..._side_room`): once a resource has actually been saved — whether from a pre-existing reservation or one
+  just created a moment ago in the same edit — it can't be unchecked here. Clicking a locked, already-on
+  button shows a toast explaining that removing it means cancelling the reservation and creating a new event
+  instead, which keeps RCP's booking record matching an actual submission/cancellation rather than a quiet
+  edit. A resource that isn't locked (e.g. Side Room, if only Main Clubhouse was booked) stays addable.
+- Locked buttons show a 🔒 in place of their usual icon and a `cursor-not-allowed`, but are deliberately not
+  HTML-`disabled` — a disabled button can't fire the explanatory toast on click.
+
+**Not changed:** anything about an already-paid or cancelled reservation (`reservationEditable === false` for
+the usual reasons) — that's still fully locked from this modal, same as before 2.9b.
+
+**Deploy note:** `git push` for `src/components/apps/SocialCalendar.jsx` — frontend only, no migration or
+Edge Function involved.
+
 ## 3. Pickleball Court Reservation Flow
 
 Fully self-contained in the portal — no fee, no RCP touchpoint. Built as a separate calendar/app from the clubhouse flow (different structure: fixed-length resource slots vs. open-ended request/approval).

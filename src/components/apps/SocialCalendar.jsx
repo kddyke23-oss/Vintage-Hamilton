@@ -275,6 +275,18 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
   const reservationEditable = !!existingReservation && existingReservation.status !== 'cancelled' && !existingReservation.check_received_at
   const isClubhouseReservationEdit = !!editEvent && !!existingReservation
 
+  // Once a resource has actually been saved against this event (whether
+  // from an existing reservation, or one created through this same edit
+  // modal moments ago), it can't be un-selected here — only cancelling the
+  // whole reservation and creating a fresh booking removes it, so RCP's
+  // record always matches an actual submission/cancellation, never a quiet
+  // edit. Doesn't block ADDING a resource that isn't locked yet — see the
+  // Day One fix, 2026-10-01: a resident typed "Clubhouse" into the free-text
+  // Location box instead of clicking the button, so no reservation existed
+  // at all; editing that event needs to be able to retroactively add one.
+  const lockedMainClubhouse = !!existingReservation?.wants_main_clubhouse
+  const lockedSideRoom = !!existingReservation?.wants_side_room
+
   const wantsTablesChairsResource = (Number(form.extraTables) || 0) > 0 || (Number(form.extraChairs) || 0) > 0
   const wantsAnyClubhouseResource = form.wantsMainClubhouse || form.wantsSideRoom || wantsTablesChairsResource
   const wantsClubhouseRoom = form.wantsMainClubhouse || form.wantsSideRoom
@@ -483,6 +495,77 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
         cleanupOldPhoto()
         if (isMasked) notifyClubhouseRcp(existingReservation.id) // fresh review, same as a brand-new submission
         toast.success(isMasked ? 'Reservation updated — awaiting RCP review' : 'Reservation updated and confirmed!')
+        onSaved()
+        onClose()
+        return
+      }
+
+      // A plain event (no reservation ever existed) just had a Main
+      // Clubhouse/Side Room resource added via edit — Day One, 2026-10-01:
+      // the Social Committee typed "Clubhouse" into the free-text Location
+      // box instead of clicking the button, so this event had no reservation
+      // at all. Mirrors the brand-new-reservation path further below:
+      // update the plain calendar_events row first, then insert the linked
+      // clubhouse_reservations row. Once that insert succeeds, the resource
+      // becomes locked (see lockedMainClubhouse/lockedSideRoom) — it can
+      // only be removed by cancelling the reservation and starting over.
+      if (!isClubhouseReservationEdit && wantsAnyClubhouseResource) {
+        const { error: eventUpdateError } = await supabase.from('calendar_events').update(payload).eq('id', editEvent.id)
+        if (eventUpdateError) {
+          setSaving(false); discardNewPhoto(); toast.error('Failed to save event'); return
+        }
+
+        const isPrivateOrUnsure = form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure'
+        const reservationPayload = {
+          calendar_event_id: editEvent.id,
+          reserved_by: user.id,
+          wants_main_clubhouse: form.wantsMainClubhouse,
+          wants_side_room: form.wantsSideRoom,
+          wants_tables_chairs: wantsTablesChairsResource,
+          extra_tables_requested: extraTables,
+          extra_chairs_requested: extraChairs,
+          starts_at: `${form.event_date}T${form.event_time}:00`,
+          ends_at: `${form.event_date}T${form.event_end_time}:00`,
+          private_event_answer: form.privateAnswer,
+          guest_count: wantsClubhouseRoom ? Number(form.guestCount) : null,
+          wants_late_end: form.wantsLateEnd,
+          status: isPrivateOrUnsure ? 'pending_rcp' : 'confirmed',
+          actual_title: isPrivateOrUnsure ? (form.title.trim() || null) : null,
+          ...(isPrivateOrUnsure ? {
+            fee_main: form.wantsMainClubhouse ? clubhouseSettings.clubhouse_main_fee : null,
+            fee_side_room: form.wantsSideRoom ? clubhouseSettings.clubhouse_side_room_fee : null,
+            fee_tables_chairs: wantsTablesChairsResource ? clubhouseSettings.clubhouse_tables_chairs_fee : null,
+            fee_additional_hours: extraHours > 0 ? extraHours * Number(clubhouseSettings.clubhouse_additional_hour_fee) : null,
+            deposit_amount: clubhouseSettings.clubhouse_security_deposit,
+            payment_deadline_days_snapshot: clubhouseSettings.clubhouse_payment_deadline_days,
+            liability_insurance_confirmed: form.insuranceConfirmed,
+            terms_acknowledged_at: new Date().toISOString(),
+          } : {}),
+        }
+
+        const { data: newReservation, error: reservationError } = await supabase
+          .from('clubhouse_reservations')
+          .insert(reservationPayload)
+          .select('id')
+          .single()
+
+        setSaving(false)
+        if (reservationError) {
+          cleanupOldPhoto()
+          if (reservationError.message?.includes('no_double_book')) {
+            toast.error('That time was just booked by someone else for this space — please pick another time.')
+          } else {
+            console.error('Failed to create clubhouse reservation', reservationError)
+            toast.error('Event saved, but the clubhouse reservation could not be created — please try adding it again')
+          }
+          onSaved()
+          onClose()
+          return
+        }
+
+        cleanupOldPhoto()
+        if (isPrivateOrUnsure && newReservation?.id) notifyClubhouseRcp(newReservation.id)
+        toast.success(isPrivateOrUnsure ? 'Reservation submitted — awaiting RCP review' : 'Reservation confirmed!')
         onSaved()
         onClose()
         return
@@ -714,27 +797,38 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
             {/* Location */}
             <div>
               <label className="block text-sm font-medium text-brand-700 mb-1">Location <span className="text-brand-400">(optional)</span></label>
-              {(!editEvent ? canRequestClubhouse : reservationEditable) && (
+              {(isClubhouseReservationEdit ? reservationEditable : canRequestClubhouse) && (
                 <div className="flex gap-2 mb-2">
                   <button
                     type="button"
-                    onClick={() => set('wantsMainClubhouse', !form.wantsMainClubhouse)}
+                    onClick={() => {
+                      if (lockedMainClubhouse) {
+                        return toast.error('The Main Clubhouse can\'t be removed from an existing booking here — cancel this reservation and create a new event instead, so the booking record with RCP stays accurate.')
+                      }
+                      set('wantsMainClubhouse', !form.wantsMainClubhouse)
+                    }}
+                    title={lockedMainClubhouse ? 'Already booked — cancel the reservation to remove it' : ''}
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                       form.wantsMainClubhouse ? 'bg-brand-700 text-white border-brand-700' : 'border-brand-200 text-brand-600 hover:bg-brand-50'
-                    }`}
+                    } ${lockedMainClubhouse ? 'cursor-not-allowed' : ''}`}
                   >
-                    🏛️ Main Clubhouse
+                    {lockedMainClubhouse ? '🔒 ' : '🏛️ '}Main Clubhouse
                   </button>
                   <button
                     type="button"
-                    disabled={!clubhouseSettings?.clubhouse_side_room_available}
-                    onClick={() => set('wantsSideRoom', !form.wantsSideRoom)}
-                    title={clubhouseSettings?.clubhouse_side_room_available ? '' : 'Coming soon — not yet available to book'}
+                    disabled={!lockedSideRoom && !clubhouseSettings?.clubhouse_side_room_available}
+                    onClick={() => {
+                      if (lockedSideRoom) {
+                        return toast.error('The Side Room can\'t be removed from an existing booking here — cancel this reservation and create a new event instead, so the booking record with RCP stays accurate.')
+                      }
+                      set('wantsSideRoom', !form.wantsSideRoom)
+                    }}
+                    title={lockedSideRoom ? 'Already booked — cancel the reservation to remove it' : (clubhouseSettings?.clubhouse_side_room_available ? '' : 'Coming soon — not yet available to book')}
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                       form.wantsSideRoom ? 'bg-brand-700 text-white border-brand-700' : 'border-brand-200 text-brand-600 hover:bg-brand-50'
-                    } ${!clubhouseSettings?.clubhouse_side_room_available ? 'opacity-40 cursor-not-allowed' : ''}`}
+                    } ${lockedSideRoom ? 'cursor-not-allowed' : ''} ${!lockedSideRoom && !clubhouseSettings?.clubhouse_side_room_available ? 'opacity-40 cursor-not-allowed' : ''}`}
                   >
-                    🚪 Side Room{!clubhouseSettings?.clubhouse_side_room_available ? ' (coming soon)' : ''}
+                    {lockedSideRoom ? '🔒 ' : '🚪 '}Side Room{!lockedSideRoom && !clubhouseSettings?.clubhouse_side_room_available ? ' (coming soon)' : ''}
                   </button>
                 </div>
               )}
@@ -749,7 +843,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
               )}
               {!wantsAnyClubhouseResource && form.location.trim() && (
                 <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
-                  ⚠️ Adding a location here does not book or reserve it — please make a separate reservation for the Pickleball Court if required, or use the Main Clubhouse / Side Room buttons above to reserve the clubhouse.
+                  ⚠️ Typing a location here is for information only — it doesn&apos;t book or reserve anything. To book the Clubhouse or Side Room, use the Main Clubhouse / Side Room buttons above. To book a Pickleball court, use the Pickleball app. The portal doesn&apos;t handle bookings for any other venue.
                 </p>
               )}
             </div>
