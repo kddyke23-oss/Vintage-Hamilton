@@ -826,6 +826,24 @@ fields locked, notice shown; (d) Next occurrence on (a) → new booking masked a
 
 **Deploy:** `git push` only — no migration or Edge Function.
 
+### 2.31 "How this page works" guide on the Clubhouse Reservations page, 2026-10-02
+
+**Asked by Keith:** the RCP User Manual (a Claude doc, exported to Word for Mariesol and Al) should also live on
+the page itself, so the latest copy is always there.
+
+**Built — `src/pages/admin/ClubhouseReservationsPage.jsx` only:** a collapsible `ReservationsGuide` panel above
+the tables & chairs setup list, collapsed by default (open/closed remembered per browser via localStorage).
+- **RCP** sees the short-form manual: their role, a badge → meaning → what-you-do table matching the queue's
+  status labels and button names exactly, tables & chairs, routine checklist, and "good to know" (short-notice
+  deadlines, late-stay approval, edits until paid, no Cancel once paid, audit trail).
+- **Social Committee** sees only their part: confirm/dismiss outcomes and the setup list.
+- **Fees and limits are read live from `community_settings`** (main, extra hour, side room, tables & chairs,
+  deposit, deadline days, occupancy, vacate time) — the same settings the booking form uses — so a Board change
+  shows here immediately. An unset fee shows "not set".
+
+The full manual stays the master for detail; this panel must be kept in step with it when the workflow changes.
+eslint clean; `vite build` passes. **Deploy:** `git push` only.
+
 ## 3. Pickleball Court Reservation Flow
 
 Fully self-contained in the portal — no fee, no RCP touchpoint. Built as a separate calendar/app from the clubhouse flow (different structure: fixed-length resource slots vs. open-ended request/approval).

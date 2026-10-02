@@ -179,6 +179,169 @@ function UpcomingSetups() {
   )
 }
 
+// ─── "How this page works" guide — Reservations/REQUIREMENTS.md §2.31 ────────
+// The always-current copy of the RCP User Manual (the full manual lives as a
+// Claude doc that Keith exports to Word). Fees, deposit, deadline, vacate
+// time and occupancy are read live from community_settings — the same
+// settings the booking form uses — so this never drifts when the Board
+// changes a figure. Collapsed by default; the open/closed choice is
+// remembered per browser. RCP sees the full guide; the Social Committee sees
+// only the parts that involve them (escalations, tables & chairs).
+const GUIDE_KEY = 'clubhouse-guide-open'
+
+function GuideRow({ badge, color, meaning, action }) {
+  return (
+    <tr className="border-t border-gray-100 align-top">
+      <td className="py-2 pr-3"><span className={`text-xs font-medium px-2 py-1 rounded-full whitespace-nowrap ${color}`}>{badge}</span></td>
+      <td className="py-2 pr-3 text-gray-600">{meaning}</td>
+      <td className="py-2 text-gray-800">{action}</td>
+    </tr>
+  )
+}
+
+function ReservationsGuide({ isRCP }) {
+  const [open, setOpen] = useState(() => {
+    try { return localStorage.getItem(GUIDE_KEY) === '1' } catch { return false }
+  })
+  const [s, setS] = useState(null)
+
+  useEffect(() => {
+    supabase
+      .from('community_settings')
+      .select('clubhouse_main_fee, clubhouse_side_room_fee, clubhouse_tables_chairs_fee, clubhouse_additional_hour_fee, clubhouse_security_deposit, clubhouse_payment_deadline_days, clubhouse_latest_vacate_time, clubhouse_main_max_occupancy')
+      .eq('id', 1)
+      .maybeSingle()
+      .then(({ data }) => setS(data || null))
+  }, [])
+
+  const toggle = () => {
+    setOpen(v => {
+      try { localStorage.setItem(GUIDE_KEY, v ? '0' : '1') } catch { /* storage unavailable — fine */ }
+      return !v
+    })
+  }
+
+  const fee = n => (n == null ? 'not set' : `$${Number(n).toFixed(2)}`)
+  const vacate = s?.clubhouse_latest_vacate_time
+    ? new Date(`2000-01-01T${s.clubhouse_latest_vacate_time}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+    : '11:00 PM'
+  const days = s?.clubhouse_payment_deadline_days ?? 30
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 my-4">
+      <button type="button" onClick={toggle} aria-expanded={open}
+        className="w-full flex items-center justify-between gap-2 px-4 py-3 text-left">
+        <span className="font-semibold text-gray-900">📘 How this page works{isRCP ? ' — RCP guide' : ''}</span>
+        <span className="text-xs text-gray-500">{open ? 'Hide ▲' : 'Show ▼'}</span>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 text-sm text-gray-700 space-y-4">
+          {isRCP ? (
+            <>
+              <p>
+                You approve private bookings, collect the fee and deposit by check, return the deposit after the event,
+                and make sure tables and chairs get set up. Community (non-private) bookings confirm themselves — you only
+                step in if one looks private. Everything waiting for you is in <strong>Needs action</strong>; if it&apos;s
+                empty, there&apos;s nothing to do. You&apos;re also emailed each evening (about 6:15 PM) when something changes.
+              </p>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-wide text-gray-400">
+                      <th className="pb-1 pr-3 font-medium">Badge</th>
+                      <th className="pb-1 pr-3 font-medium">Means</th>
+                      <th className="pb-1 font-medium">What you do</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <GuideRow badge="Awaiting RCP review" color="bg-amber-100 text-amber-700" meaning="New private or not-sure booking."
+                      action={<>Check date, times, guests, insurance and any late-stay flag, then click <strong>Acknowledge — fee required</strong>. The resident is emailed the amount and how to pay.</>} />
+                    <GuideRow badge="Payment due" color="bg-orange-100 text-orange-700" meaning={`Waiting for the resident's check (due ${days} days before the event).`}
+                      action={<>When the check arrives and matches <strong>Due</strong>, click <strong>Mark check received</strong>. Unpaid past the deadline: you and the resident get one overdue email; follow up, or <strong>Cancel</strong> with a reason.</>} />
+                    <GuideRow badge="Confirmed" color="bg-green-100 text-green-700" meaning="Booking is set."
+                      action={<>Nothing. For a community booking that looks like a private function, click <strong>Escalate — I believe this is private</strong>. You aren&apos;t emailed about community bookings, so check <strong>All</strong> about once a week.</>} />
+                    <GuideRow badge="Escalated to committee" color="bg-purple-100 text-purple-700" meaning="The Social Committee is deciding."
+                      action="Nothing — leave the decision to them. If they confirm it private it moves straight to Payment due (no acknowledge needed); if they dismiss it, it stays Confirmed with no fee." />
+                    <GuideRow badge="Deposit review due" color="bg-teal-100 text-teal-700" meaning="Paid private event has passed."
+                      action={<>Inspect the room, click <strong>Record post-event deposit review</strong>, enter the amount withheld (0 if none) and a reason if any. The resident is emailed.</>} />
+                    <GuideRow badge="Deposit refund pending" color="bg-orange-100 text-orange-700" meaning="Review done, money owed back."
+                      action={<>Mail the refund check, then click <strong>Mark deposit refund issued</strong>.</>} />
+                    <GuideRow badge="Cancelled" color="bg-gray-200 text-gray-600" meaning="Booking cancelled."
+                      action={<>Only if it shows in Needs action (a paid booking the resident cancelled): mail the refund per the Lease Agreement, then click <strong>Mark refund issued</strong>.</>} />
+                  </tbody>
+                </table>
+              </div>
+
+              <div>
+                <p className="font-medium text-gray-900 mb-1">Tables &amp; chairs</p>
+                <p>
+                  Any booking with extra tables or chairs appears in the setup list below. You and the Social Committee are emailed
+                  when it&apos;s booked, 7 days before (if not yet arranged) and the evening before. Arrange the setup, then click
+                  <strong> Mark arranged</strong> and note who&apos;s doing it.
+                </p>
+              </div>
+
+              <div>
+                <p className="font-medium text-gray-900 mb-1">Your routine</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>When the evening email or home-screen card arrives: work down <strong>Needs action</strong> and check the setup list for amber items.</li>
+                  <li>When a check arrives: mark it received the same day.</li>
+                  <li>Weekly: scan <strong>All</strong> for community bookings that look private, and nudge residents with a payment deadline coming up.</li>
+                  <li>After each private event: inspect the room within a few days and record the deposit review.</li>
+                </ul>
+              </div>
+
+              <div>
+                <p className="font-medium text-gray-900 mb-1">Good to know</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>An event less than {days} days away is already past its payment deadline when you acknowledge it — agree a payment date with the resident directly.</li>
+                  <li>⚠ <strong>Requested to stay past the vacate time</strong> on a card needs advance written Board approval before you acknowledge.</li>
+                  <li>Residents can edit a booking until it&apos;s paid; an edited private booking comes back to you for review.</li>
+                  <li>Once a check is marked received, <strong>Cancel</strong> disappears. To cancel a paid booking, ask the resident to remove it or contact the portal administrator.</li>
+                  <li><strong>Show audit trail</strong> on any card lists who did what, and when.</li>
+                </ul>
+              </div>
+            </>
+          ) : (
+            <>
+              <p>
+                You see only bookings RCP has escalated because they look like private functions even though the resident marked
+                them not private. You&apos;re emailed each evening when one arrives.
+              </p>
+              <ul className="list-disc pl-5 space-y-1">
+                <li><strong>Confirm — this is private:</strong> the calendar entry is masked, the fee is worked out at today&apos;s prices, and the resident is emailed the amount due. RCP takes it from there.</li>
+                <li><strong>Dismiss — not private:</strong> the booking stays confirmed with no fee, and the resident is told.</li>
+                <li><strong>Tables &amp; chairs:</strong> the setup list below shows every upcoming request. You&apos;re emailed when one is booked, 7 days before (if not arranged) and the evening before. Click <strong>Mark arranged</strong> once setup is sorted.</li>
+              </ul>
+            </>
+          )}
+
+          <div>
+            <p className="font-medium text-gray-900 mb-1">Current fees (private bookings only — community events are free)</p>
+            <div className="overflow-x-auto">
+              <table className="text-sm">
+                <tbody>
+                  <tr><td className="pr-6 py-0.5 text-gray-600">Main Clubhouse, up to 6 hours</td><td className="tabular-nums text-right">{fee(s?.clubhouse_main_fee)}</td></tr>
+                  <tr><td className="pr-6 py-0.5 text-gray-600">Each extra hour beyond 6</td><td className="tabular-nums text-right">{fee(s?.clubhouse_additional_hour_fee)}</td></tr>
+                  <tr><td className="pr-6 py-0.5 text-gray-600">Small Side Room</td><td className="tabular-nums text-right">{fee(s?.clubhouse_side_room_fee)}</td></tr>
+                  <tr><td className="pr-6 py-0.5 text-gray-600">Extra tables &amp; chairs (flat, covers setup)</td><td className="tabular-nums text-right">{fee(s?.clubhouse_tables_chairs_fee)}</td></tr>
+                  <tr><td className="pr-6 py-0.5 text-gray-600">Security deposit (refundable, also covers cleaning)</td><td className="tabular-nums text-right">{fee(s?.clubhouse_security_deposit)}</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Payment due {days} days before the event · Main Clubhouse up to {s?.clubhouse_main_max_occupancy ?? 65} guests ·
+              vacate by {vacate} · full rules at <a href="/clubhouse-rules" target="_blank" rel="noopener noreferrer" className="underline">Clubhouse Rules &amp; Regulations</a>.
+              Figures are set by the Board and shown here live.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ClubhouseReservationsPage() {
   const { user, isAdmin } = useAuth()
   const toast = useToast()
@@ -563,6 +726,8 @@ export default function ClubhouseReservationsPage() {
           <button onClick={() => setFilter('all')} className={`px-4 py-2 rounded-lg text-sm font-medium ${filter === 'all' ? 'bg-brand-700 text-white' : 'bg-white border border-gray-200 text-gray-600'}`}>All</button>
         </div>
       )}
+
+      <ReservationsGuide isRCP={isRCP} />
 
       <UpcomingSetups />
 
