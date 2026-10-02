@@ -134,22 +134,16 @@ function isFutureOrToday(dateStr) {
 // ─── Add/Edit Event Modal ────────────────────────────────────────────────────
 
 function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalendarAdmin, toast, user }) {
-  // TEST-PHASE GATE (2026-09-03, revised 2026-09-05): clubhouse/side-room
-  // booking is only shown to RCP/committee accounts OR an explicitly-listed
-  // resident tester, until the board's Oct 1 cutover — see
-  // Reservations/REQUIREMENTS.md §2.13. A plain resident tester can't be
-  // modeled as an app_access row: app_access.role is DB-constrained to just
-  // 'admin'/'user' (app_access_role_check), which mean RCP/Social Committee
-  // here — not "can book" — and granting either would also hand the tester
-  // committee/RCP powers and escalation emails they shouldn't get. So this
-  // is a short-lived hardcoded allowlist instead, checked ONLY here.
-  // At cutover: delete TEST_PHASE_TESTER_IDS and this comment, and change
-  // canRequestClubhouse to simply `true`.
-  const TEST_PHASE_TESTER_IDS = [
-    'a61a5768-a710-4fc3-9d41-087605b58dd3', // Keith — kddyke23@gmail.com (plain-resident test account)
-  ]
-  const { hasAppAccess } = useAuth()
-  const canRequestClubhouse = hasAppAccess('clubhouse') || TEST_PHASE_TESTER_IDS.includes(user?.id)
+  // Clubhouse/side-room booking is open to every resident — every resident
+  // already has 'calendar' access, which is what gates Add Event itself; the
+  // 'clubhouse' app_access role is the RCP/committee reviewer flag, never a
+  // resident permission (Reservations/REQUIREMENTS.md §2.13 explains why).
+  // Until the board's Oct 1 cutover this was gated behind a short-lived
+  // TEST_PHASE_TESTER_IDS allowlist so only RCP/committee/Keith's test
+  // account could see the buttons during testing — removed here, 2026-10-02,
+  // after Keith found two residents couldn't see the booking option at all
+  // post-go-live: the allowlist had never actually been lifted at cutover.
+  const canRequestClubhouse = true
   const today = new Date().toISOString().split('T')[0]
 
   // Filter categories based on profile tags — compute before form init
@@ -2511,14 +2505,103 @@ export default function SocialCalendar() {
       photo_url: event.photo_url || null,
       created_by: user.id,
     }
-    const { error } = await supabase.from('calendar_events').insert(payload)
+
+    // A clubhouse-booked event's resource selections, guest count, and
+    // private-event answer live on clubhouse_reservations, not on the
+    // calendar_events row copied above — "Next occurrence" was silently
+    // turning a reservation into a plain calendar entry with nothing behind
+    // it (Keith, 2026-10-02: clicked Main Clubhouse, 20 guests, private
+    // answer "No" — none of that carried to the repeat). Fetch the original
+    // reservation (null for a plain event — unchanged behavior below) and,
+    // if one exists, carry its selections forward into a fresh reservation
+    // for the new date: same status/fee logic a brand-new submission gets
+    // (recalculated against today's settings, RCP notified if private/not
+    // sure), not a stale copy of the original's fees.
+    const { data: reservation } = await supabase
+      .from('clubhouse_reservations')
+      .select('wants_main_clubhouse, wants_side_room, wants_tables_chairs, extra_tables_requested, extra_chairs_requested, guest_count, private_event_answer, wants_late_end, starts_at, ends_at, liability_insurance_confirmed')
+      .eq('calendar_event_id', event.id)
+      .maybeSingle()
+
+    const { data: newEvent, error } = await supabase.from('calendar_events').insert(payload).select('id').single()
     if (error) {
       toast.error('Failed to create next occurrence')
-    } else {
+      return
+    }
+
+    if (!reservation) {
       toast.success('Next occurrence created!')
       setRepeatEvent(null)
       fetchEvents()
+      return
     }
+
+    const { data: settings } = await supabase
+      .from('community_settings')
+      .select('clubhouse_main_fee, clubhouse_side_room_fee, clubhouse_tables_chairs_fee, clubhouse_security_deposit, clubhouse_payment_deadline_days, clubhouse_additional_hour_fee')
+      .eq('id', 1)
+      .maybeSingle()
+
+    const startTime = reservation.starts_at.slice(11, 16)
+    const endTime = reservation.ends_at.slice(11, 16)
+    const [startH, startM] = startTime.split(':').map(Number)
+    const [endH, endM] = endTime.split(':').map(Number)
+    const reservationMinutes = (endH * 60 + endM) - (startH * 60 + startM)
+    const extraHours = Math.ceil(Math.max(0, reservationMinutes - 360) / 60)
+    const isPrivateOrUnsure = reservation.private_event_answer === 'yes' || reservation.private_event_answer === 'not_sure'
+
+    const reservationPayload = {
+      calendar_event_id: newEvent.id,
+      reserved_by: user.id,
+      wants_main_clubhouse: reservation.wants_main_clubhouse,
+      wants_side_room: reservation.wants_side_room,
+      wants_tables_chairs: reservation.wants_tables_chairs,
+      extra_tables_requested: reservation.extra_tables_requested,
+      extra_chairs_requested: reservation.extra_chairs_requested,
+      starts_at: `${newDate}T${startTime}:00`,
+      ends_at: `${newDate}T${endTime}:00`,
+      private_event_answer: reservation.private_event_answer,
+      guest_count: reservation.guest_count,
+      wants_late_end: reservation.wants_late_end,
+      status: isPrivateOrUnsure ? 'pending_rcp' : 'confirmed',
+      actual_title: isPrivateOrUnsure ? (event.reservation_actual_title || null) : null,
+      ...(isPrivateOrUnsure ? {
+        fee_main: reservation.wants_main_clubhouse ? settings?.clubhouse_main_fee : null,
+        fee_side_room: reservation.wants_side_room ? settings?.clubhouse_side_room_fee : null,
+        fee_tables_chairs: reservation.wants_tables_chairs ? settings?.clubhouse_tables_chairs_fee : null,
+        fee_additional_hours: extraHours > 0 ? extraHours * Number(settings?.clubhouse_additional_hour_fee) : null,
+        deposit_amount: settings?.clubhouse_security_deposit,
+        payment_deadline_days_snapshot: settings?.clubhouse_payment_deadline_days,
+        liability_insurance_confirmed: reservation.liability_insurance_confirmed,
+        terms_acknowledged_at: new Date().toISOString(),
+      } : {}),
+    }
+
+    const { data: newReservation, error: reservationError } = await supabase
+      .from('clubhouse_reservations')
+      .insert(reservationPayload)
+      .select('id')
+      .single()
+
+    if (reservationError) {
+      // Roll back the orphaned event — same reasoning as the brand-new-
+      // reservation path in EventModal (Scenario 7, 2026-09-05).
+      await supabase.from('calendar_events').update({ removed: true }).eq('id', newEvent.id)
+      if (reservationError.message?.includes('no_double_book')) {
+        toast.error('That time is already booked for this space — please pick a different repeat option, or edit the new entry to a free time.')
+      } else {
+        console.error('Failed to create clubhouse reservation for next occurrence', reservationError)
+        toast.error('Failed to create the reservation for the next occurrence')
+      }
+      setRepeatEvent(null)
+      fetchEvents()
+      return
+    }
+
+    if (isPrivateOrUnsure && newReservation?.id) notifyClubhouseRcp(newReservation.id)
+    toast.success(isPrivateOrUnsure ? 'Reservation submitted — awaiting RCP review' : 'Reservation confirmed!')
+    setRepeatEvent(null)
+    fetchEvents()
   }
 
   // ── Month navigation ──────────────────────────────────────────────────────

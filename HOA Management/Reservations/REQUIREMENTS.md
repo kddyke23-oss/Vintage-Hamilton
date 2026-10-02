@@ -708,6 +708,46 @@ the usual reasons) — that's still fully locked from this modal, same as before
 **Deploy note:** `git push` for `src/components/apps/SocialCalendar.jsx` — frontend only, no migration or
 Edge Function involved.
 
+### 2.28 Two post-go-live bugs: the test-phase gate was never lifted, and "Next occurrence" dropped the reservation, 2026-10-02
+
+**Found by Keith, go-live day two.**
+
+**Bug 1 — two residents reported no Main Clubhouse / Side Room buttons at all, even after a reboot and a hard
+refresh.** Not a caching issue — the code was doing exactly what it said: `canRequestClubhouse` in
+`EventModal` still checked `hasAppAccess('clubhouse') || TEST_PHASE_TESTER_IDS.includes(user?.id)`, the
+short-lived test-phase allowlist from 2.13 (`TEST_PHASE_TESTER_IDS = [Keith's test account]`). Its own comment
+said *"At cutover: delete TEST_PHASE_TESTER_IDS and this comment, and change canRequestClubhouse to simply
+`true`"* — that step was never actually done when go-live happened on 10/1, so only RCP/committee accounts
+(who hold the unrelated `'clubhouse'` admin app_access role) and Keith's tester account could ever see the
+buttons. Every ordinary resident got none. **Fix:** removed the allowlist, `canRequestClubhouse = true`,
+exactly as the original comment instructed. The discussion item in §6 about a durable feature-tester mechanism
+still stands for the next rollout.
+
+**Bug 2 — "Next occurrence" (`RepeatModal` → `handleRepeat`) silently dropped the reservation.** It only ever
+copied plain `calendar_events` columns (title, description, location, date/time, category, external link,
+photo) into the new row — nothing about `wants_main_clubhouse`/`wants_side_room`/`wants_tables_chairs`, guest
+count, or the private-event answer, because those live on the linked `clubhouse_reservations` row, which
+`handleRepeat` never looked at or recreated. Clicking Main Clubhouse + 20 guests + private answer "No" on the
+original, then "Next occurrence", produced a plain calendar entry with no reservation behind it at all — no
+fee/payment workflow, nothing in RCP's queue.
+
+**Fix:** `handleRepeat` now fetches the original reservation (`.eq('calendar_event_id', event.id)` —
+`null` for a plain event, which keeps the old plain-copy behavior exactly as before) and, if one exists,
+creates a fresh `clubhouse_reservations` row for the new occurrence: same resources, tables/chairs, guest
+count, private answer, and duration, but fees/deposit recalculated against **today's** `community_settings`
+(not a stale copy of the original's), status/RCP-notification resolved the same way a brand-new submission
+would (`pending_rcp` + notify RCP if private/not sure, `confirmed` otherwise). A double-booking conflict on
+the new date rolls back the just-created calendar event, same as the brand-new-reservation path in
+`EventModal` (Scenario 7, 2026-09-05).
+
+**Not done:** repeating still skips the Add Event modal entirely (no review step before submitting) — fine
+for a routine recurring community event, more debatable for a private one, since the resident never
+re-confirms the Lease Agreement/insurance checkbox for the new date (its prior confirmation is carried
+forward instead of re-asked). Not raised by Keith as a concern; flagging in case it becomes one.
+
+**Deploy note:** `git push` for `src/components/apps/SocialCalendar.jsx` — frontend only, no migration or
+Edge Function involved.
+
 ## 3. Pickleball Court Reservation Flow
 
 Fully self-contained in the portal — no fee, no RCP touchpoint. Built as a separate calendar/app from the clubhouse flow (different structure: fixed-length resource slots vs. open-ended request/approval).
