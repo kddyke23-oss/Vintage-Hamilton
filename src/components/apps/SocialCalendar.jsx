@@ -227,7 +227,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
     setReservationLoaded(false)
     supabase
       .from('clubhouse_reservations')
-      .select('id, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, private_event_answer, status, check_received_at, actual_title, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end')
+      .select('id, wants_main_clubhouse, wants_side_room, wants_tables_chairs, starts_at, ends_at, private_event_answer, status, check_received_at, actual_title, guest_count, extra_tables_requested, extra_chairs_requested, wants_late_end, escalation_outcome')
       .eq('calendar_event_id', editEvent.id)
       .maybeSingle()
       .then(({ data }) => {
@@ -246,7 +246,12 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
     // it's in actual_title instead, so pull the real one in for a masked
     // reservation specifically. A non-masked one already has its real
     // title seeded from editEvent above; leave it alone.
-    const wasMasked = existingReservation.private_event_answer === 'yes' || existingReservation.private_event_answer === 'not_sure'
+    // A 'no' answer the Social Committee later confirmed private is masked
+    // too (its real title was captured into actual_title at resolution), and
+    // is edited exactly like a private booking — see confirmedPrivateByCommittee
+    // below (2.30).
+    const committeeConfirmedPrivate = existingReservation.escalation_outcome === 'confirmed_private'
+    const wasMasked = committeeConfirmedPrivate || existingReservation.private_event_answer === 'yes' || existingReservation.private_event_answer === 'not_sure'
     setForm(f => ({
       ...f,
       wantsMainClubhouse: existingReservation.wants_main_clubhouse,
@@ -254,7 +259,7 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
       extraTables: existingReservation.extra_tables_requested ?? 0,
       extraChairs: existingReservation.extra_chairs_requested ?? 0,
       event_end_time: existingReservation.ends_at.slice(11, 16),
-      privateAnswer: existingReservation.private_event_answer,
+      privateAnswer: committeeConfirmedPrivate ? 'yes' : existingReservation.private_event_answer,
       guestCount: existingReservation.guest_count != null ? String(existingReservation.guest_count) : '',
       wantsLateEnd: existingReservation.wants_late_end || false,
       ...(wasMasked ? { title: existingReservation.actual_title || '' } : {}),
@@ -266,7 +271,16 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
   // cancellation split already in place (Reservations/REQUIREMENTS.md §2.9):
   // once money's changed hands, this modal won't touch the reservation
   // record; cancelling (which starts a refund) and rebooking is the path.
-  const reservationEditable = !!existingReservation && existingReservation.status !== 'cancelled' && !existingReservation.check_received_at
+  //
+  // 2.30 (Keith, 2026-10-02): also locked while the Social Committee is
+  // reviewing it (status 'escalated') — an edit used to reset it to
+  // 'confirmed' and silently drop the review. Once the committee has
+  // confirmed it private, it's editable again but treated as private: the
+  // private answer is locked, masking and fees follow the private rules,
+  // and the escalation record is never cleared by an edit.
+  const underCommitteeReview = existingReservation?.status === 'escalated'
+  const confirmedPrivateByCommittee = existingReservation?.escalation_outcome === 'confirmed_private'
+  const reservationEditable = !!existingReservation && existingReservation.status !== 'cancelled' && !existingReservation.check_received_at && !underCommitteeReview
   const isClubhouseReservationEdit = !!editEvent && !!existingReservation
 
   // Once a resource has actually been saved against this event (whether
@@ -374,7 +388,11 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
           return toast.error(`Maximum occupancy for the space(s) selected is ${applicableMax} guests`)
         }
       }
-      if ((form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure') && (!form.termsAccepted || !form.insuranceConfirmed)) {
+      // Not asked when the reservation itself is locked (paid, or under
+      // committee review) — those checkboxes are disabled and only the
+      // event's own text can be saved, so requiring them would block that.
+      const reservationLocked = isClubhouseReservationEdit && !reservationEditable
+      if (!reservationLocked && (form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure') && (!form.termsAccepted || !form.insuranceConfirmed)) {
         return toast.error('Please acknowledge the Clubhouse Lease Agreement and confirm liability insurance below')
       }
     }
@@ -448,7 +466,10 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
             extra_chairs_requested: extraChairs,
             starts_at: `${form.event_date}T${form.event_time}:00`,
             ends_at: `${form.event_date}T${form.event_end_time}:00`,
-            private_event_answer: form.privateAnswer,
+            // A committee-confirmed-private booking keeps the resident's
+            // original answer as the historical record; escalation_outcome
+            // is what marks it private (2.19/2.30).
+            private_event_answer: confirmedPrivateByCommittee ? existingReservation.private_event_answer : form.privateAnswer,
             guest_count: wantsClubhouseRoom ? Number(form.guestCount) : null,
             wants_late_end: form.wantsLateEnd,
             status: isMasked ? 'pending_rcp' : 'confirmed',
@@ -466,8 +487,9 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
             liability_insurance_confirmed: isMasked ? form.insuranceConfirmed : false,
             terms_acknowledged_at: isMasked ? new Date().toISOString() : null,
             acknowledged_at: null, acknowledged_by: null,
-            escalated_at: null, escalated_by: null,
-            escalation_resolved_at: null, escalation_resolved_by: null, escalation_outcome: null,
+            // Escalation fields deliberately NOT cleared (2.30): the
+            // committee's decision and who made it stay on the record
+            // through any edit, so an edit can't undo it.
             late_notice_sent_at: null,
           })
           .eq('id', existingReservation.id)
@@ -754,10 +776,12 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
             </div>
             {isClubhouseReservationEdit && !reservationEditable && (
               <div className="bg-brand-50 border border-brand-200 rounded-lg p-3 text-sm text-brand-700">
-                <p className="font-medium mb-1">🔒 This reservation can no longer be changed here.</p>
+                <p className="font-medium mb-1">{underCommitteeReview ? '🔒 This reservation can\'t be changed right now.' : '🔒 This reservation can no longer be changed here.'}</p>
                 <p>
                   {existingReservation.status === 'cancelled'
                     ? 'This reservation has been cancelled.'
+                    : underCommitteeReview
+                    ? 'This booking is under review by the Social Committee. You can edit it once they have decided — you will be emailed the outcome.'
                     : 'Payment has already been received. To change the date, time, resources, or privacy answer now, cancel this reservation first (which starts a refund), then create a new booking.'}
                 </p>
               </div>
@@ -904,13 +928,16 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
                           type="radio"
                           name="privateAnswer"
                           checked={form.privateAnswer === val}
-                          disabled={isClubhouseReservationEdit && !reservationEditable}
+                          disabled={(isClubhouseReservationEdit && !reservationEditable) || confirmedPrivateByCommittee}
                           onChange={() => set('privateAnswer', val)}
                         />
                         {label}
                       </label>
                     ))}
                   </div>
+                  {confirmedPrivateByCommittee && (
+                    <p className="text-xs text-purple-700 mt-1">The Social Committee has confirmed this is a private event, so this answer can&apos;t be changed.</p>
+                  )}
                   {(form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure') && (
                     <p className="text-xs text-brand-500 mt-1">This goes to RCP for review, and a fee/deposit applies. Once approved, you&apos;ll get a message with the payment details — it&apos;s not confirmed until payment is received.</p>
                   )}
@@ -2522,7 +2549,7 @@ export default function SocialCalendar() {
     // sure), not a stale copy of the original's fees.
     const { data: reservation } = await supabase
       .from('clubhouse_reservations')
-      .select('wants_main_clubhouse, wants_side_room, wants_tables_chairs, extra_tables_requested, extra_chairs_requested, guest_count, private_event_answer, wants_late_end, starts_at, ends_at, liability_insurance_confirmed')
+      .select('wants_main_clubhouse, wants_side_room, wants_tables_chairs, extra_tables_requested, extra_chairs_requested, guest_count, private_event_answer, wants_late_end, starts_at, ends_at, liability_insurance_confirmed, escalation_outcome')
       .eq('calendar_event_id', event.id)
       .maybeSingle()
 
@@ -2551,7 +2578,11 @@ export default function SocialCalendar() {
     const [endH, endM] = endTime.split(':').map(Number)
     const reservationMinutes = (endH * 60 + endM) - (startH * 60 + startM)
     const extraHours = Math.ceil(Math.max(0, reservationMinutes - 360) / 60)
-    const isPrivateOrUnsure = reservation.private_event_answer === 'yes' || reservation.private_event_answer === 'not_sure'
+    // 2.30: a committee-confirmed-private original repeats as private too,
+    // carrying the determination forward — otherwise "Next occurrence" would
+    // recreate it as a public, unmasked, no-fee booking.
+    const committeePrivate = reservation.escalation_outcome === 'confirmed_private'
+    const isPrivateOrUnsure = committeePrivate || reservation.private_event_answer === 'yes' || reservation.private_event_answer === 'not_sure'
 
     const reservationPayload = {
       calendar_event_id: newEvent.id,
@@ -2567,6 +2598,7 @@ export default function SocialCalendar() {
       guest_count: reservation.guest_count,
       wants_late_end: reservation.wants_late_end,
       status: isPrivateOrUnsure ? 'pending_rcp' : 'confirmed',
+      ...(committeePrivate ? { escalation_outcome: 'confirmed_private' } : {}),
       actual_title: isPrivateOrUnsure ? (event.reservation_actual_title || null) : null,
       ...(isPrivateOrUnsure ? {
         fee_main: reservation.wants_main_clubhouse ? settings?.clubhouse_main_fee : null,

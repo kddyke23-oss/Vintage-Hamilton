@@ -789,6 +789,43 @@ eslint: `ClubhouseReservationsPage.jsx` clean; `SocialCalendar.jsx` and `HelpPag
 --no-verify-jwt` and `supabase functions deploy send-daily-notifications --no-verify-jwt` (new label);
 (3) run `supabase/clubhouse-setup-check-cron.sql`; (4) `git push` for the frontend.
 
+### 2.30 Editing can no longer undo an escalation, 2026-10-02
+
+Closes the gap flagged in 2.19. Before this, editing a booking the Social Committee had confirmed private
+(answer still 'no') saved it as a public booking: real title back on the calendar, fees nulled, status
+'confirmed', and every escalation field cleared. Also found: editing a booking *during* review (status
+'escalated') reset it to 'confirmed' and silently dropped the review, and "Next occurrence" recreated a
+confirmed-private booking as public. **Decision (Keith):** keep the committee's decision through edits, and lock
+editing while the committee is reviewing.
+
+**Changed — `src/components/apps/SocialCalendar.jsx` only:**
+- `EventModal` fetches `escalation_outcome` with the reservation. New `underCommitteeReview` (status
+  'escalated') and `confirmedPrivateByCommittee` (outcome 'confirmed_private').
+- `reservationEditable` is now also false while `underCommitteeReview`; the lock notice explains it's under
+  committee review and editable once they decide. Only the event's own text can be saved meanwhile.
+- A committee-confirmed-private booking is seeded as private (`privateAnswer: 'yes'` in the form, real title from
+  `actual_title`), and its private-answer radios are disabled with a note. Saving follows the normal private-edit
+  rules (masked, fees recalculated, back to `pending_rcp`, RCP notified, Rules/insurance re-accepted — which also
+  closes the 2.15 gap where an escalated booking was never asked to accept them). The stored
+  `private_event_answer` keeps the resident's original answer.
+- The edit save no longer clears `escalated_*` / `escalation_resolved_*` / `escalation_outcome` for any booking —
+  the decision and who made it stay on the record (dismissed ones too).
+- `handleRepeat`: a confirmed-private original repeats as private, with `escalation_outcome = 'confirmed_private'`
+  carried to the new row. Insurance confirmation carries over as recorded (false if never asked) — visible to RCP.
+- Side fix: the Rules/insurance check is skipped when the reservation is locked (paid or under review). Those
+  checkboxes are disabled there, so a paid private booking previously couldn't save even a description change.
+  The same seeding also stops a paid committee-confirmed-private booking from being unmasked by a text-only edit.
+
+**One-off check:** `supabase/escalation_edit_check.sql` (read-only) compares escalation emails queued since
+go-live against bookings still carrying an escalation record. Expected empty — no private bookings yet (Keith).
+
+eslint: `SocialCalendar.jsx` at its 4-problem baseline. `vite build` passes. **Test before relying on it:**
+(a) committee-confirmed-private, unpaid → edit date: stays masked, radios locked, goes to RCP with fees;
+(b) dismissed → edit: normal public edit, dismissal still in the audit trail; (c) under review → reservation
+fields locked, notice shown; (d) Next occurrence on (a) → new booking masked and pending RCP.
+
+**Deploy:** `git push` only — no migration or Edge Function.
+
 ## 3. Pickleball Court Reservation Flow
 
 Fully self-contained in the portal — no fee, no RCP touchpoint. Built as a separate calendar/app from the clubhouse flow (different structure: fixed-length resource slots vs. open-ended request/approval).
