@@ -914,6 +914,9 @@ function EventModal({ categories, editEvent, onClose, onSaved, profile, isCalend
                   {(form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure') && (
                     <p className="text-xs text-brand-500 mt-1">This goes to RCP for review, and a fee/deposit applies. Once approved, you&apos;ll get a message with the payment details — it&apos;s not confirmed until payment is received.</p>
                   )}
+                  {form.privateAnswer === 'no' && wantsTablesChairsResource && (
+                    <p className="text-xs text-brand-500 mt-1">No charge for extra tables &amp; chairs at a community (non-private) event. RCP and the Social Committee are notified automatically so setup can be arranged.</p>
+                  )}
                 </div>
 
                 {clubhouseSettings && (form.privateAnswer === 'yes' || form.privateAnswer === 'not_sure') && (

@@ -34,6 +34,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   clubhouse_escalation: '📋 Clubhouse Escalation',
   clubhouse_resident_status: '🏠 Clubhouse Booking',
   clubhouse_payment_overdue: '⚠ Payment Overdue',
+  clubhouse_setup: '🪑 Tables & Chairs Setup',
 }
 
 interface QueueRow {

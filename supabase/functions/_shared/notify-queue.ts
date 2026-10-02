@@ -23,6 +23,7 @@ export type NotificationCategory =
   | 'clubhouse_escalation'
   | 'clubhouse_resident_status'
   | 'clubhouse_payment_overdue'
+  | 'clubhouse_setup'
 
 export interface QueueItem {
   recipientEmail: string

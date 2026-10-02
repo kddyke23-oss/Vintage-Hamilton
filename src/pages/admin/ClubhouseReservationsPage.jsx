@@ -83,6 +83,102 @@ const STATUS_LABEL = {
   cancelled: { label: 'Cancelled', color: 'bg-gray-200 text-gray-600' },
 }
 
+// ─── Upcoming tables & chairs setup — Reservations/REQUIREMENTS.md §2.29 ──────
+// Planning list for RCP and the Social Committee: every upcoming, non-cancelled
+// booking that asked for extra tables/chairs, public or private, with a way to
+// record that setup has been arranged (and by whom). Reads through the
+// clubhouse_upcoming_setups() RPC rather than the table, because committee
+// RLS only returns escalated rows — the RPC exposes just these columns.
+// The matching emails (new request / 7-day / day-before / cancelled) come from
+// the clubhouse-setup-check Edge Function, not from here.
+function UpcomingSetups() {
+  const toast = useToast()
+  const [items, setItems] = useState(null)
+  const [showAll, setShowAll] = useState(false)
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.rpc('clubhouse_upcoming_setups')
+    if (error) { console.error('clubhouse_upcoming_setups failed:', error); setItems([]); return }
+    setItems(data || [])
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const setArranged = async (item, arranged) => {
+    let note = null
+    if (arranged) {
+      note = window.prompt('Who is setting up? (optional — e.g. a name or "maintenance")', '')
+      if (note === null) return
+    }
+    const { error } = await supabase.rpc('set_clubhouse_setup_arranged', { p_id: item.id, p_arranged: arranged, p_note: note })
+    if (error) { toast.error('Could not update setup status'); return }
+    toast.success(arranged ? 'Setup marked as arranged' : 'Setup marked as not arranged')
+    load()
+  }
+
+  if (items === null || items.length === 0) return null
+
+  const todayYmd = new Date().toLocaleDateString('en-CA')
+  const daysOut = iso => {
+    const d = new Date(new Date(iso).toLocaleDateString('en-CA') + 'T00:00:00')
+    return Math.round((d - new Date(todayYmd + 'T00:00:00')) / 86400000)
+  }
+  const shown = showAll ? items : items.filter(i => daysOut(i.starts_at) <= 30)
+  const hiddenCount = items.length - shown.length
+  const notArranged = items.filter(i => !i.setup_arranged_at && daysOut(i.starts_at) <= 7).length
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-4 my-4">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h2 className="font-semibold text-gray-900">🪑 Upcoming tables &amp; chairs setup</h2>
+        {notArranged > 0 && (
+          <span className="text-xs font-medium px-2 py-1 rounded-full bg-amber-100 text-amber-700">
+            {notArranged} in the next 7 days not yet arranged
+          </span>
+        )}
+      </div>
+      <ul className="mt-3 divide-y divide-gray-100">
+        {shown.map(i => {
+          const n = daysOut(i.starts_at)
+          const urgent = !i.setup_arranged_at && n <= 7
+          const needed = [i.extra_tables > 0 && `${i.extra_tables} table${i.extra_tables === 1 ? '' : 's'}`, i.extra_chairs > 0 && `${i.extra_chairs} chair${i.extra_chairs === 1 ? '' : 's'}`].filter(Boolean).join(' · ')
+          return (
+            <li key={i.id} className="py-3 flex items-start justify-between gap-3 flex-wrap">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-gray-900">
+                  {formatDateTime(i.starts_at, i.ends_at)}
+                  <span className={`ml-2 text-xs ${urgent ? 'text-amber-700 font-semibold' : 'text-gray-400'}`}>
+                    {n <= 0 ? 'today' : n === 1 ? 'tomorrow' : `in ${n} days`}
+                  </span>
+                </p>
+                <p className="text-sm text-gray-600">{i.event_title || '(untitled)'} — {needed}{i.guest_count ? ` · ${i.guest_count} guests` : ''}</p>
+                <p className="text-xs text-gray-400">
+                  {[i.wants_main_clubhouse && 'Main Clubhouse', i.wants_side_room && 'Side Room'].filter(Boolean).join(' + ')} · booked by {i.booked_by_name || 'resident'} · {STATUS_LABEL[i.status]?.label || i.status}
+                </p>
+                {i.setup_arranged_at && (
+                  <p className="text-xs text-green-700 mt-1">
+                    ✅ Arranged by {i.setup_arranged_by_name || 'someone'}{i.setup_arranged_note ? ` — ${i.setup_arranged_note}` : ''}
+                  </p>
+                )}
+              </div>
+              {i.setup_arranged_at ? (
+                <button onClick={() => setArranged(i, false)} className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">Undo</button>
+              ) : (
+                <button onClick={() => setArranged(i, true)} className="text-xs px-3 py-1.5 rounded-lg bg-brand-700 text-white hover:bg-brand-800">Mark arranged</button>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+      {(hiddenCount > 0 || showAll) && (
+        <button onClick={() => setShowAll(v => !v)} className="mt-2 text-xs text-brand-600 hover:underline">
+          {showAll ? 'Show next 30 days only' : `Show ${hiddenCount} more beyond 30 days`}
+        </button>
+      )}
+    </div>
+  )
+}
+
 export default function ClubhouseReservationsPage() {
   const { user, isAdmin } = useAuth()
   const toast = useToast()
@@ -467,6 +563,8 @@ export default function ClubhouseReservationsPage() {
           <button onClick={() => setFilter('all')} className={`px-4 py-2 rounded-lg text-sm font-medium ${filter === 'all' ? 'bg-brand-700 text-white' : 'bg-white border border-gray-200 text-gray-600'}`}>All</button>
         </div>
       )}
+
+      <UpcomingSetups />
 
       {loading ? (
         <LoadingSpinner label="Loading reservations…" />

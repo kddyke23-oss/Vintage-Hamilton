@@ -545,7 +545,7 @@ export default function HelpPage() {
               <Steps steps={[
                 { n: 1, text: <>Click <strong>&quot;+ Add Event&quot;</strong> on the Social Calendar.</> },
                 { n: 2, text: <>Choose <strong>🏛️ Main Clubhouse</strong> and/or <strong>🚪 Side Room</strong> under Location.</> },
-                { n: 3, text: <>Fill in your event details — guest count, times, and any extras (tables, chairs, a later end time). Fees for anything you select are shown right on the form as you go.</> },
+                { n: 3, text: <>Fill in your event details — guest count, times, and any extras (tables, chairs, a later end time). Fees for anything you select are shown right on the form as you go. If you ask for extra tables or chairs, RCP and the Social Committee are told automatically so setup can be arranged — there&apos;s no charge for them at a community (non-private) event.</> },
                 { n: 4, text: <>Read and accept the <a href="/clubhouse-rules" target="_blank" rel="noopener noreferrer" className="underline text-brand-700 hover:text-brand-900">Clubhouse Rules &amp; Regulations</a>, then submit.</> },
               ]} />
               <p className="text-brand-500 text-sm mt-3">

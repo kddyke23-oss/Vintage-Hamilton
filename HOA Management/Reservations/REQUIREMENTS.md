@@ -748,6 +748,47 @@ forward instead of re-asked). Not raised by Keith as a concern; flagging in case
 **Deploy note:** `git push` for `src/components/apps/SocialCalendar.jsx` — frontend only, no migration or
 Edge Function involved.
 
+### 2.29 Tables & chairs setup planning, and open items closed at go-live, 2026-10-02
+
+**Closed by Keith, 2026-10-02:** Help screens live (2.26); Pickleball in General Functions; Mariesol and Al
+both have active RCP accounts (first real private booking is the live test); legacy RCP-site bookings — only a
+few Social Committee entries, moved manually by Keith; check payee/mailing address settings filled in; board fee
+sign-off agreed (Main Clubhouse $200, Side Room $50, Tables & Chairs $50, deposit $250); payment deadline stays
+**30 days** for now. Still open: confirming RCP has switched off its old pickleball booking (Keith emailing Al
+and Mariesol).
+
+**Problem (Keith):** who sets up tables & chairs is unresolved, and a *public* booking never tells RCP at all —
+it auto-confirms (`status = 'confirmed'`), never enters "Needs action", and RCP is only emailed for
+`pending_rcp`. Also confirmed in code: a public booking's tables/chairs carry **no fee** (fees are only stamped
+for private/not-sure). **Decision (Keith):** keep it free for public events — notice only.
+
+**Built:**
+- `supabase/migrations/clubhouse_setup_tracking.sql` — `setup_arranged_at/_by/_note`, four dedupe stamps
+  (`setup_request_notice_sent_at`, `setup_7d_notice_sent_at`, `setup_1d_notice_sent_at`,
+  `setup_cancel_notice_sent_at`), a BEFORE UPDATE trigger that clears the reminders and the "arranged" record when
+  the date/time or quantities change, and two SECURITY DEFINER RPCs (`clubhouse_upcoming_setups()`,
+  `set_clubhouse_setup_arranged()`) gated to clubhouse app_access (either role) or global admin — needed because
+  committee RLS only returns escalated rows. Past bookings are pre-stamped so the first run doesn't announce them.
+- `supabase/functions/clubhouse-setup-check` (new, daily cron at 21:45 UTC — 30 min before the 22:15 UTC queue
+  flush, so notices go out the same evening). Recipients: everyone with `clubhouse` app_access (RCP + committee).
+  Four notices, each once per booking: **new request** (first run after it's booked, any non-cancelled status);
+  **7-day heads-up** (2–7 days out and not yet arranged); **day-before** (always, stating arranged-by or
+  "not yet arranged"); **cancelled** (only if setup had been marked arranged — stand it down). Days are computed
+  in America/New_York. Queue category `clubhouse_setup` added to `notify-queue.ts` and the digest label map.
+- `ClubhouseReservationsPage.jsx` — "🪑 Upcoming tables & chairs setup" card above the queue, visible to RCP and
+  committee: next 30 days by default (toggle for later), date + "in N days", title (masked titles stay masked),
+  quantities, guests, room, booker, status, amber count of unarranged in the next 7 days, and **Mark arranged**
+  (optional "who's doing it" note) / **Undo**.
+- `SocialCalendar.jsx` booking form — public booking with tables/chairs shows "No charge … RCP and the Social
+  Committee are notified automatically so setup can be arranged." `HelpPage.jsx` step 3 says the same.
+
+eslint: `ClubhouseReservationsPage.jsx` clean; `SocialCalendar.jsx` and `HelpPage.jsx` at their existing baselines
+(4 and 72). `vite build` passes.
+
+**Deploy order:** (1) run `clubhouse_setup_tracking.sql`; (2) `supabase functions deploy clubhouse-setup-check
+--no-verify-jwt` and `supabase functions deploy send-daily-notifications --no-verify-jwt` (new label);
+(3) run `supabase/clubhouse-setup-check-cron.sql`; (4) `git push` for the frontend.
+
 ## 3. Pickleball Court Reservation Flow
 
 Fully self-contained in the portal — no fee, no RCP touchpoint. Built as a separate calendar/app from the clubhouse flow (different structure: fixed-length resource slots vs. open-ended request/approval).
