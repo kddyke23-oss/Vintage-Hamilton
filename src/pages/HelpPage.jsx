@@ -535,28 +535,40 @@ export default function HelpPage() {
           <div className="space-y-6">
             <Section title="Booking the Clubhouse or Side Room 🏛️">
               <p className="text-brand-600">
-                The Main Clubhouse and Side Room are requested the same way as any other calendar event, but
-                they go through a short review — and usually a fee — before they are confirmed. Here is how to
-                make a request, and what happens to it afterwards.
+                The Main Clubhouse and Side Room are requested the same way as any other calendar event. A
+                community event that is open to residents is confirmed straight away, with no fee. A private
+                event is reviewed by RCP (our property manager, RCP Management) and needs a fee and deposit
+                before it is confirmed. Here is how to make a request, and what happens to it afterwards.
               </p>
             </Section>
 
             <Section title="Making a request">
               <Steps steps={[
                 { n: 1, text: <>Click <strong>&quot;+ Add Event&quot;</strong> on the Social Calendar.</> },
-                { n: 2, text: <>Choose <strong>🏛️ Main Clubhouse</strong> and/or <strong>🚪 Side Room</strong> under Location.</> },
+                { n: 2, text: <>Click the <strong>🏛️ Main Clubhouse</strong> and/or <strong>🚪 Side Room</strong> button under Location. Typing &quot;Clubhouse&quot; into the Location box does <strong>not</strong> book it — only the buttons do.</> },
                 { n: 3, text: <>Fill in your event details — guest count, times, and any extras (tables, chairs, a later end time). Fees for anything you select are shown right on the form as you go. If you ask for extra tables or chairs, RCP and the Social Committee are told automatically so setup can be arranged — there&apos;s no charge for them at a community (non-private) event.</> },
-                { n: 4, text: <>Read and accept the <a href="/clubhouse-rules" target="_blank" rel="noopener noreferrer" className="underline text-brand-700 hover:text-brand-900">Clubhouse Rules &amp; Regulations</a>, then submit.</> },
+                { n: 4, text: <>Answer <strong>&quot;Is this a private event?&quot;</strong> — Yes, No, or Not sure (see below for what each means). For Yes or Not sure, read and accept the <a href="/clubhouse-rules" target="_blank" rel="noopener noreferrer" className="underline text-brand-700 hover:text-brand-900">Clubhouse Rules &amp; Regulations</a> and confirm you have liability insurance. Then submit.</> },
               ]} />
               <p className="text-brand-500 text-sm mt-3">
-                You will get an email confirming exactly what you submitted, and every update below is emailed
-                to you as it happens too — you do not need to keep checking back.
+                Updates are emailed to you once a day, in the evening, whenever something has changed on your
+                booking — you do not need to keep checking back.
               </p>
             </Section>
 
-            <Section title="Your booking's journey">
+            <Section title="Private or not?">
+              <p className="text-brand-600 mb-3">Your answer to <strong>&quot;Is this a private event?&quot;</strong> decides what happens next:</p>
+              <ul className="list-disc pl-5 space-y-2 text-brand-600">
+                <li><strong>No</strong> — a community event open to residents. It is <strong>confirmed immediately</strong> and appears on the calendar. There is no fee, including for extra tables and chairs.</li>
+                <li><strong>Yes</strong> or <strong>Not sure</strong> — a private function. It goes to RCP for review, a fee and refundable deposit apply, and it is confirmed once your payment is received. The steps below show how that works.</li>
+              </ul>
+              <p className="text-brand-500 text-sm mt-3">
+                A private booking shows on the shared calendar only as &quot;Private Event — your name&quot;. You still see your own title.
+              </p>
+            </Section>
+
+            <Section title="Your booking's journey (private events)">
               <p className="text-brand-600 mb-4">
-                Most bookings move through these steps in order. Each one shows what you can do (if anything),
+                A private (or not sure) booking moves through these steps in order. Each one shows what you can do (if anything),
                 what is happening on our end, and whether to expect to hear from us again — once a step is
                 marked <span className="text-green-700 font-medium">✅ Nothing more coming</span>, that
                 booking is finished.
@@ -566,28 +578,25 @@ export default function HelpPage() {
                 <JourneyStep
                   color={JOURNEY_COLORS.amber}
                   title="Submitted — awaiting RCP review"
-                  meaning="Your request has gone to the Reservation Coordination Person (RCP), who reviews it and confirms whether a fee applies."
-                  youCanDo="Remove (cancel) the booking any time, from the event itself."
-                  whoElse="RCP reviews your answers and sets the fee, if any."
+                  meaning="Your request has gone to RCP, our property manager, who reviews it and confirms the fee."
+                  youCanDo="Edit the details, or Remove (cancel) the booking, from the event itself."
+                  whoElse="RCP reviews your answers. Once they acknowledge it, you are emailed the full booking form, the amount due and how to pay."
                   updates="more"
                 />
                 <JourneyArrow />
                 <JourneyStep
                   color={JOURNEY_COLORS.orange}
                   title="Payment due"
-                  meaning="RCP has confirmed a fee applies. The amount and due date are shown on the booking."
+                  meaning="RCP has confirmed the fee. Pay by check — the amount, who to make it payable to, where to send it, and the due date (30 days before your event) are shown on the booking and in your email."
                   youCanDo="Pay by the deadline shown · Remove (cancel) any time if your plans change."
                   whoElse="RCP marks your payment received once your check arrives. If the deadline passes unpaid, both you and RCP get a reminder — the booking can be cancelled if it stays unpaid."
                   updates="more"
                 />
-                <p className="text-brand-400 text-xs italic text-center">
-                  Some bookings go straight to Confirmed with no fee, depending on the answers you gave when submitting.
-                </p>
                 <JourneyArrow />
                 <JourneyStep
                   color={JOURNEY_COLORS.green}
                   title="Confirmed"
-                  meaning="Your booking is set."
+                  meaning="Your booking is set. You are emailed when your payment is marked received."
                   youCanDo="Nothing needed — Remove (cancel) any time if plans change."
                   whoElse="If your booking included a refundable deposit, there's one more step after your event — see below."
                   updates="done"
@@ -618,17 +627,18 @@ export default function HelpPage() {
               </div>
             </Section>
 
-            <Section title="If your booking is flagged as private">
+            <Section title="If RCP thinks your event may be private">
               <p className="text-brand-600 mb-3">
-                If your answers suggest the event might be a private, exclusive-use function, RCP can send it
-                to the Social Committee for a second look before it is confirmed:
+                If you answered <strong>No</strong> but the event looks like a private, exclusive-use function,
+                RCP can ask the Social Committee to take a second look. You are emailed when this happens, and
+                again with the outcome:
               </p>
               <JourneyStep
                 color={JOURNEY_COLORS.purple}
                 title="Under review by the Social Committee"
                 meaning="The Committee decides whether this counts as a private event."
                 youCanDo="Nothing needed — wait to hear back."
-                whoElse="The Committee either confirms it's private (the booking then moves to Payment due) or dismisses it (the booking goes back to how it stood before)."
+                whoElse="The Committee either confirms it's private (the booking is shown as a private event and moves to Payment due) or dismisses it (the booking stands as you submitted it, with no fee)."
                 updates="more"
               />
             </Section>
@@ -668,9 +678,18 @@ export default function HelpPage() {
               </p>
             </Section>
 
+            <Section title="Changing your booking">
+              <ul className="list-disc pl-5 space-y-2 text-brand-600">
+                <li>Open the event and click <strong>Edit</strong> to change the date, times, guest count, extras or your private answer — any time until a fee has been paid. After that, cancel and make a new booking.</li>
+                <li>A room you have already booked can&apos;t be unticked. To drop it, cancel and make a new booking. You can still add a room you haven&apos;t booked.</li>
+                <li>Forgot to click the Clubhouse button? Edit the event and click it — the booking is added to your existing event.</li>
+                <li><strong>Next occurrence</strong> copies the event and its clubhouse booking to a new date, at current prices.</li>
+              </ul>
+            </Section>
+
             <Callout>
               💡 <strong>Checking status:</strong> Open the booking from the calendar at any time to see where
-              it stands. If you are the owner, a calendar admin, or RCP, you can also expand a full history of
+              it stands. If you are the owner, a calendar admin, RCP or the Social Committee, you can also expand a full history of
               everything that has happened to it right there on the booking.
             </Callout>
 
