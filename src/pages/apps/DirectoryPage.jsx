@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
-import ResidentDirectory from "@/pages/ResidentDirectory";
+import ResidentDirectory, { ResidentCard, EntryModal } from "@/pages/ResidentDirectory";
+import { deleteStoragePhoto } from "@/lib/storage";
 import LoadingSpinner from "@/components/LoadingSpinner";
 
 export default function DirectoryPage() {
@@ -13,6 +14,11 @@ export default function DirectoryPage() {
   const [hiddenSelf, setHiddenSelf] = useState(false); // true = access denied because the resident opted out of the directory
   const [optingIn, setOptingIn] = useState(false);
   const [optInError, setOptInError] = useState(null);
+  // Hidden residents can still view/correct their OWN entry (nobody else's)
+  const [myEntries, setMyEntries] = useState([]);
+  const [editingMine, setEditingMine] = useState(null);
+  const [savingMine, setSavingMine] = useState(false);
+  const [mineMsg, setMineMsg] = useState(null);
 
   useEffect(() => {
     if (!user) return;
@@ -42,13 +48,42 @@ export default function DirectoryPage() {
         .select("directory_visible")
         .eq("id", user.id)
         .maybeSingle();
-      setHiddenSelf(me?.directory_visible === false);
+      const hidden = me?.directory_visible === false;
+      setHiddenSelf(hidden);
+      if (hidden) await loadMine();
       setAccess(false);
     } else {
       setHiddenSelf(false);
       setAccess(data.role);
       setIsDirectoryAdmin(data.role === "admin");
     }
+  }
+
+  async function loadMine() {
+    const { data } = await supabase
+      .from("profiles")
+      .select("resident_id, id, surname, names, address, phones, emails, tags, directory_visible, notify_digest, photo_url")
+      .eq("id", user.id);
+    setMyEntries(data || []);
+  }
+
+  async function saveMine(entry) {
+    setSavingMine(true);
+    const { resident_id, id, _isOwnRecord, _isSelf, ...fields } = entry;
+    const existing = myEntries.find(r => r.resident_id === resident_id);
+    if (existing?.photo_url && existing.photo_url !== fields.photo_url) {
+      deleteStoragePhoto(existing.photo_url, "avatars");
+    }
+    const { error } = await supabase.from("profiles").update(fields).eq("resident_id", resident_id);
+    if (error) {
+      console.error(error);
+      setMineMsg("Sorry, your details could not be saved. Please try again.");
+    } else {
+      setMineMsg(null);
+      setEditingMine(null);
+      await checkAccess(); // if they ticked "visible", the trigger restores access and the full directory loads
+    }
+    setSavingMine(false);
   }
 
   async function optIn() {
@@ -82,6 +117,26 @@ export default function DirectoryPage() {
           residents who are not listed cannot view it. If you include your details, you will
           get access to the directory straight away.
         </p>
+        {myEntries.length > 0 && (
+          <div className="w-full max-w-md text-left mb-6">
+            <h3 className="font-display text-brand-800 text-sm mb-2 text-center">Your own details (only you can see this)</h3>
+            {myEntries.map(entry => (
+              <ResidentCard
+                key={entry.resident_id}
+                entry={entry}
+                canEdit={true}
+                onEdit={() => setEditingMine({ ...entry, _isSelf: true, _isOwnRecord: true })}
+                onDelete={null}
+                onSendInvite={null}
+                canAdminister={false}
+                selectMode={false}
+                selected={false}
+                onToggleSelect={() => {}}
+              />
+            ))}
+            {mineMsg && <p className="text-red-600 text-sm mt-2 text-center">{mineMsg}</p>}
+          </div>
+        )}
         {optInError && <p className="text-red-600 text-sm mb-4">{optInError}</p>}
         <button
           onClick={optIn}
@@ -96,6 +151,18 @@ export default function DirectoryPage() {
         >
           ← Back to Dashboard
         </button>
+        {editingMine && (
+          <EntryModal
+            entry={editingMine}
+            onSave={saveMine}
+            onClose={() => setEditingMine(null)}
+            title="Edit My Details"
+            isSaving={savingMine}
+            isOwnRecord={true}
+            isSelf={true}
+            isAdmin={false}
+          />
+        )}
       </div>
     );
   }

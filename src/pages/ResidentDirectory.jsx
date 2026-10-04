@@ -47,7 +47,7 @@ function Toast({ message }) {
 }
 
 // ─── Resident Card ────────────────────────────────────────────────────────────
-function ResidentCard({ entry, canEdit, onEdit, onDelete, onSendInvite, canAdminister, selectMode, selected, onToggleSelect }) {
+export function ResidentCard({ entry, canEdit, onEdit, onDelete, onSendInvite, canAdminister, selectMode, selected, onToggleSelect }) {
   const isHidden = entry.directory_visible === false;
   const noAccount = canAdminister && !entry.id; // only visible to admins
   return (
@@ -263,7 +263,7 @@ const tdStyle = {
 };
 
 // ─── Entry Modal ──────────────────────────────────────────────────────────────
-function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAdmin, isSelf }) {
+export function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAdmin, isSelf }) {
   // Split existing address into house number + street for the form
   const parsed = parseAddress(entry.address);
   const knownStreet = STREETS.includes(parsed.street) ? parsed.street : "";
