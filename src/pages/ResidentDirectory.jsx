@@ -263,7 +263,7 @@ const tdStyle = {
 };
 
 // ─── Entry Modal ──────────────────────────────────────────────────────────────
-function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAdmin }) {
+function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAdmin, isSelf }) {
   // Split existing address into house number + street for the form
   const parsed = parseAddress(entry.address);
   const knownStreet = STREETS.includes(parsed.street) ? parsed.street : "";
@@ -495,8 +495,8 @@ function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAd
             )}
           </ModalField>
 
-          {/* ── Directory Visibility (admin only) ── */}
-          {isAdmin && (
+          {/* ── Directory Visibility (admins, or residents editing their own entry) ── */}
+          {(isAdmin || isSelf) && (
             <ModalField label="Directory Visibility">
               <label style={{ display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer", padding: "0.5rem 0.75rem", borderRadius: "6px", background: form.directory_visible ? "#f0fdf4" : "#fef2f2", border: `1px solid ${form.directory_visible ? "#86efac" : "#fca5a5"}` }}>
                 <input
@@ -514,6 +514,13 @@ function EntryModal({ entry, onSave, onClose, title, isSaving, isOwnRecord, isAd
                   </div>
                 </div>
               </label>
+              <div style={{ marginTop: "0.5rem", fontSize: "0.75rem", lineHeight: 1.4, color: form.directory_visible ? "#6b7280" : "#b91c1c", background: form.directory_visible ? "transparent" : "#fef2f2", padding: form.directory_visible ? 0 : "0.5rem 0.75rem", borderRadius: "6px" }}>
+                {form.directory_visible
+                  ? "The directory is shared: only residents who list their own details can view other residents' details."
+                  : (isSelf
+                      ? "Heads up: if your details are not available to other residents, you will not be able to see the directory either. Saving will turn off your directory access. Tick the box again at any time to get it back."
+                      : "Heads up: a resident who is hidden from the directory also loses their own access to the directory. Re-enabling visibility restores it.")}
+              </div>
             </ModalField>
           )}
 
@@ -842,7 +849,7 @@ function openPrintWindow(data) {
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
+export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin, onAccessChanged }) {
   const canAdminister = isAdmin || isDirectoryAdmin;
 
   const [residents, setResidents] = useState([]);
@@ -922,7 +929,7 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
 
   async function handleSave(entry) {
     setIsSaving(true);
-    const { resident_id, id, _isOwnRecord, ...fields } = entry;
+    const { resident_id, id, _isOwnRecord, _isSelf, ...fields } = entry;
     let error;
     if (resident_id) {
       // Clean up old avatar if photo changed or removed
@@ -935,7 +942,13 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
       ({ error } = await supabase.from("profiles").insert([{ ...fields }]));
     }
     if (error) { showToast("Error saving entry"); console.error(error); }
-    else { showToast(resident_id ? "Entry updated" : "Resident added"); await fetchResidents(showHidden); }
+    else {
+      showToast(resident_id ? "Entry updated" : "Resident added");
+      await fetchResidents(showHidden);
+      // A non-admin who just hid their own entry has lost directory access
+      // (database trigger) -- re-check so the page locks straight away.
+      if (_isSelf && !canAdminister && fields.directory_visible === false) onAccessChanged?.();
+    }
     setEditingEntry(null);
     setShowAddModal(false);
     setIsSaving(false);
@@ -1155,7 +1168,7 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
                   key={entry.resident_id}
                   entry={entry}
                   canEdit={canEdit(entry)}
-                  onEdit={() => setEditingEntry({ ...entry, _isOwnRecord: canAdminister || entry.emails?.some(em => em.toLowerCase() === user?.email?.toLowerCase()) })}
+                  onEdit={() => setEditingEntry({ ...entry, _isSelf: !!entry.emails?.some(em => em.toLowerCase() === user?.email?.toLowerCase()), _isOwnRecord: canAdminister || entry.emails?.some(em => em.toLowerCase() === user?.email?.toLowerCase()) })}
                   onDelete={canAdminister ? () => handleDelete(entry.resident_id) : null}
                   onSendInvite={canAdminister ? () => handleSendInvite(entry) : null}
                   canAdminister={canAdminister}
@@ -1176,7 +1189,7 @@ export default function ResidentDirectory({ user, isAdmin, isDirectoryAdmin }) {
 
       {/* ── Edit Modal ── */}
       {editingEntry && (
-        <EntryModal entry={editingEntry} onSave={handleSave} onClose={() => setEditingEntry(null)} title="Edit Resident" isSaving={isSaving} isOwnRecord={!!editingEntry._isOwnRecord} isAdmin={canAdminister} />
+        <EntryModal entry={editingEntry} onSave={handleSave} onClose={() => setEditingEntry(null)} title="Edit Resident" isSaving={isSaving} isOwnRecord={!!editingEntry._isOwnRecord} isSelf={!!editingEntry._isSelf} isAdmin={canAdminister} />
       )}
 
       {/* ── Add Resident Modal ── */}

@@ -337,7 +337,7 @@ function EditResidentModal({ entry, onSave, onClose, isSaving }) {
                 style={{ width: '16px', height: '16px', accentColor: '#1e4976', cursor: 'pointer', flexShrink: 0 }} />
               <div>
                 <div style={{ fontSize: '0.875rem', fontWeight: '600', color: '#374151' }}>{form.directory_visible ? 'Visible in directory' : 'Hidden from directory'}</div>
-                <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>{form.directory_visible ? 'Resident appears on the directory page' : 'Resident is not shown to other residents'}</div>
+                <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>{form.directory_visible ? 'Resident appears on the directory page' : 'Resident is not shown to other residents, and Directory access is removed (they cannot browse it either)'}</div>
               </div>
             </label>
           </ModalField>
