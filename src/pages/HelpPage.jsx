@@ -254,6 +254,10 @@ export default function HelpPage() {
               <p className="text-brand-500 text-sm mt-3">
                 You can remove your own comment at any time. Calendar admins can also remove any comment if needed.
               </p>
+              <p className="text-brand-500 text-sm mt-3">
+                The person who added an event, or a calendar admin, can stop new comments by opening the event and clicking
+                <strong> 🔕 Turn off comments</strong> (click <strong>💬 Turn on comments</strong> to reverse it). Existing comments stay visible.
+              </p>
             </Section>
 
             <Section title="Event categories">
@@ -318,8 +322,46 @@ export default function HelpPage() {
                 { n: 2, text: <>Give your post a title and write your content in the body field.</> },
                 { n: 3, text: <>Optionally link your post to a calendar event — useful for event previews or recaps.</> },
                 { n: 4, text: <>Optionally add an <strong>external link</strong> too — a news article, sign-up page, or event website. Posts with a link show a 🔗 in the title.</> },
-                { n: 5, text: <>Click <strong>"Publish Post"</strong> — your post will appear immediately for everyone to read.</> },
+                { n: 5, text: <>Optionally tick <strong>📊 Add a poll to this post</strong> — see "Adding a poll" below.</> },
+                { n: 6, text: <>Leave <strong>Allow comments on this post</strong> ticked, or untick it if you don't want comments.</> },
+                { n: 7, text: <>Click <strong>"Publish Post"</strong> — your post will appear immediately for everyone to read.</> },
               ]} />
+            </Section>
+
+            <Section title="Adding a poll 📊">
+              <p className="text-brand-600 mb-3">
+                Want to know what your neighbours think? Attach a poll to your post — for example, which night
+                suits a group outing, or which of a few ideas people like best.
+              </p>
+              <Steps steps={[
+                { n: 1, text: <>When writing (or editing) your post, tick <strong>📊 Add a poll to this post</strong>.</> },
+                { n: 2, text: <>Type your poll question and at least two options. Use <strong>+ Add another option</strong> for more.</> },
+                { n: 3, text: <>Tick <strong>Let people pick more than one option</strong> if more than one answer can apply. Otherwise each person picks one.</> },
+                { n: 4, text: <>Publish (or save) the post. The poll appears inside the post, and posts with a poll show a 📊 in the title on the list.</> },
+              ]} />
+              <p className="text-brand-500 text-sm mt-3">
+                A post can have one poll. You can add a poll to an existing post you wrote by choosing <strong>✏️ Edit</strong>.
+              </p>
+            </Section>
+
+            <Section title="Voting in a poll">
+              <p className="text-brand-600">
+                Open the post and click an option to vote. You'll see how many votes each option has and the percentage.
+                To change your mind, click a different option (or click your choice again to take your vote back).
+                Polls show totals only — other residents can't see who voted for what.
+              </p>
+            </Section>
+
+            <Section title="Adding more poll options later">
+              <p className="text-brand-600">
+                Sometimes the comments suggest a choice you hadn't thought of. If you wrote the post, open it and click
+                <strong> + Add an option</strong> under the poll, type the new choice, and click <strong>Add</strong>.
+                Votes already cast stay as they are.
+              </p>
+              <p className="text-brand-500 text-sm mt-3">
+                <strong>Only the person who wrote the post can add options</strong> — not other residents, and not administrators.
+                Options can't be removed once the poll is live, so check the wording before you add it.
+              </p>
             </Section>
 
             <Section title="Commenting on a post">
@@ -328,6 +370,18 @@ export default function HelpPage() {
                 { n: 2, text: <>Scroll to the bottom of the post and type your comment in the box.</> },
                 { n: 3, text: <>Click <strong>"Post"</strong> or press <strong>Ctrl+Enter</strong> to submit.</> },
               ]} />
+            </Section>
+
+            <Section title="Turning comments off (or back on)">
+              <p className="text-brand-600">
+                The person who wrote a post, or an administrator, can stop new comments at any time. Open the post and click
+                <strong> 🔕 Turn off comments</strong> in the top bar (it becomes <strong>💬 Turn on comments</strong> so you
+                can reverse it). You can also untick <strong>Allow comments on this post</strong> when writing or editing a post.
+              </p>
+              <p className="text-brand-500 text-sm mt-3">
+                When comments are off, the comment box is replaced with a notice and nobody can add new comments.
+                Comments already on the post stay visible, and the post's reactions and poll keep working.
+              </p>
             </Section>
 
             <Section title="Reporting content">
