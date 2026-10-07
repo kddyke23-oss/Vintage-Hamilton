@@ -7,6 +7,7 @@ import { useToast } from '@/components/ui/Toast'
 import { useImageUpload } from '@/hooks/useImageUpload'
 import { formatUserText } from '@/lib/richText'
 import { FormattingToolbar } from '@/components/ui/FormattingToolbar'
+import BlogPoll, { PollEditor, emptyPollDraft, validatePollDraft, createPoll } from './BlogPoll'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,7 @@ function ReactionBar({ targetType, targetId, residentId, reactions, onReact }) {
 
 function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, onRemove, onEdit, isOwnPost, onNavigateToEvent }) {
   const commentCount = post.comment_count || 0
+  const commentsOff = post.comments_enabled === false
   const likeCount = reactions.filter(r => r.target_type === 'post' && r.target_id === post.id && r.reaction_type === 'like').length
   const heartCount = reactions.filter(r => r.target_type === 'post' && r.target_id === post.id && r.reaction_type === 'heart').length
 
@@ -100,7 +102,7 @@ function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, o
             className="font-semibold text-gray-900 text-base cursor-pointer hover:text-blue-700 leading-snug"
             onClick={() => onOpen(post)}
           >
-            {post.external_url && '🔗 '}{post.title}
+            {post.has_poll && '📊 '}{post.external_url && '🔗 '}{post.title}
           </h3>
           {post.calendar_event && (
             <button
@@ -162,7 +164,7 @@ function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, o
             onClick={() => onOpen(post)}
             className="flex items-center gap-1.5 text-sm px-3 py-1 rounded-full border border-gray-200 text-gray-500 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50 transition-colors"
           >
-            💬 <span>{commentCount} {commentCount === 1 ? 'comment' : 'comments'}</span>
+            💬 <span>{commentsOff && commentCount === 0 ? 'Comments off' : `${commentCount} ${commentCount === 1 ? 'comment' : 'comments'}${commentsOff ? ' · closed' : ''}`}</span>
           </button>
           <ReactionBar
             targetType="post"
@@ -179,7 +181,7 @@ function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, o
 
 // ─── PostModal (detail view) ─────────────────────────────────────────────────
 
-function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, onClose, onPostRemoved, onNavigateToEvent, onEdit, toast }) {
+function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, onClose, onPostRemoved, onNavigateToEvent, onEdit, onCommentsToggled, toast }) {
   const [comments, setComments] = useState([])
   const [newComment, setNewComment] = useState('')
   const [loadingComments, setLoadingComments] = useState(true)
@@ -189,6 +191,7 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
   const [reportTargetType, setReportTargetType] = useState(null)
   const [reportTargetId, setReportTargetId] = useState(null)
   const [lightboxUrl, setLightboxUrl] = useState(null)
+  const [commentsEnabled, setCommentsEnabled] = useState(post.comments_enabled !== false)
 
   // Comment photo upload
   const [commentPhotoFile, setCommentPhotoFile] = useState(null)
@@ -234,7 +237,7 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
   useEffect(() => { fetchComments() }, [fetchComments])
 
   const handleAddComment = async () => {
-    if (!newComment.trim()) return
+    if (!newComment.trim() || !commentsEnabled) return
     setSubmitting(true)
 
     let photo_url = null
@@ -316,6 +319,21 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
 
   const isOwnPost = post.created_by === user.id
   const canRemovePost = isBlogAdmin || isOwnPost
+  // Original poster or an admin can switch comments off / back on
+  const canToggleComments = isBlogAdmin || isOwnPost
+
+  const handleToggleComments = async () => {
+    const next = !commentsEnabled
+    const { data, error } = await supabase
+      .from('blog_posts')
+      .update({ comments_enabled: next })
+      .eq('id', post.id)
+      .select('id')
+    if (error || !data || data.length === 0) { toast.error('Could not change the comment setting.'); return }
+    setCommentsEnabled(next)
+    onCommentsToggled?.(post.id, next)
+    toast.success(next ? 'Comments turned on.' : 'Comments turned off.')
+  }
 
   return (
     <div
@@ -347,6 +365,15 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            {canToggleComments && (
+              <button
+                onClick={handleToggleComments}
+                className="text-sm text-gray-500 hover:text-gray-800 px-2 py-1 rounded hover:bg-gray-100 transition-colors"
+                title={commentsEnabled ? 'Stop new comments on this post' : 'Allow comments on this post again'}
+              >
+                {commentsEnabled ? '🔕 Turn off comments' : '💬 Turn on comments'}
+              </button>
+            )}
             {isOwnPost && (
               <button onClick={() => { onClose(); onEdit(post) }} className="text-sm text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50 transition-colors">
                 ✏️ Edit
@@ -396,6 +423,8 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
             </a>
           )}
 
+          <BlogPoll postId={post.id} userId={user.id} isOwner={isOwnPost} toast={toast} />
+
           <div className="mt-4">
             <ReactionBar
               targetType="post"
@@ -416,7 +445,7 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
           {loadingComments ? (
             <p className="text-sm text-gray-400">Loading comments…</p>
           ) : comments.length === 0 ? (
-            <p className="text-sm text-gray-400 italic mb-4">No comments yet — be the first!</p>
+            <p className="text-sm text-gray-400 italic mb-4">{commentsEnabled ? 'No comments yet — be the first!' : 'No comments were left on this post.'}</p>
           ) : (
             <div className="space-y-4 mb-4">
               {comments.map(comment => {
@@ -473,7 +502,12 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
             </div>
           )}
 
-          {/* New comment input */}
+          {/* New comment input (hidden when comments are turned off) */}
+          {!commentsEnabled ? (
+            <p className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+              🔕 Comments have been turned off for this post.
+            </p>
+          ) : (
           <div className="flex gap-3">
             <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-sm font-semibold text-amber-700 flex-shrink-0 mt-1">
               {(post.author_name || 'Y')[0].toUpperCase()}
@@ -531,6 +565,7 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
               </div>
             </div>
           </div>
+          )}
         </div>
       </div>
 
@@ -596,6 +631,10 @@ function PostModal({ post, user, residentId, isBlogAdmin, reactions, onReact, on
 
 function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
   const isEditMode = editPost !== null
+  // A post can only ever have one poll; once it has one, options are added from the post view
+  const showPollEditor = !editPost?.has_poll
+  const [pollDraft, setPollDraft] = useState(emptyPollDraft())
+  const [commentsEnabled, setCommentsEnabled] = useState(editPost?.comments_enabled !== false)
   const [title, setTitle] = useState(editPost?.title ?? '')
   const [body, setBody] = useState(editPost?.body ?? '')
   const bodyRef = useRef(null)
@@ -631,6 +670,13 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
   const handleSave = async () => {
     if (!title.trim() || !body.trim()) return
 
+    let pollInput = null
+    if (showPollEditor && pollDraft.enabled) {
+      const v = validatePollDraft(pollDraft)
+      if (v.error) { toast.error(v.error); return }
+      pollInput = v
+    }
+
     // Validate URL if provided
     let external_url = null
     if (externalUrl.trim()) {
@@ -664,10 +710,14 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
           title: title.trim(), body: body.trim(), photo_url,
           calendar_event_id: linkedEventId ? parseInt(linkedEventId) : null,
           external_url,
+          comments_enabled: commentsEnabled,
         })
         .eq('id', editPost.id)
+      if (error) { setSaving(false); toast.error('Could not update post.'); return }
+      if (pollInput && !(await createPoll(editPost.id, user.id, pollInput))) {
+        toast.error('Post updated, but the poll could not be added.')
+      }
       setSaving(false)
-      if (error) { toast.error('Could not update post.'); return }
       // Clean up old photo from storage if replaced or removed
       if (existingPhotoUrl && existingPhotoUrl !== photo_url) {
         deleteStoragePhoto(existingPhotoUrl, 'blog-posts')
@@ -681,11 +731,16 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
         calendar_event_id: linkedEventId ? parseInt(linkedEventId) : null,
         photo_url,
         external_url,
+        comments_enabled: commentsEnabled,
       }
-      const { error } = await supabase.from('blog_posts').insert(payload)
+      const { data: created, error } = await supabase.from('blog_posts').insert(payload).select('id').single()
+      if (error || !created) { setSaving(false); toast.error('Could not save post.'); return }
+      if (pollInput && !(await createPoll(created.id, user.id, pollInput))) {
+        toast.error('Post published, but the poll could not be added. Edit the post to try again.')
+      } else {
+        toast.success('Post published!')
+      }
       setSaving(false)
-      if (error) { toast.error('Could not save post.'); return }
-      toast.success('Post published!')
     }
 
     onSaved()
@@ -759,6 +814,26 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
             />
             <p className="text-xs text-gray-400 mt-1">Link to an external website, ticketing page, or more info</p>
           </div>
+
+          {/* Poll */}
+          {showPollEditor ? (
+            <PollEditor draft={pollDraft} onChange={setPollDraft} />
+          ) : (
+            <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+              📊 This post has a poll. Open the post to add more options.
+            </p>
+          )}
+
+          {/* Comments on/off */}
+          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={commentsEnabled}
+              onChange={e => setCommentsEnabled(e.target.checked)}
+              className="rounded border-gray-300"
+            />
+            Allow comments on this post
+          </label>
 
           {/* Photo upload */}
           <div>
@@ -870,7 +945,7 @@ export default function CommunityBlog() {
     const { data, error } = await supabase
       .from('blog_posts')
       .select(`
-        id, title, body, photo_url, external_url, created_by, created_at, locked, removed,
+        id, title, body, photo_url, external_url, created_by, created_at, locked, removed, comments_enabled,
         calendar_event_id,
         calendar_events ( id, title, event_date )
       `)
@@ -893,6 +968,13 @@ export default function CommunityBlog() {
       }
     }
 
+    // which posts carry a poll (drives the 📊 badge on the list)
+    const pollSet = new Set()
+    if (postIds.length > 0) {
+      const { data: polls } = await supabase.from('blog_polls').select('post_id').in('post_id', postIds)
+      polls?.forEach(pl => pollSet.add(pl.post_id))
+    }
+
     // author names
     const userIds = [...new Set(data.map(p => p.created_by).filter(Boolean))]
     let nameMap = {}
@@ -912,6 +994,7 @@ export default function CommunityBlog() {
     const enriched = data.map(p => ({
       ...p,
       comment_count: countMap[p.id] || 0,
+      has_poll: pollSet.has(p.id),
       author_name: nameMap[p.created_by] || 'Resident',
       calendar_event: p.calendar_events || null,
     }))
@@ -979,6 +1062,11 @@ export default function CommunityBlog() {
 
     toast.success('Post removed.')
     setPosts(prev => prev.filter(p => p.id !== post.id))
+  }
+
+  // ── Comments on/off (keeps the list in step with the open post) ──────────
+  const handleCommentsToggled = (postId, enabled) => {
+    setPosts(prev => prev.map(p => (p.id === postId ? { ...p, comments_enabled: enabled } : p)))
   }
 
   // ── Filter ────────────────────────────────────────────────────────────────
@@ -1054,6 +1142,7 @@ export default function CommunityBlog() {
           onReact={handleReact}
           onClose={() => setSelectedPost(null)}
           onEdit={p => { setSelectedPost(null); setEditPost(p) }}
+          onCommentsToggled={handleCommentsToggled}
           onPostRemoved={id => {
             setPosts(prev => prev.filter(p => p.id !== id))
             setSelectedPost(null)

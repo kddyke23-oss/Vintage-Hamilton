@@ -1391,8 +1391,10 @@ function ClubhouseReservationPanel({ eventId, canView }) {
   )
 }
 
-function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, isClubhouseReviewer, onClose, onEdit, onRemove, onReport, onRsvp, onRepeat, userRsvp, toast }) {
+function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, isClubhouseReviewer, onClose, onEdit, onRemove, onReport, onRsvp, onRepeat, onCommentsToggled, userRsvp, toast }) {
   const [photoZoom, setPhotoZoom] = useState(false)
+  // Event creator or a calendar admin can switch comments off / back on
+  const [commentsEnabled, setCommentsEnabled] = useState(event.comments_enabled !== false)
   const cat = categories.find(c => c.id === event.category_id)
   const canModify = isCalendarAdmin || event.created_by === currentUserId
   // Audit trail visibility is intentionally broader than canModify — a
@@ -1459,7 +1461,7 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, i
   useEffect(() => { fetchComments() }, [fetchComments])
 
   const handleAddComment = async () => {
-    if (!newComment.trim()) return
+    if (!newComment.trim() || !commentsEnabled) return
     setSubmittingComment(true)
 
     let photo_url = null
@@ -1531,6 +1533,19 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, i
     }
     setLoadingAttendees(false)
     setShowAttendees(true)
+  }
+
+  async function handleToggleComments() {
+    const next = !commentsEnabled
+    const { data, error } = await supabase
+      .from('calendar_events')
+      .update({ comments_enabled: next })
+      .eq('id', event.id)
+      .select('id')
+    if (error || !data || data.length === 0) { toast.error('Could not change the comment setting.'); return }
+    setCommentsEnabled(next)
+    onCommentsToggled?.(event.id, next)
+    toast.success(next ? 'Comments turned on.' : 'Comments turned off.')
   }
 
   function toggleAttendees() {
@@ -1681,7 +1696,7 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, i
             {loadingComments ? (
               <p className="text-xs text-brand-400">Loading comments…</p>
             ) : comments.length === 0 ? (
-              <p className="text-xs text-brand-400 italic mb-3">No comments yet — ask a question or leave a note!</p>
+              <p className="text-xs text-brand-400 italic mb-3">{commentsEnabled ? 'No comments yet — ask a question or leave a note!' : 'No comments were left on this event.'}</p>
             ) : (
               <div className="space-y-3 mb-3">
                 {comments.map(comment => {
@@ -1725,7 +1740,12 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, i
               </div>
             )}
 
-            {/* Add comment */}
+            {/* Add comment (hidden when comments are turned off) */}
+            {!commentsEnabled ? (
+              <p className="text-xs text-brand-500 bg-brand-50 border border-brand-100 rounded-lg px-3 py-2">
+                🔕 Comments have been turned off for this event.
+              </p>
+            ) : (
             <div className="flex gap-2 items-start">
               <div className="flex-1">
                 <FormattingToolbar textareaRef={newCommentRef} onChange={setNewComment} />
@@ -1767,6 +1787,7 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, i
                 {commentPhotoUploading ? 'Uploading…' : submittingComment ? 'Posting…' : 'Post'}
               </button>
             </div>
+            )}
           </div>
 
           {/* Actions */}
@@ -1795,6 +1816,15 @@ function EventDetailModal({ event, categories, currentUserId, isCalendarAdmin, i
                   title="Create a copy of this event on a new date"
                 >
                   🔁 Next occurrence
+                </button>
+              )}
+              {canModify && (
+                <button
+                  onClick={handleToggleComments}
+                  className="text-xs px-3 py-1.5 rounded-lg border border-brand-200 text-brand-600 hover:bg-brand-50 transition-colors"
+                  title={commentsEnabled ? 'Stop new comments on this event' : 'Allow comments on this event again'}
+                >
+                  {commentsEnabled ? '🔕 Turn off comments' : '💬 Turn on comments'}
                 </button>
               )}
               {!canModify && (
@@ -2684,6 +2714,12 @@ export default function SocialCalendar() {
   }
 
   // ── Can current user create events ───────────────────────────────────────
+  // Keeps the list and the open detail card in step after comments are switched on/off
+  const handleCommentsToggled = (eventId, enabled) => {
+    setEvents(prev => prev.map(ev => (ev.id === eventId ? { ...ev, comments_enabled: enabled } : ev)))
+    setSelectedEvent(prev => (prev && prev.id === eventId ? { ...prev, comments_enabled: enabled } : prev))
+  }
+
   const canCreate = isCalendarAdmin || !!profile
 
   // ── Filtered events for list view ─────────────────────────────────────────
@@ -2860,6 +2896,7 @@ export default function SocialCalendar() {
           onReport={ev => { setReportEvent(ev); setSelectedEvent(null) }}
           onRsvp={handleRsvp}
           onRepeat={ev => { setRepeatEvent(ev); setSelectedEvent(null) }}
+          onCommentsToggled={handleCommentsToggled}
           userRsvp={userRsvps.has(selectedEvent.id)}
           toast={toast}
         />
