@@ -348,7 +348,7 @@ export default function HelpPage() {
               <p className="text-brand-600">
                 Open the post and click an option to vote. You'll see how many votes each option has and the percentage.
                 To change your mind, click a different option (or click your choice again to take your vote back).
-                Polls show totals only — other residents can't see who voted for what.
+                Polls show totals only — other residents can't see who voted for what. The Blog list also shows a snapshot of each poll — the two leading options — so you can see how it's going at a glance; open the post to see every option and vote.
               </p>
             </Section>
 

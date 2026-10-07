@@ -53,6 +53,31 @@ const fmtDate = (ts) => {
   return new Date(ts).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
 }
 
+// Poll snapshot for the post list: { [postId]: { question, totalVoters, options: [{id,label,count,pct}] } }
+// with options sorted leader-first. The list card shows just the top two.
+async function fetchPollSummaries(postIds) {
+  const out = {}
+  if (!postIds.length) return out
+  const { data: polls } = await supabase.from('blog_polls').select('id, post_id, question').in('post_id', postIds)
+  if (!polls?.length) return out
+  const pollIds = polls.map(p => p.id)
+  const [{ data: opts }, { data: votes }] = await Promise.all([
+    supabase.from('blog_poll_options').select('id, poll_id, label').in('poll_id', pollIds).order('id', { ascending: true }),
+    supabase.from('blog_poll_votes').select('poll_id, option_id, voter_id').in('poll_id', pollIds),
+  ])
+  polls.forEach(poll => {
+    const pv = (votes || []).filter(v => v.poll_id === poll.id)
+    const totalVoters = new Set(pv.map(v => v.voter_id)).size
+    const options = (opts || []).filter(o => o.poll_id === poll.id).map(o => {
+      const count = pv.filter(v => v.option_id === o.id).length
+      return { id: o.id, label: o.label, count, pct: totalVoters ? Math.round((count / totalVoters) * 100) : 0 }
+    })
+    options.sort((a, b) => b.count - a.count || a.id - b.id)
+    out[poll.post_id] = { question: poll.question, totalVoters, options }
+  })
+  return out
+}
+
 // ─── ReactionBar ────────────────────────────────────────────────────────────
 
 function ReactionBar({ targetType, targetId, residentId, reactions, onReact }) {
@@ -144,6 +169,35 @@ function PostCard({ post, residentId, reactions, onReact, onOpen, isBlogAdmin, o
       >
         {post.body}
       </p>
+
+      {/* Poll snapshot: top two options, rest behind the post */}
+      {post.poll_summary && post.poll_summary.options.length > 0 && (
+        <div
+          className="mb-3 rounded-lg border border-blue-100 bg-blue-50/40 px-3 py-2 cursor-pointer"
+          onClick={() => onOpen(post)}
+        >
+          <p className="text-xs font-semibold text-gray-800 mb-1.5">
+            📊 {post.poll_summary.question}
+            <span className="font-normal text-gray-400"> · {post.poll_summary.totalVoters} {post.poll_summary.totalVoters === 1 ? 'vote' : 'votes'}</span>
+          </p>
+          <div className="space-y-1">
+            {post.poll_summary.options.slice(0, 2).map(opt => (
+              <div key={opt.id} className="relative rounded border border-gray-200 bg-white px-2 py-1 text-xs overflow-hidden">
+                <span className="absolute inset-y-0 left-0 bg-blue-100" style={{ width: `${opt.pct}%` }} aria-hidden="true" />
+                <span className="relative flex items-center justify-between gap-2">
+                  <span className="text-gray-800 truncate">{opt.label}</span>
+                  <span className="text-gray-500 flex-shrink-0">{opt.count} · {opt.pct}%</span>
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-blue-600 mt-1.5">
+            {post.poll_summary.options.length > 2
+              ? `+${post.poll_summary.options.length - 2} more ${post.poll_summary.options.length - 2 === 1 ? 'option' : 'options'} — open the post to see all and vote`
+              : 'Open the post to vote'}
+          </p>
+        </div>
+      )}
 
       {/* Footer */}
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -968,12 +1022,8 @@ export default function CommunityBlog() {
       }
     }
 
-    // which posts carry a poll (drives the 📊 badge on the list)
-    const pollSet = new Set()
-    if (postIds.length > 0) {
-      const { data: polls } = await supabase.from('blog_polls').select('post_id').in('post_id', postIds)
-      polls?.forEach(pl => pollSet.add(pl.post_id))
-    }
+    // poll snapshots (drive the 📊 badge and the top-two summary on each card)
+    const pollMap = await fetchPollSummaries(postIds)
 
     // author names
     const userIds = [...new Set(data.map(p => p.created_by).filter(Boolean))]
@@ -994,7 +1044,8 @@ export default function CommunityBlog() {
     const enriched = data.map(p => ({
       ...p,
       comment_count: countMap[p.id] || 0,
-      has_poll: pollSet.has(p.id),
+      has_poll: !!pollMap[p.id],
+      poll_summary: pollMap[p.id] || null,
       author_name: nameMap[p.created_by] || 'Resident',
       calendar_event: p.calendar_events || null,
     }))
@@ -1069,6 +1120,14 @@ export default function CommunityBlog() {
     setPosts(prev => prev.map(p => (p.id === postId ? { ...p, comments_enabled: enabled } : p)))
   }
 
+  // Re-read poll tallies after the post view closes so the list card shows fresh votes
+  const refreshPollSummaries = async () => {
+    const ids = posts.filter(p => p.has_poll).map(p => p.id)
+    if (ids.length === 0) return
+    const m = await fetchPollSummaries(ids)
+    setPosts(prev => prev.map(p => (p.has_poll && m[p.id] ? { ...p, poll_summary: m[p.id] } : p)))
+  }
+
   // ── Filter ────────────────────────────────────────────────────────────────
   const filtered = posts.filter(p =>
     !search || p.title.toLowerCase().includes(search.toLowerCase()) || p.body.toLowerCase().includes(search.toLowerCase())
@@ -1140,7 +1199,7 @@ export default function CommunityBlog() {
           isBlogAdmin={isBlogAdmin}
           reactions={reactions}
           onReact={handleReact}
-          onClose={() => setSelectedPost(null)}
+          onClose={() => { setSelectedPost(null); refreshPollSummaries() }}
           onEdit={p => { setSelectedPost(null); setEditPost(p) }}
           onCommentsToggled={handleCommentsToggled}
           onPostRemoved={id => {
