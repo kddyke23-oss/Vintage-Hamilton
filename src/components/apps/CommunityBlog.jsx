@@ -808,12 +808,13 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
       <style>{`:root { --modal-z: 1500; }`}</style>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
-        <div className="flex items-center justify-between p-6 border-b border-gray-100">
+      {/* Fixed-height card: header and Publish bar stay put, only the form scrolls */}
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col" style={{ maxHeight: '90dvh' }}>
+        <div className="flex items-center justify-between p-6 border-b border-gray-100 flex-shrink-0">
           <h2 className="text-xl font-bold text-gray-900">{isEditMode ? 'Edit Post' : 'New Post'}</h2>
           <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700 text-xl">✕</button>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Title <span className="text-red-500">*</span></label>
             <input
@@ -917,7 +918,7 @@ function AddPostModal({ user, onClose, onSaved, toast, editPost = null }) {
             {photoError && <p className="text-xs text-red-500 mt-1">{photoError}</p>}
           </div>
         </div>
-        <div className="flex justify-end gap-3 p-6 border-t border-gray-100">
+        <div className="flex justify-end gap-3 p-6 border-t border-gray-100 flex-shrink-0">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
           <button
             onClick={handleSave}
