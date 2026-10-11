@@ -914,7 +914,9 @@ function AddDrawModal({ members, draws, periods, onSave, onClose, numberHistory 
 // WINNINGS TAB
 // ─────────────────────────────────────────────────────────────────────────────
 function WinningsTab({ members, draws, periods }) {
-  const sortedPeriods = [...periods].sort((a, b) => a.start_date.localeCompare(b.start_date));
+  // Display order: Total first, then current period, then archive newest -> oldest, so the
+  // totals are visible without horizontal scrolling; older periods scroll off to the right.
+  const sortedPeriods = [...periods].sort((a, b) => b.start_date.localeCompare(a.start_date));
   const activeMembers = members.filter(m => !m.exit_date);
 
   const table = sortedPeriods.map(p => {
@@ -939,16 +941,19 @@ function WinningsTab({ members, draws, periods }) {
           <thead>
             <tr style={{ borderBottom: "2px solid #f0f4f8" }}>
               <th style={{ padding: "0.75rem 1rem", textAlign: "left", fontFamily: "var(--font-display)", color: "var(--color-primary)", fontWeight: "600" }}>Member</th>
+              <th style={{ padding: "0.75rem 1rem", textAlign: "right", color: "var(--color-gold)", fontWeight: "700" }}>Total</th>
               {sortedPeriods.map(p => (
                 <th key={p.id} style={{ padding: "0.75rem 0.5rem", textAlign: "right", color: "#6b7280", fontWeight: "600", whiteSpace: "nowrap", fontSize: "0.78rem" }}>{p.label}</th>
               ))}
-              <th style={{ padding: "0.75rem 1rem", textAlign: "right", color: "var(--color-gold)", fontWeight: "700" }}>Total</th>
             </tr>
           </thead>
           <tbody>
             {activeMembers.map((m, i) => (
               <tr key={m.id} style={{ borderBottom: "1px solid #f0f4f8", background: i % 2 === 0 ? "white" : "#fafbfc" }}>
                 <td style={{ padding: "0.6rem 1rem", fontWeight: "500", color: "#374151" }}>{memberDisplayName(m)}</td>
+                <td style={{ padding: "0.6rem 1rem", textAlign: "right", fontWeight: "700", color: totals[m.id] > 0 ? "var(--color-gold)" : "#9ca3af" }}>
+                  {fmtMoney(totals[m.id])}
+                </td>
                 {table.map(row => {
                   const share = row.actMs.find(a => a.id === m.id) ? row.share : null;
                   return (
@@ -957,21 +962,18 @@ function WinningsTab({ members, draws, periods }) {
                     </td>
                   );
                 })}
-                <td style={{ padding: "0.6rem 1rem", textAlign: "right", fontWeight: "700", color: totals[m.id] > 0 ? "var(--color-gold)" : "#9ca3af" }}>
-                  {fmtMoney(totals[m.id])}
-                </td>
               </tr>
             ))}
             <tr style={{ borderTop: "2px solid #f0f4f8", background: "rgba(var(--color-primary-rgb),0.03)", fontWeight: "700" }}>
               <td style={{ padding: "0.6rem 1rem", color: "var(--color-primary)" }}>Total</td>
+              <td style={{ padding: "0.6rem 1rem", textAlign: "right", color: "var(--color-gold)" }}>
+                {fmtMoney(table.reduce((s, r) => s + r.prize, 0))}
+              </td>
               {table.map(row => (
                 <td key={row.period.id} style={{ padding: "0.6rem 0.5rem", textAlign: "right", color: row.prize > 0 ? "#7a5c00" : "#9ca3af" }}>
                   {fmtMoney(row.prize)}
                 </td>
               ))}
-              <td style={{ padding: "0.6rem 1rem", textAlign: "right", color: "var(--color-gold)" }}>
-                {fmtMoney(table.reduce((s, r) => s + r.prize, 0))}
-              </td>
             </tr>
           </tbody>
         </table>
